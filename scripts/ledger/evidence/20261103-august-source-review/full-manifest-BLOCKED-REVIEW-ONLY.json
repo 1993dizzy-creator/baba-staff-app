@@ -1,0 +1,135 @@
+{
+  "status": "BLOCKED_SOURCE_EVIDENCE_INCOMPLETE_NOT_EXECUTABLE",
+  "month": "2026-08",
+  "runId": null,
+  "sourceRows": null,
+  "cellCount": null,
+  "cardTotal": null,
+  "moneyScale": 3,
+  "sheetCellDigest": null,
+  "effectDigest": null,
+  "expectedDaily": null,
+  "expectedOpening": null,
+  "expectedClosing": null,
+  "expectedCurrentClosing": null,
+  "expectedFollowup": null,
+  "requiredProtectedFingerprints": [
+    {
+      "name": "payable_allocations",
+      "beforeCount": 289,
+      "fingerprint": "e41b545e00c8241e072cda1db32d6d95"
+    },
+    {
+      "name": "pos_receipts",
+      "beforeCount": 112,
+      "fingerprint": "067538e0b9a2dc754c8545a29ce9e448"
+    },
+    {
+      "name": "month_closure_history",
+      "beforeCount": 8,
+      "fingerprint": "5334f637cea5c53ce11270ef91e6d43b"
+    },
+    {
+      "name": "ledger_audit_history",
+      "beforeCount": 6879,
+      "fingerprint": "74d14ed45805fb654e6ebe9a51d654e3"
+    },
+    {
+      "name": "inventory_logs",
+      "beforeCount": 2016,
+      "fingerprint": "dbe203a7f5ebfaa87ef68e48acde599b"
+    }
+  ],
+  "requiredTechnicalMovementIds": [
+    "526",
+    "527",
+    "528",
+    "529",
+    "536",
+    "537",
+    "710",
+    "711"
+  ],
+  "events": null,
+  "approval": {
+    "approved": false,
+    "approvedManifestHash": null
+  },
+  "expectedContracts": {
+    "sourceRows": 427,
+    "sourceCells": 505,
+    "cardTotalVnd": "225925720",
+    "dailyAccountBuckets": 124,
+    "monthEndAccountValues": 12
+  },
+  "coverage": {
+    "sourceTransactions": 53,
+    "technicalSignatures": 8,
+    "legacyExpenseSources": 40,
+    "singleAccountExpenseCandidates": 37,
+    "mixedAccountExpenseBlocked": 1,
+    "genericBankExpenseBlocked": 2,
+    "alreadyPaidRentPreserved": 1,
+    "existingInventoryPaymentsPreserved": 4,
+    "verifiedAuthoritativeSheetCells": null,
+    "mappedMismatchBuckets": null,
+    "reportedMismatchBuckets": 75,
+    "executionReadyEvents": 0
+  },
+  "protectionEvidence": "protection-confirmation-INDEPENDENT-SQL.json",
+  "protectionRequeryClosed": true,
+  "sourceCorrectionMap": "transaction-correction-map-REVIEW-ONLY.json",
+  "blockers": [
+    {
+      "id": "SOURCE-427-505",
+      "reason": "Actual authoritative 427 rows / 505 cells, source version/digest and per-cell evidence are not available in workspace. APP stored details and synthetic tests are not an independent substitute."
+    },
+    {
+      "id": "MISMATCH-75",
+      "reason": "The 75 exact date/account mismatches and the complete 124 before/target daily buckets are unavailable; cannot assign these 53 transaction observations to all 75 mismatches."
+    },
+    {
+      "id": "ACCOUNT-UNKNOWN",
+      "transactions": [
+        1069,
+        1082,
+        1109
+      ],
+      "unassignedTotalVnd": "2560000",
+      "reason": "Generic tai khoan does not identify one of the actual fund accounts; do not infer from residual amounts."
+    },
+    {
+      "id": "EXISTING-PAYMENTS",
+      "transactions": [
+        151,
+        152,
+        153,
+        154,
+        1304
+      ],
+      "reason": "Preserve already-paid movements. Target account claims for Aug 7 and deduplication of all sheet payments require raw-cell provenance. Do not pay prepaid rent twice."
+    },
+    {
+      "id": "PAYROLL-DEDUP",
+      "transactions": [
+        1067,
+        1068,
+        1069,
+        1070,
+        1071,
+        1072,
+        1073,
+        1075
+      ],
+      "reason": "Existing legacy_sheet_payroll_reversal entries have no movements, but the replacement payroll payment/source linkage is not established for the full sheet. Do not equate no own movement with proof of no other payment."
+    },
+    {
+      "id": "FULL-CLOSING-12",
+      "reason": "The full real opening/current/target 12 month-end balances and current complete movement set are not supplied. Synthetic AUG/SEP/OCT fixtures are not production evidence."
+    },
+    {
+      "id": "SOURCE-LINKS-AND-APPROVAL",
+      "reason": "No 505 verified sourceLinks / event proof references / full approved original manifest are available. Build full manifest and independent digest only after gaps resolved."
+    }
+  ]
+}

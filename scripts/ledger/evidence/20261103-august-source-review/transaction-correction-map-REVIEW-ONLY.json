@@ -1,0 +1,2273 @@
+{
+  "status": "REVIEW_ONLY_SOURCE_SUPPORTED_CANDIDATES_NOT_FULL_75_BUCKET_MAPPING",
+  "coverage": {
+    "sourceTransactions": 53,
+    "technicalSignatures": 8,
+    "legacyExpenseSources": 40,
+    "singleAccountExpenseCandidates": 37,
+    "mixedAccountExpenseBlocked": 1,
+    "genericBankExpenseBlocked": 2,
+    "alreadyPaidRentPreserved": 1,
+    "existingInventoryPaymentsPreserved": 4,
+    "verifiedAuthoritativeSheetCells": null,
+    "mappedMismatchBuckets": null,
+    "reportedMismatchBuckets": 75,
+    "executionReadyEvents": 0
+  },
+  "singleAccountExpenseCandidateTotalsVnd": {
+    "store_cash": "17513000",
+    "baba_corporate_bank": "86895276",
+    "cho_personal_custody": "4283000"
+  },
+  "mapping": [
+    {
+      "sourceTransactionId": 151,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "598000.000",
+        "status": "confirmed",
+        "sourceType": "inventory_purchase_candidate",
+        "sourceKey": "candidate:145",
+        "movements": [
+          {
+            "id": 67,
+            "amount": "-598000.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "unchanged": true,
+        "relocationAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "ALREADY_PAID_INVENTORY_ACCOUNT_DISPUTE",
+      "evidenceStatus": "BLOCKED_TARGET_ACCOUNT_AND_SHEET_LINK_UNVERIFIED",
+      "proposedKind": "preserve-until-evidenced"
+    },
+    {
+      "sourceTransactionId": 152,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "598000.000",
+        "status": "confirmed",
+        "sourceType": "inventory_purchase_candidate",
+        "sourceKey": "candidate:146",
+        "movements": [
+          {
+            "id": 68,
+            "amount": "-598000.000",
+            "fund_account_id": 3
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "unchanged": true,
+        "relocationAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "ALREADY_PAID_INVENTORY_ACCOUNT_DISPUTE",
+      "evidenceStatus": "BLOCKED_TARGET_ACCOUNT_AND_SHEET_LINK_UNVERIFIED",
+      "proposedKind": "preserve-until-evidenced"
+    },
+    {
+      "sourceTransactionId": 153,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "556000.000",
+        "status": "confirmed",
+        "sourceType": "inventory_purchase_candidate",
+        "sourceKey": "candidate:147",
+        "movements": [
+          {
+            "id": 69,
+            "amount": "-556000.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "unchanged": true,
+        "relocationAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "ALREADY_PAID_INVENTORY_ACCOUNT_DISPUTE",
+      "evidenceStatus": "BLOCKED_TARGET_ACCOUNT_AND_SHEET_LINK_UNVERIFIED",
+      "proposedKind": "preserve-until-evidenced"
+    },
+    {
+      "sourceTransactionId": 154,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1112000.000",
+        "status": "confirmed",
+        "sourceType": "inventory_purchase_candidate",
+        "sourceKey": "candidate:148",
+        "movements": [
+          {
+            "id": 70,
+            "amount": "-1112000.000",
+            "fund_account_id": 3
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "unchanged": true,
+        "relocationAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "ALREADY_PAID_INVENTORY_ACCOUNT_DISPUTE",
+      "evidenceStatus": "BLOCKED_TARGET_ACCOUNT_AND_SHEET_LINK_UNVERIFIED",
+      "proposedKind": "preserve-until-evidenced"
+    },
+    {
+      "sourceTransactionId": 1057,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "149781532.500",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_reconciliation:2026-08:store_cash",
+        "movements": [
+          {
+            "id": 526,
+            "amount": "-149781532.500",
+            "fund_account_id": 1
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 526,
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "149781532.5"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1058,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "99162485.000",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_reconciliation:2026-08:baba_corporate_bank",
+        "movements": [
+          {
+            "id": 527,
+            "amount": "-99162485.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 527,
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "99162485"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1059,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "72602700.000",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_reconciliation:2026-08:cho_personal_custody",
+        "movements": [
+          {
+            "id": 528,
+            "amount": "-72602700.000",
+            "fund_account_id": 3
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 528,
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "72602700"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1060,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "1542800.000",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_reconciliation:2026-08:vuong_personal_custody",
+        "movements": [
+          {
+            "id": 529,
+            "amount": "1542800.000",
+            "fund_account_id": 5
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 529,
+        "effects": [
+          {
+            "accountId": 5,
+            "account": "vuong_personal_custody",
+            "signedAmountVnd": "-1542800"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1067,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-02",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1500000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:20",
+        "movements": []
+      },
+      "sheetRow": 20,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "triem ung",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-02",
+        "sheetCellCandidate": "G20",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-1500000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1276,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1068,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-02",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2000000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:21",
+        "movements": []
+      },
+      "sheetRow": 21,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "quyen ung luong",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-02",
+        "sheetCellCandidate": "G21",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-2000000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1277,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1069,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-10",
+        "recognitionMonth": "2026-08-01",
+        "amount": "159049931.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:114",
+        "movements": []
+      },
+      "sheetRow": 114,
+      "sourcePaymentNote": "현금 9,282,000 / tài khoản 1,750,000 / 법인 148,017,931",
+      "sourceDescription": "luong a duc 1050 tm, duy ck tk v,khoi 8232 tm",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-10",
+        "partialEffectsFromPaymentNote": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-9282000",
+            "sheetCellCandidate": "G114"
+          },
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-148017931",
+            "sheetCellCandidate": "K114"
+          }
+        ],
+        "unassignedOutflowVnd": "1750000",
+        "unassignedPaymentText": "t?i kho?n",
+        "unknownAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1278,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "BLOCKED_MIXED_PAYMENT_ACCOUNT_UNRESOLVED"
+    },
+    {
+      "sourceTransactionId": 1070,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-11",
+        "recognitionMonth": "2026-08-01",
+        "amount": "653000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:129",
+        "movements": []
+      },
+      "sheetRow": 129,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "luong v",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-11",
+        "sheetCellCandidate": "G129",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-653000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1279,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1071,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-13",
+        "recognitionMonth": "2026-08-01",
+        "amount": "3000000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:165",
+        "movements": []
+      },
+      "sheetRow": 165,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "luong ke toan",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-13",
+        "sheetCellCandidate": "G165",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-3000000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1280,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1072,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-18",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2500000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:241",
+        "movements": []
+      },
+      "sheetRow": 241,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "co them ung",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-18",
+        "sheetCellCandidate": "G241",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-2500000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1281,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1073,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-21",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2000000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:287",
+        "movements": []
+      },
+      "sheetRow": 287,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "quan ung luong",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-21",
+        "sheetCellCandidate": "G287",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-2000000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1282,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1074,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-25",
+        "recognitionMonth": "2026-08-01",
+        "amount": "233000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:344",
+        "movements": []
+      },
+      "sheetRow": 344,
+      "sourcePaymentNote": "tk(cho)",
+      "sourceDescription": "luong co lan 5tiweng",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-25",
+        "sheetCellCandidate": "I344",
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "-233000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1075,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2500000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:424",
+        "movements": []
+      },
+      "sheetRow": 424,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "co them ung",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "sheetCellCandidate": "G424",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-2500000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [
+          {
+            "id": 1283,
+            "type": "expense",
+            "sourceType": "legacy_sheet_payroll_reversal",
+            "movementCount": 0
+          }
+        ],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1076,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-04",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1460286.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:40",
+        "movements": []
+      },
+      "sheetRow": 40,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "nuoc",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-04",
+        "sheetCellCandidate": "K40",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-1460286"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1077,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-04",
+        "recognitionMonth": "2026-08-01",
+        "amount": "34951407.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:41",
+        "movements": []
+      },
+      "sheetRow": 41,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "dien",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-04",
+        "sheetCellCandidate": "K41",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-34951407"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1078,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-11",
+        "recognitionMonth": "2026-08-01",
+        "amount": "6540000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:130",
+        "movements": []
+      },
+      "sheetRow": 130,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "tien internet",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-11",
+        "sheetCellCandidate": "K130",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-6540000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1079,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-23",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1512000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:310",
+        "movements": []
+      },
+      "sheetRow": 310,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "rac",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-23",
+        "sheetCellCandidate": "K310",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-1512000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1080,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-24",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2040034.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:327",
+        "movements": []
+      },
+      "sheetRow": 327,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "gas",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-24",
+        "sheetCellCandidate": "K327",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-2040034"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1081,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1390749.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:414",
+        "movements": []
+      },
+      "sheetRow": 414,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "tien nuoc",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "sheetCellCandidate": "K414",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-1390749"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1082,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "500000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:92",
+        "movements": []
+      },
+      "sheetRow": 92,
+      "sourcePaymentNote": "tài khoản",
+      "sourceDescription": "krtoan",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-07",
+        "unassignedOutflowVnd": "500000",
+        "unknownAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "BLOCKED_GENERIC_BANK_ACCOUNT_UNRESOLVED"
+    },
+    {
+      "sourceTransactionId": 1083,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-25",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1900000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:343",
+        "movements": []
+      },
+      "sheetRow": 343,
+      "sourcePaymentNote": "tk(cho)",
+      "sourceDescription": "quang cao tiktok",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-25",
+        "sheetCellCandidate": "I343",
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "-1900000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1084,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-26",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2500000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:361",
+        "movements": []
+      },
+      "sheetRow": 361,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "직원 기숙사",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-26",
+        "sheetCellCandidate": "G361",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-2500000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1095,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "3760000.000",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_detail_offset:2026-08:payables:cash:batch1",
+        "movements": [
+          {
+            "id": 536,
+            "amount": "3760000.000",
+            "fund_account_id": 1
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 536,
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-3760000"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1096,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "57810508.000",
+        "status": "confirmed",
+        "sourceType": "ledger_correction",
+        "sourceKey": "legacy_sheet_balance_detail_offset:2026-08:payables:corporate:batch1",
+        "movements": [
+          {
+            "id": 537,
+            "amount": "57810508.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 537,
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-57810508"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1098,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-01",
+        "recognitionMonth": "2026-08-01",
+        "amount": "50000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:6",
+        "movements": []
+      },
+      "sheetRow": 6,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship muc",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-01",
+        "sheetCellCandidate": "G6",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-50000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1099,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-02",
+        "recognitionMonth": "2026-08-01",
+        "amount": "60000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:11",
+        "movements": []
+      },
+      "sheetRow": 11,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-02",
+        "sheetCellCandidate": "G11",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-60000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1100,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-03",
+        "recognitionMonth": "2026-08-01",
+        "amount": "400000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:26",
+        "movements": []
+      },
+      "sheetRow": 26,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "thay cuc den nhay",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-03",
+        "sheetCellCandidate": "G26",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-400000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1101,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-05",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:55",
+        "movements": []
+      },
+      "sheetRow": 55,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-05",
+        "sheetCellCandidate": "G55",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1102,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-07",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:85",
+        "movements": []
+      },
+      "sheetRow": 85,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-07",
+        "sheetCellCandidate": "G85",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1103,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-11",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:137",
+        "movements": []
+      },
+      "sheetRow": 137,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "shipnruoi",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-11",
+        "sheetCellCandidate": "G137",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1104,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-14",
+        "recognitionMonth": "2026-08-01",
+        "amount": "6210000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:179",
+        "movements": []
+      },
+      "sheetRow": 179,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "야유회 펜션 예약 보증금 (coc villa)",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-14",
+        "sheetCellCandidate": "K179",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-6210000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1105,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-14",
+        "recognitionMonth": "2026-08-01",
+        "amount": "300000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:198",
+        "movements": []
+      },
+      "sheetRow": 198,
+      "sourcePaymentNote": "tk(cho)",
+      "sourceDescription": "ship lo nuong di sua",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-14",
+        "sheetCellCandidate": "I198",
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "-300000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1106,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-18",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:240",
+        "movements": []
+      },
+      "sheetRow": 240,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-18",
+        "sheetCellCandidate": "G240",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1107,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-20",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:267",
+        "movements": []
+      },
+      "sheetRow": 267,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-20",
+        "sheetCellCandidate": "G267",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1108,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-21",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:283",
+        "movements": []
+      },
+      "sheetRow": 283,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-21",
+        "sheetCellCandidate": "G283",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1109,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-21",
+        "recognitionMonth": "2026-08-01",
+        "amount": "310000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:292",
+        "movements": []
+      },
+      "sheetRow": 292,
+      "sourcePaymentNote": "tài khoản",
+      "sourceDescription": "ship muc",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-21",
+        "unassignedOutflowVnd": "310000",
+        "unknownAccountId": null
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "BLOCKED_GENERIC_BANK_ACCOUNT_UNRESOLVED"
+    },
+    {
+      "sourceTransactionId": 1110,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-22",
+        "recognitionMonth": "2026-08-01",
+        "amount": "2162800.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:296",
+        "movements": []
+      },
+      "sheetRow": 296,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "회식비 (chi phi an uong)",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-22",
+        "sheetCellCandidate": "K296",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-2162800"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1111,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-22",
+        "recognitionMonth": "2026-08-01",
+        "amount": "1700000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:309",
+        "movements": []
+      },
+      "sheetRow": 309,
+      "sourcePaymentNote": "tk(cho)",
+      "sourceDescription": "회식비 (6teen)",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-22",
+        "sheetCellCandidate": "I309",
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "-1700000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1112,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-24",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:333",
+        "movements": []
+      },
+      "sheetRow": 333,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship euou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-24",
+        "sheetCellCandidate": "G333",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1113,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-25",
+        "recognitionMonth": "2026-08-01",
+        "amount": "150000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:342",
+        "movements": []
+      },
+      "sheetRow": 342,
+      "sourcePaymentNote": "tk(cho)",
+      "sourceDescription": "ship bo",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-25",
+        "sheetCellCandidate": "I342",
+        "effects": [
+          {
+            "accountId": 3,
+            "account": "cho_personal_custody",
+            "signedAmountVnd": "-150000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1114,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-26",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:358",
+        "movements": []
+      },
+      "sheetRow": 358,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-26",
+        "sheetCellCandidate": "G358",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1115,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-29",
+        "recognitionMonth": "2026-08-01",
+        "amount": "30000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:395",
+        "movements": []
+      },
+      "sheetRow": 395,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-29",
+        "sheetCellCandidate": "G395",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-30000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1116,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": "2026-08-01",
+        "amount": "60000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:420",
+        "movements": []
+      },
+      "sheetRow": 420,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "ship ruou",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "sheetCellCandidate": "G420",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-60000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1118,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": "2026-08-01",
+        "amount": "20000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:421",
+        "movements": []
+      },
+      "sheetRow": 421,
+      "sourcePaymentNote": "현금",
+      "sourceDescription": "hoa honng",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "sheetCellCandidate": "G421",
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-20000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1304,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "prepaid_expense_payment",
+        "businessDate": "2026-08-11",
+        "recognitionMonth": null,
+        "amount": "300000000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:132:annual-rent-payment",
+        "movements": [
+          {
+            "id": 709,
+            "amount": "-300000000.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": 132,
+      "sourcePaymentNote": null,
+      "sourceDescription": "tien nha tu t1>t7_2027",
+      "target": {
+        "unchanged": true
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "PREPAID_RENT_ALREADY_CASH_PAID",
+      "evidenceStatus": "PRESERVE_EXISTING_300M_MOVEMENT_709; DO_NOT_RESTORE_AGAIN",
+      "proposedKind": "preserve"
+    },
+    {
+      "sourceTransactionId": 1305,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "2651770.000",
+        "status": "confirmed",
+        "sourceType": "manual",
+        "sourceKey": "legacy_sheet_balance_detail_offset:2026-08:post-reopen:corporate",
+        "movements": [
+          {
+            "id": 710,
+            "amount": "2651770.000",
+            "fund_account_id": 2
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 710,
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-2651770"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1306,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "balance_adjustment",
+        "businessDate": "2026-08-31",
+        "recognitionMonth": null,
+        "amount": "337000.000",
+        "status": "confirmed",
+        "sourceType": "manual",
+        "sourceKey": "legacy_sheet_balance_detail_offset:2026-08:post-reopen:cash",
+        "movements": [
+          {
+            "id": 711,
+            "amount": "337000.000",
+            "fund_account_id": 1
+          }
+        ]
+      },
+      "sheetRow": null,
+      "sourcePaymentNote": null,
+      "sourceDescription": null,
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-31",
+        "originalMovementId": 711,
+        "effects": [
+          {
+            "accountId": 1,
+            "account": "store_cash",
+            "signedAmountVnd": "-337000"
+          }
+        ],
+        "originalMovementUnchanged": true,
+        "originalPlusCompensationNetVnd": "0"
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "TECHNICAL_MONTH_END_BALANCE_PLUG",
+      "evidenceStatus": "DB_SIGNATURE_CONFIRMED_V3_REQUIRED_EIGHT; FULL_REBUILD_EVIDENCE_PENDING",
+      "proposedKind": "remove-technical"
+    },
+    {
+      "sourceTransactionId": 1446,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-05",
+        "recognitionMonth": "2026-08-01",
+        "amount": "8100000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:52",
+        "movements": []
+      },
+      "sheetRow": 52,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "bhxh",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-05",
+        "sheetCellCandidate": "K52",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-8100000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    },
+    {
+      "sourceTransactionId": 1447,
+      "sourceCapture": "app-source-rows-READONLY.json",
+      "current": {
+        "type": "expense",
+        "businessDate": "2026-08-10",
+        "recognitionMonth": "2026-08-01",
+        "amount": "22528000.000",
+        "status": "confirmed",
+        "sourceType": "legacy_sheet_detail",
+        "sourceKey": "legacy-sheet-detail:2026-08:row:115",
+        "movements": []
+      },
+      "sheetRow": 115,
+      "sourcePaymentNote": "법인",
+      "sourceDescription": "bhxh",
+      "target": {
+        "newTransactionType": "correction",
+        "newTransactionAmountVnd": "0",
+        "businessDate": "2026-08-10",
+        "sheetCellCandidate": "K115",
+        "effects": [
+          {
+            "accountId": 2,
+            "account": "baba_corporate_bank",
+            "signedAmountVnd": "-22528000"
+          }
+        ]
+      },
+      "newCorrectionProfitLossImpactVnd": "0",
+      "protectedOriginals": "Never mutate source transactions/movements, payable allocations, POS, inventory, closure history, or completed Phuong settlement; append-only correction/audit only if later approved",
+      "executionReady": false,
+      "causeGroup": "RECOGNIZED_LEGACY_EXPENSE_WITHOUT_OWN_CASH_MOVEMENT",
+      "proposedKind": "restore-outflow",
+      "sourceEligibility": {
+        "ownMovementCount": 0,
+        "payableIds": [],
+        "relatedCorrections": [],
+        "fundMovementApplied": false
+      },
+      "evidenceStatus": "ACCOUNT_AND_AMOUNT_SUPPORTED_BY_STORED_SHEET_DETAIL; EXTERNAL_SHEET_AND_DUPLICATE_PAYMENT_REVIEW_PENDING"
+    }
+  ]
+}

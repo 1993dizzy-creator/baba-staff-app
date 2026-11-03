@@ -1,0 +1,38 @@
+{
+  "status": "MATCHED_AND_CLOSED_FOR_CURRENT_SOURCE_PLANNING",
+  "source": "User-provided GPT independent single read-only SQL result; not re-executed by Codex",
+  "observedAtVN": "2026-11-03 22:56 VN (UTC+07, minute precision)",
+  "comparedToCommit": "6fd7172b",
+  "requiredProtectedFingerprints": [
+    {
+      "name": "payable_allocations",
+      "beforeCount": 289,
+      "fingerprint": "e41b545e00c8241e072cda1db32d6d95"
+    },
+    {
+      "name": "pos_receipts",
+      "beforeCount": 112,
+      "fingerprint": "067538e0b9a2dc754c8545a29ce9e448"
+    },
+    {
+      "name": "month_closure_history",
+      "beforeCount": 8,
+      "fingerprint": "5334f637cea5c53ce11270ef91e6d43b"
+    },
+    {
+      "name": "ledger_audit_history",
+      "beforeCount": 6879,
+      "fingerprint": "74d14ed45805fb654e6ebe9a51d654e3"
+    },
+    {
+      "name": "inventory_logs",
+      "beforeCount": 2016,
+      "fingerprint": "dbe203a7f5ebfaa87ef68e48acde599b"
+    }
+  ],
+  "auditMaxId": 7062,
+  "allFiveAndAuditMaxMatch": true,
+  "protectionSourceRequeryClosed": true,
+  "rebuildExecutionApproved": false,
+  "originalSnapshotsPreserved": true
+}

@@ -1,0 +1,1323 @@
+{
+  "capturedAt": "2026-11-03T16:00:14.821Z",
+  "source": "production Data API GET only; targeted source transactions, not protection refresh",
+  "rows": [
+    {
+      "id": 151,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "598000.000",
+      "status": "confirmed",
+      "source_type": "inventory_purchase_candidate",
+      "source_key": "candidate:145",
+      "source_snapshot": {
+        "reason": "purchase",
+        "source": "quick_save",
+        "item_id": 54,
+        "category": "위스키",
+        "supplier": "Wow Spirit",
+        "item_name": "조니워커 블랙",
+        "category_vi": "Whisky",
+        "business_date": "2026-08-07",
+        "legacySheetRow": 91,
+        "legacySheetTab": "8월",
+        "purchase_price": 598000,
+        "change_quantity": 1,
+        "legacySheetFile": "(2026)BABA - Sổ dự án",
+        "purchase_amount": 598000,
+        "inventory_log_id": 8570,
+        "legacySheetMappedAt": "2026-09-20T13:02:04.021721+00:00",
+        "legacySheetMappingType": "aggregate_exact_match",
+        "inventory_log_created_at": "2026-08-07T11:05:56.339506+00:00"
+      },
+      "memo": null,
+      "movements": [
+        {
+          "id": 67,
+          "amount": "-598000.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 152,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "598000.000",
+      "status": "confirmed",
+      "source_type": "inventory_purchase_candidate",
+      "source_key": "candidate:146",
+      "source_snapshot": {
+        "reason": "purchase",
+        "source": "quick_save",
+        "item_id": 52,
+        "category": "위스키",
+        "supplier": "Wow Spirit",
+        "item_name": "조니워커 블랙 750ml",
+        "category_vi": "Whisky",
+        "business_date": "2026-08-07",
+        "legacySheetRow": 91,
+        "legacySheetTab": "8월",
+        "purchase_price": 598000,
+        "change_quantity": 1,
+        "legacySheetFile": "(2026)BABA - Sổ dự án",
+        "purchase_amount": 598000,
+        "inventory_log_id": 8572,
+        "legacySheetMappedAt": "2026-09-20T13:02:04.021721+00:00",
+        "legacySheetMappingType": "aggregate_exact_match",
+        "inventory_log_created_at": "2026-08-07T11:06:30.52201+00:00"
+      },
+      "memo": null,
+      "movements": [
+        {
+          "id": 68,
+          "amount": "-598000.000",
+          "fund_account_id": 3
+        }
+      ]
+    },
+    {
+      "id": 153,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "556000.000",
+      "status": "confirmed",
+      "source_type": "inventory_purchase_candidate",
+      "source_key": "candidate:147",
+      "source_snapshot": {
+        "reason": "purchase",
+        "source": "quick_save",
+        "item_id": 250,
+        "category": "데킬라",
+        "supplier": "Wow Spirit",
+        "item_name": "호세쿠엘보 레포사도 750ml",
+        "category_vi": "Tequila",
+        "business_date": "2026-08-07",
+        "legacySheetRow": 91,
+        "legacySheetTab": "8월",
+        "purchase_price": 556000,
+        "change_quantity": 1,
+        "legacySheetFile": "(2026)BABA - Sổ dự án",
+        "purchase_amount": 556000,
+        "inventory_log_id": 8573,
+        "legacySheetMappedAt": "2026-09-20T13:02:04.021721+00:00",
+        "legacySheetMappingType": "aggregate_exact_match",
+        "inventory_log_created_at": "2026-08-07T11:06:50.491124+00:00"
+      },
+      "memo": null,
+      "movements": [
+        {
+          "id": 69,
+          "amount": "-556000.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 154,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "1112000.000",
+      "status": "confirmed",
+      "source_type": "inventory_purchase_candidate",
+      "source_key": "candidate:148",
+      "source_snapshot": {
+        "reason": "purchase",
+        "source": "quick_save",
+        "item_id": 59,
+        "category": "데킬라",
+        "supplier": "Wow Spirit",
+        "item_name": "호세쿠엘보 실버",
+        "category_vi": "Tequila",
+        "business_date": "2026-08-07",
+        "legacySheetRow": 91,
+        "legacySheetTab": "8월",
+        "purchase_price": 556000,
+        "change_quantity": 2,
+        "legacySheetFile": "(2026)BABA - Sổ dự án",
+        "purchase_amount": 1112000,
+        "inventory_log_id": 8575,
+        "legacySheetMappedAt": "2026-09-20T13:02:04.021721+00:00",
+        "legacySheetMappingType": "aggregate_exact_match",
+        "inventory_log_created_at": "2026-08-07T11:07:32.067428+00:00"
+      },
+      "memo": null,
+      "movements": [
+        {
+          "id": 70,
+          "amount": "-1112000.000",
+          "fund_account_id": 3
+        }
+      ]
+    },
+    {
+      "id": 1057,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "149781532.500",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_reconciliation:2026-08:store_cash",
+      "source_snapshot": {
+        "month": "2026-08",
+        "policy": "8월 시트 잔액을 기준으로 맞추고 9월부터 원천 거래 정확성 우선",
+        "balanceDelta": -149781532.5,
+        "beforeBalance": 201284318.5,
+        "fundAccountId": 1,
+        "targetBalance": 51502786,
+        "adjustmentType": "legacy_sheet_balance_reconciliation",
+        "fundAccountCode": "store_cash",
+        "verificationSource": "(2026)BABA - Sổ dự án / 8월 월말 보유금",
+        "legacyRepairShipping": "rows_119_168_204_restored",
+        "legacyRepairShippingAt": "2026-09-20T15:26:47.488386+00:00",
+        "legacyRepairKentPayment": "8/29 false immediate cash payment reversed; actual payment is 9/4 Cho #1675",
+        "legacyRepairPaymentFlow": "cho_pork_coca_cashflows_rebalanced",
+        "legacyRepairRuouMinhHanh": "missing_payments_rebalanced",
+        "legacyRepairKentPaymentAt": "2026-09-22T11:43:10.590011+00:00",
+        "legacyRepairPaymentFlowAt": "2026-09-20T15:01:49.963987+00:00",
+        "legacyRepairRuouMinhHanhAt": "2026-09-20T12:44:46.01573+00:00",
+        "previousBalanceDeltaBeforeMinhHanh": -155107032.5,
+        "previousBalanceDeltaBeforeKentRepair": -147881532.5,
+        "previousBalanceDeltaBeforeShippingRepair": -147971532.5,
+        "previousBalanceDeltaBeforePaymentFlowRepair": -154157032.5
+      },
+      "memo": "정정금액 · 8월 시트 월말잔액 맞춤 · store_cash",
+      "movements": [
+        {
+          "id": 526,
+          "amount": "-149781532.500",
+          "fund_account_id": 1
+        }
+      ]
+    },
+    {
+      "id": 1058,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "99162485.000",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_reconciliation:2026-08:baba_corporate_bank",
+      "source_snapshot": {
+        "month": "2026-08",
+        "policy": "8월 시트 잔액을 기준으로 맞추고 9월부터 원천 거래 정확성 우선",
+        "balanceDelta": -99162485,
+        "legacyRepair": "interest_51743_rebalanced",
+        "beforeBalance": 322080168,
+        "fundAccountId": 2,
+        "targetBalance": 222917683,
+        "adjustmentType": "legacy_sheet_balance_reconciliation",
+        "legacyRepairAt": "2026-09-20T11:09:50.108193+00:00",
+        "fundAccountCode": "baba_corporate_bank",
+        "legacyRepairWow824": "negative_purchase_logs_projected",
+        "verificationSource": "(2026)BABA - Sổ dự án / 8월 월말 보유금",
+        "legacyRepairWow824At": "2026-09-20T12:48:00.847537+00:00",
+        "previousBalanceDelta": -107131272,
+        "legacyRepairPaymentFlow": "squid_corp_payment_rebalanced",
+        "legacyRepairRuouMinhHanh": "missing_payments_rebalanced",
+        "legacyRepairPaymentFlowAt": "2026-09-20T15:01:49.963987+00:00",
+        "legacyRepairRuouMinhHanhAt": "2026-09-20T12:44:46.01573+00:00",
+        "previousBalanceDeltaBeforeMinhHanh": -107183015,
+        "previousBalanceDeltaBeforeWow824Repair": -103278015,
+        "previousBalanceDeltaBeforePaymentFlowRepair": -108196235
+      },
+      "memo": "정정금액 · 8월 시트 월말잔액 맞춤 · baba_corporate_bank",
+      "movements": [
+        {
+          "id": 527,
+          "amount": "-99162485.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 1059,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "72602700.000",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_reconciliation:2026-08:cho_personal_custody",
+      "source_snapshot": {
+        "month": "2026-08",
+        "policy": "8월 시트 잔액을 기준으로 맞추고 9월부터 원천 거래 정확성 우선",
+        "balanceDelta": -72602700,
+        "beforeBalance": 118946361,
+        "fundAccountId": 3,
+        "targetBalance": 46343661,
+        "adjustmentType": "legacy_sheet_balance_reconciliation",
+        "fundAccountCode": "cho_personal_custody",
+        "verificationSource": "(2026)BABA - Sổ dự án / 8월 월말 보유금",
+        "legacyRepairSmirnoff": "immediate_stockcheck_cancel_projected",
+        "legacyRepairSmirnoffAt": "2026-09-20T12:51:08.937995+00:00",
+        "legacyRepairRuouMinhHanh": "missing_payments_rebalanced",
+        "legacyRepairRuouMinhHanhAt": "2026-09-20T12:44:46.01573+00:00",
+        "previousBalanceDeltaBeforeMinhHanh": -75002700,
+        "previousBalanceDeltaBeforeSmirnoffRepair": -72402700
+      },
+      "memo": "정정금액 · 8월 시트 월말잔액 맞춤 · cho_personal_custody",
+      "movements": [
+        {
+          "id": 528,
+          "amount": "-72602700.000",
+          "fund_account_id": 3
+        }
+      ]
+    },
+    {
+      "id": 1060,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "1542800.000",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_reconciliation:2026-08:vuong_personal_custody",
+      "source_snapshot": {
+        "month": "2026-08",
+        "policy": "8월 시트 잔액을 기준으로 맞추고 9월부터 원천 거래 정확성 우선",
+        "balanceDelta": 1542800,
+        "beforeBalance": 5231310,
+        "fundAccountId": 5,
+        "targetBalance": 6774110,
+        "adjustmentType": "legacy_sheet_balance_reconciliation",
+        "fundAccountCode": "vuong_personal_custody",
+        "verificationSource": "(2026)BABA - Sổ dự án / 8월 월말 보유금"
+      },
+      "memo": "정정금액 · 8월 시트 월말잔액 맞춤 · vuong_personal_custody",
+      "movements": [
+        {
+          "id": 529,
+          "amount": "1542800.000",
+          "fund_account_id": 5
+        }
+      ]
+    },
+    {
+      "id": 1067,
+      "type": "expense",
+      "business_date": "2026-08-02",
+      "recognition_month": "2026-08-01",
+      "amount": "1500000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:20",
+      "source_snapshot": {
+        "row": 20,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "triem ung",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "triem ung",
+      "movements": []
+    },
+    {
+      "id": 1068,
+      "type": "expense",
+      "business_date": "2026-08-02",
+      "recognition_month": "2026-08-01",
+      "amount": "2000000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:21",
+      "source_snapshot": {
+        "row": 21,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "quyen ung luong",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "quyen ung luong",
+      "movements": []
+    },
+    {
+      "id": 1069,
+      "type": "expense",
+      "business_date": "2026-08-10",
+      "recognition_month": "2026-08-01",
+      "amount": "159049931.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:114",
+      "source_snapshot": {
+        "row": 114,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금 9,282,000 / tài khoản 1,750,000 / 법인 148,017,931",
+        "originalMemo": "luong a duc 1050 tm, duy ck tk v,khoi 8232 tm",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "luong a duc 1050 tm, duy ck tk v,khoi 8232 tm",
+      "movements": []
+    },
+    {
+      "id": 1070,
+      "type": "expense",
+      "business_date": "2026-08-11",
+      "recognition_month": "2026-08-01",
+      "amount": "653000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:129",
+      "source_snapshot": {
+        "row": 129,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "luong v",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "luong v",
+      "movements": []
+    },
+    {
+      "id": 1071,
+      "type": "expense",
+      "business_date": "2026-08-13",
+      "recognition_month": "2026-08-01",
+      "amount": "3000000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:165",
+      "source_snapshot": {
+        "row": 165,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "luong ke toan",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "luong ke toan",
+      "movements": []
+    },
+    {
+      "id": 1072,
+      "type": "expense",
+      "business_date": "2026-08-18",
+      "recognition_month": "2026-08-01",
+      "amount": "2500000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:241",
+      "source_snapshot": {
+        "row": 241,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "co them ung",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "co them ung",
+      "movements": []
+    },
+    {
+      "id": 1073,
+      "type": "expense",
+      "business_date": "2026-08-21",
+      "recognition_month": "2026-08-01",
+      "amount": "2000000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:287",
+      "source_snapshot": {
+        "row": 287,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "quan ung luong",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "quan ung luong",
+      "movements": []
+    },
+    {
+      "id": 1074,
+      "type": "expense",
+      "business_date": "2026-08-25",
+      "recognition_month": "2026-08-01",
+      "amount": "233000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:344",
+      "source_snapshot": {
+        "row": 344,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "tk(cho)",
+        "originalMemo": "luong co lan 5tiweng",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "luong co lan 5tiweng",
+      "movements": []
+    },
+    {
+      "id": 1075,
+      "type": "expense",
+      "business_date": "2026-08-31",
+      "recognition_month": "2026-08-01",
+      "amount": "2500000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:424",
+      "source_snapshot": {
+        "row": 424,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "co them ung",
+        "originalGroup": "급여(Lương)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "co them ung",
+      "movements": []
+    },
+    {
+      "id": 1076,
+      "type": "expense",
+      "business_date": "2026-08-04",
+      "recognition_month": "2026-08-01",
+      "amount": "1460286.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:40",
+      "source_snapshot": {
+        "row": 40,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "nuoc",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "nuoc",
+      "movements": []
+    },
+    {
+      "id": 1077,
+      "type": "expense",
+      "business_date": "2026-08-04",
+      "recognition_month": "2026-08-01",
+      "amount": "34951407.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:41",
+      "source_snapshot": {
+        "row": 41,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "dien",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "전기세(tiền điện)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "dien",
+      "movements": []
+    },
+    {
+      "id": 1078,
+      "type": "expense",
+      "business_date": "2026-08-11",
+      "recognition_month": "2026-08-01",
+      "amount": "6540000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:130",
+      "source_snapshot": {
+        "row": 130,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "tien internet",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "tien internet",
+      "movements": []
+    },
+    {
+      "id": 1079,
+      "type": "expense",
+      "business_date": "2026-08-23",
+      "recognition_month": "2026-08-01",
+      "amount": "1512000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:310",
+      "source_snapshot": {
+        "row": 310,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "rac",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "rac",
+      "movements": []
+    },
+    {
+      "id": 1080,
+      "type": "expense",
+      "business_date": "2026-08-24",
+      "recognition_month": "2026-08-01",
+      "amount": "2040034.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:327",
+      "source_snapshot": {
+        "row": 327,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "gas",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "가스비(tiền gas)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "gas",
+      "movements": []
+    },
+    {
+      "id": 1081,
+      "type": "expense",
+      "business_date": "2026-08-31",
+      "recognition_month": "2026-08-01",
+      "amount": "1390749.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:414",
+      "source_snapshot": {
+        "row": 414,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "법인",
+        "originalMemo": "tien nuoc",
+        "originalGroup": "공과금(hóa đơn sinh hoạt)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "tien nuoc",
+      "movements": []
+    },
+    {
+      "id": 1082,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "500000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:92",
+      "source_snapshot": {
+        "row": 92,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "tài khoản",
+        "originalMemo": "krtoan",
+        "originalGroup": "경비(Chi phí chung)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "krtoan",
+      "movements": []
+    },
+    {
+      "id": 1083,
+      "type": "expense",
+      "business_date": "2026-08-25",
+      "recognition_month": "2026-08-01",
+      "amount": "1900000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:343",
+      "source_snapshot": {
+        "row": 343,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "tk(cho)",
+        "originalMemo": "quang cao tiktok",
+        "originalGroup": "경비(Chi phí chung)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "quang cao tiktok",
+      "movements": []
+    },
+    {
+      "id": 1084,
+      "type": "expense",
+      "business_date": "2026-08-26",
+      "recognition_month": "2026-08-01",
+      "amount": "2500000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:361",
+      "source_snapshot": {
+        "row": 361,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "paymentNote": "현금",
+        "originalMemo": "직원 기숙사",
+        "originalGroup": "경비(Chi phí chung)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "직원 기숙사",
+      "movements": []
+    },
+    {
+      "id": 1095,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "3760000.000",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_detail_offset:2026-08:payables:cash:batch1",
+      "source_snapshot": {
+        "month": "2026-08",
+        "reason": "기존 월말잔액 정정에 포함돼 있던 후불 결제 3,760,000을 상세 payable_payment로 전환하여 중복 차감 방지",
+        "fundAccountId": 1
+      },
+      "memo": "정정금액 · 후불결제 상세화에 따른 8월 현금잔액 상쇄",
+      "movements": [
+        {
+          "id": 536,
+          "amount": "3760000.000",
+          "fund_account_id": 1
+        }
+      ]
+    },
+    {
+      "id": 1096,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "57810508.000",
+      "status": "confirmed",
+      "source_type": "ledger_correction",
+      "source_key": "legacy_sheet_balance_detail_offset:2026-08:payables:corporate:batch1",
+      "source_snapshot": {
+        "month": "2026-08",
+        "reason": "기존 월말잔액 정정에 포함돼 있던 후불 결제 57,810,508을 상세 payable_payment로 전환하여 중복 차감 방지",
+        "fundAccountId": 2
+      },
+      "memo": "정정금액 · 후불결제 상세화에 따른 8월 법인잔액 상쇄",
+      "movements": [
+        {
+          "id": 537,
+          "amount": "57810508.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 1098,
+      "type": "expense",
+      "business_date": "2026-08-01",
+      "recognition_month": "2026-08-01",
+      "amount": "50000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:6",
+      "source_snapshot": {
+        "row": 6,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship muc",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship muc",
+      "movements": []
+    },
+    {
+      "id": 1099,
+      "type": "expense",
+      "business_date": "2026-08-02",
+      "recognition_month": "2026-08-01",
+      "amount": "60000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:11",
+      "source_snapshot": {
+        "row": 11,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1100,
+      "type": "expense",
+      "business_date": "2026-08-03",
+      "recognition_month": "2026-08-01",
+      "amount": "400000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:26",
+      "source_snapshot": {
+        "row": 26,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "수리·유지보수",
+        "paymentNote": "현금",
+        "originalMemo": "thay cuc den nhay",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "thay cuc den nhay",
+      "movements": []
+    },
+    {
+      "id": 1101,
+      "type": "expense",
+      "business_date": "2026-08-05",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:55",
+      "source_snapshot": {
+        "row": 55,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1102,
+      "type": "expense",
+      "business_date": "2026-08-07",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:85",
+      "source_snapshot": {
+        "row": 85,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1103,
+      "type": "expense",
+      "business_date": "2026-08-11",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:137",
+      "source_snapshot": {
+        "row": 137,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "shipnruoi",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "shipnruoi",
+      "movements": []
+    },
+    {
+      "id": 1104,
+      "type": "expense",
+      "business_date": "2026-08-14",
+      "recognition_month": "2026-08-01",
+      "amount": "6210000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:179",
+      "source_snapshot": {
+        "row": 179,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "보험·복리후생",
+        "paymentNote": "법인",
+        "originalMemo": "야유회 펜션 예약 보증금 (coc villa)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "야유회 펜션 예약 보증금 (coc villa)",
+      "movements": []
+    },
+    {
+      "id": 1105,
+      "type": "expense",
+      "business_date": "2026-08-14",
+      "recognition_month": "2026-08-01",
+      "amount": "300000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:198",
+      "source_snapshot": {
+        "row": 198,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "tk(cho)",
+        "originalMemo": "ship lo nuong di sua",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship lo nuong di sua",
+      "movements": []
+    },
+    {
+      "id": 1106,
+      "type": "expense",
+      "business_date": "2026-08-18",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:240",
+      "source_snapshot": {
+        "row": 240,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1107,
+      "type": "expense",
+      "business_date": "2026-08-20",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:267",
+      "source_snapshot": {
+        "row": 267,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1108,
+      "type": "expense",
+      "business_date": "2026-08-21",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:283",
+      "source_snapshot": {
+        "row": 283,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1109,
+      "type": "expense",
+      "business_date": "2026-08-21",
+      "recognition_month": "2026-08-01",
+      "amount": "310000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:292",
+      "source_snapshot": {
+        "row": 292,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "tài khoản",
+        "originalMemo": "ship muc",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship muc",
+      "movements": []
+    },
+    {
+      "id": 1110,
+      "type": "expense",
+      "business_date": "2026-08-22",
+      "recognition_month": "2026-08-01",
+      "amount": "2162800.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:296",
+      "source_snapshot": {
+        "row": 296,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "보험·복리후생",
+        "paymentNote": "법인",
+        "originalMemo": "회식비 (chi phi an uong)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "회식비 (chi phi an uong)",
+      "movements": []
+    },
+    {
+      "id": 1111,
+      "type": "expense",
+      "business_date": "2026-08-22",
+      "recognition_month": "2026-08-01",
+      "amount": "1700000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:309",
+      "source_snapshot": {
+        "row": 309,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "보험·복리후생",
+        "paymentNote": "tk(cho)",
+        "originalMemo": "회식비 (6teen)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "회식비 (6teen)",
+      "movements": []
+    },
+    {
+      "id": 1112,
+      "type": "expense",
+      "business_date": "2026-08-24",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:333",
+      "source_snapshot": {
+        "row": 333,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship euou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship euou",
+      "movements": []
+    },
+    {
+      "id": 1113,
+      "type": "expense",
+      "business_date": "2026-08-25",
+      "recognition_month": "2026-08-01",
+      "amount": "150000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:342",
+      "source_snapshot": {
+        "row": 342,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "tk(cho)",
+        "originalMemo": "ship bo",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship bo",
+      "movements": []
+    },
+    {
+      "id": 1114,
+      "type": "expense",
+      "business_date": "2026-08-26",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:358",
+      "source_snapshot": {
+        "row": 358,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1115,
+      "type": "expense",
+      "business_date": "2026-08-29",
+      "recognition_month": "2026-08-01",
+      "amount": "30000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:395",
+      "source_snapshot": {
+        "row": 395,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1116,
+      "type": "expense",
+      "business_date": "2026-08-31",
+      "recognition_month": "2026-08-01",
+      "amount": "60000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:420",
+      "source_snapshot": {
+        "row": 420,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "배송·운송비",
+        "paymentNote": "현금",
+        "originalMemo": "ship ruou",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "ship ruou",
+      "movements": []
+    },
+    {
+      "id": 1118,
+      "type": "expense",
+      "business_date": "2026-08-31",
+      "recognition_month": "2026-08-01",
+      "amount": "20000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:421",
+      "source_snapshot": {
+        "row": 421,
+        "tab": "8월",
+        "note": "시트 지출은 확인되지만 8/31 대응 입고로그 없음. 비용만 등록하고 입고누락 가능성 표기.",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "기타 재고매입",
+        "paymentNote": "현금",
+        "originalMemo": "hoa honng",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정",
+        "matchedInventoryItemId": 538,
+        "inventoryMissingPossible": true,
+        "matchedInventoryItemName": "Hoa decor"
+      },
+      "memo": "hoa honng · 입고누락 가능성",
+      "movements": []
+    },
+    {
+      "id": 1304,
+      "type": "prepaid_expense_payment",
+      "business_date": "2026-08-11",
+      "recognition_month": null,
+      "amount": "300000000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:132:annual-rent-payment",
+      "source_snapshot": {
+        "note": "8월 60M 적립 계획과 별개인 실제 연간 임대료 납부",
+        "month": "2026-08",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "sheetRow": 132,
+        "sheetTab": "8월",
+        "description": "tien nha tu t1>t7_2027",
+        "accountingTreatment": "cash_outflow_only_no_monthly_expense"
+      },
+      "memo": "8월 시트 row 132 · 1년치 임대료 실제 지급 300,000,000₫ · 손익/60M 적립과 분리",
+      "movements": [
+        {
+          "id": 709,
+          "amount": "-300000000.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 1305,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "2651770.000",
+      "status": "confirmed",
+      "source_type": "manual",
+      "source_key": "legacy_sheet_balance_detail_offset:2026-08:post-reopen:corporate",
+      "source_snapshot": {},
+      "memo": "정정금액 · 8월 법인계좌 상세화 후 잔액 맞춤 (+100M 투자금 -300M 임대료 +197,348,230 카드입금 상세화 순효과)",
+      "movements": [
+        {
+          "id": 710,
+          "amount": "2651770.000",
+          "fund_account_id": 2
+        }
+      ]
+    },
+    {
+      "id": 1306,
+      "type": "balance_adjustment",
+      "business_date": "2026-08-31",
+      "recognition_month": null,
+      "amount": "337000.000",
+      "status": "confirmed",
+      "source_type": "manual",
+      "source_key": "legacy_sheet_balance_detail_offset:2026-08:post-reopen:cash",
+      "source_snapshot": {},
+      "memo": "정정금액 · 8/29 menu 300,000 + 8/31 kep ghim 37,000 상세화 후 현금잔액 상쇄",
+      "movements": [
+        {
+          "id": 711,
+          "amount": "337000.000",
+          "fund_account_id": 1
+        }
+      ]
+    },
+    {
+      "id": 1446,
+      "type": "expense",
+      "business_date": "2026-08-05",
+      "recognition_month": "2026-08-01",
+      "amount": "8100000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:52",
+      "source_snapshot": {
+        "row": 52,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "보험·복리후생",
+        "paymentNote": "법인",
+        "legacyRepair": "missing_bhxh_detail_repair",
+        "originalMemo": "bhxh",
+        "originalGroup": "법인(Pháp nhân)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "bhxh",
+      "movements": []
+    },
+    {
+      "id": 1447,
+      "type": "expense",
+      "business_date": "2026-08-10",
+      "recognition_month": "2026-08-01",
+      "amount": "22528000.000",
+      "status": "confirmed",
+      "source_type": "legacy_sheet_detail",
+      "source_key": "legacy-sheet-detail:2026-08:row:115",
+      "source_snapshot": {
+        "row": 115,
+        "tab": "8월",
+        "sheet": "(2026)BABA - Sổ dự án",
+        "detailType": "보험·복리후생",
+        "paymentNote": "법인",
+        "legacyRepair": "missing_bhxh_detail_repair",
+        "originalMemo": "bhxh",
+        "originalGroup": "법인(Pháp nhân)",
+        "originalSubgroup": "공금(Quỹ công ty)",
+        "fundMovementApplied": false,
+        "reconciliationPolicy": "8월 과거 시트 원천상세 등록; 월말잔액은 별도 잔액정정으로 이미 확정"
+      },
+      "memo": "bhxh",
+      "movements": []
+    }
+  ]
+}

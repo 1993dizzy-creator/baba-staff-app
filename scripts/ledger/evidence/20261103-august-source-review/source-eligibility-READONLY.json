@@ -1,0 +1,95 @@
+{
+  "capturedAt": "2026-11-03T16:01:59.592Z",
+  "source": "GET only; eligibility of 40 source expenses, not protection fingerprint refresh",
+  "payables": [],
+  "corrections": [
+    {
+      "id": 1276,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-02",
+      "amount": "1500000.000",
+      "correction_of_id": 1067,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1067",
+      "movements": []
+    },
+    {
+      "id": 1277,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-02",
+      "amount": "2000000.000",
+      "correction_of_id": 1068,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1068",
+      "movements": []
+    },
+    {
+      "id": 1278,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-10",
+      "amount": "159049931.000",
+      "correction_of_id": 1069,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1069",
+      "movements": []
+    },
+    {
+      "id": 1279,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-11",
+      "amount": "653000.000",
+      "correction_of_id": 1070,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1070",
+      "movements": []
+    },
+    {
+      "id": 1280,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-13",
+      "amount": "3000000.000",
+      "correction_of_id": 1071,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1071",
+      "movements": []
+    },
+    {
+      "id": 1281,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-18",
+      "amount": "2500000.000",
+      "correction_of_id": 1072,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1072",
+      "movements": []
+    },
+    {
+      "id": 1282,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-21",
+      "amount": "2000000.000",
+      "correction_of_id": 1073,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1073",
+      "movements": []
+    },
+    {
+      "id": 1283,
+      "type": "expense",
+      "status": "confirmed",
+      "business_date": "2026-08-31",
+      "amount": "2500000.000",
+      "correction_of_id": 1075,
+      "source_type": "legacy_sheet_payroll_reversal",
+      "source_key": "legacy-sheet-payroll-reversal:1075",
+      "movements": []
+    }
+  ]
+}
