@@ -8,6 +8,27 @@ import { buildKegLineMatchFilter } from "@/lib/inventory/keg-replacement-summary
 
 const POS_SALES_PAGE_SIZE = 1000;
 const POS_RECEIPT_ID_CHUNK_SIZE = 500;
+const BUSINESS_DATE_LOWER_BOUND_MARGIN_DAYS = 2;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Every POS writer (CukCuk sync, manual create/edit RPC) stores a ref_date that
+// falls inside its business day window, so business_date >= local(ref_date) - 1
+// day. A line can only count when its reference time is >= the session start,
+// so rows whose business_date is older than (start - 2 days) can never count.
+// Bounding by business_date lets the receipt and timestamp-line scans use the
+// existing business_date indexes instead of walking the whole table.
+export const getKegBusinessDateLowerBound = (earliestStartedAt: string) => {
+  const startedAt = Date.parse(earliestStartedAt);
+  if (!Number.isFinite(startedAt)) return null;
+  return new Date(startedAt - BUSINESS_DATE_LOWER_BOUND_MARGIN_DAYS * DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+};
+
+const withBusinessDateLowerBound = <T extends { gte: (column: string, value: string) => T }>(
+  query: T,
+  lowerBound: string | null
+) => (lowerBound ? query.gte("business_date", lowerBound) : query);
 
 type SupabaseClientLike = Pick<SupabaseClient, "from">;
 
@@ -280,13 +301,17 @@ export async function fetchKegProgressByItemId(params: {
       !earliest || session.started_at < earliest ? session.started_at : earliest,
     ""
   );
+  const businessDateLowerBound = getKegBusinessDateLowerBound(earliestStartedAt);
 
   const receiptRows: PosReceiptRow[] = [];
   const receiptsStartedAt = performance.now();
   for (let from = 0; ; from += POS_SALES_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("pos_sales_receipts")
-      .select("id, ref_date, synced_at, updated_at, payment_status, is_canceled")
+    const { data, error } = await withBusinessDateLowerBound(
+      supabase
+        .from("pos_sales_receipts")
+        .select("id, ref_date, synced_at, updated_at, payment_status, is_canceled"),
+      businessDateLowerBound
+    )
       .eq("payment_status", 3)
       .or(
         `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`
@@ -341,9 +366,10 @@ export async function fetchKegProgressByItemId(params: {
     const timestampLinesStartedAt = performance.now();
     lineRequests.push(
       fetchLinePages((from, to) =>
-        supabase
-          .from("pos_sales_receipt_lines")
-          .select(lineSelect)
+        withBusinessDateLowerBound(
+          supabase.from("pos_sales_receipt_lines").select(lineSelect),
+          businessDateLowerBound
+        )
           .eq("payment_status", 3)
           .or(lineMatchFilter)
           .or(lineTimeFilter)

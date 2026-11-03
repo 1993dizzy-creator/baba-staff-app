@@ -205,3 +205,31 @@ test("Keg progress exposes numeric Server-Timing metrics without changing JSON",
   }
   assert.match(route, /\.toFixed\(1\)/);
 });
+
+test("Keg receipt and timestamp-line scans are bounded by business_date; receipt-id paths are not", async () => {
+  const source = readFileSync(join(process.cwd(), "lib/inventory/keg-progress.ts"), "utf8");
+  const { ScriptTarget, transpileModule } = await import("typescript");
+  const { runInNewContext } = await import("node:vm");
+  const fnSource = source.slice(
+    source.indexOf("const BUSINESS_DATE_LOWER_BOUND_MARGIN_DAYS"),
+    source.indexOf("const withBusinessDateLowerBound")
+  ).replace("export const", "const");
+  const getLowerBound = runInNewContext(
+    transpileModule(`${fnSource}\ngetKegBusinessDateLowerBound;`, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText
+  ) as (value: string) => string | null;
+  // 2026-10-02 11:51Z (VN 18:51) -> two days before the UTC date.
+  assert.equal(getLowerBound("2026-10-02T11:51:00+00:00"), "2026-09-30");
+  // Just after VN midnight is still the previous UTC date; the margin covers it.
+  assert.equal(getLowerBound("2026-10-01T17:30:00Z"), "2026-09-29");
+  assert.equal(getLowerBound("not-a-date"), null);
+
+  const receiptSection = source.slice(source.indexOf("const receiptRows: PosReceiptRow[]"), source.indexOf("const lineRowsById"));
+  assert.match(receiptSection, /withBusinessDateLowerBound\(\s*supabase\s*\.from\("pos_sales_receipts"\)[^]*?businessDateLowerBound\s*\)\s*\.eq\("payment_status", 3\)/);
+  const lineSection = source.slice(source.indexOf("const lineSelect"), source.indexOf("const missingReceiptIds"));
+  assert.equal((lineSection.match(/withBusinessDateLowerBound\(/g) || []).length, 1);
+  assert.match(lineSection, /withBusinessDateLowerBound\(\s*supabase\.from\("pos_sales_receipt_lines"\)\.select\(lineSelect\),\s*businessDateLowerBound\s*\)\s*\.eq\("payment_status", 3\)\s*\.or\(lineMatchFilter\)\s*\.or\(lineTimeFilter\)/);
+  // Receipt-id chunk lines and missing-receipt lookups stay unbounded so late
+  // modifications/cancellations of fetched receipts are still observed.
+  const missingSection = source.slice(source.indexOf("const missingReceiptIds"), source.indexOf("const computeStartedAt"));
+  assert.doesNotMatch(missingSection, /business_date|withBusinessDateLowerBound/);
+});
