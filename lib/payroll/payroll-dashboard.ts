@@ -36,6 +36,47 @@ export function getPayrollActualPaidAmount(employee: DashboardEmployee) {
   return isPayrollEmployeePaid(employee) ? employee.payment?.actual_paid_amount ?? null : null;
 }
 
+// Read the selected month's overview only. These badges describe applicability,
+// never a new calculation or a promise of a bonus/payment.
+export function getPayrollApplicabilityBadges(input: {
+  employee: {
+    insuranceEnrolled?: boolean;
+    tax?: { status: string; taxMode: string | null } | null;
+    attendanceStanding?: { perfectAttendanceCurrent: boolean } | null;
+    automaticIncentives?: readonly { category: string; sourceSnapshot: Record<string, unknown> }[];
+  };
+  month: string;
+  monthClosed: boolean;
+  attendanceBonusEligible: boolean;
+  mealAllowanceEligible: boolean;
+  lang: "ko" | "vi";
+}) {
+  const { employee, month, monthClosed, lang } = input;
+  const vi = lang === "vi";
+  const badges: { key: string; label: string; description: string }[] = [];
+  const attendanceApplied = employee.automaticIncentives?.some(item =>
+    item.category === "attendance_bonus" && item.sourceSnapshot.payrollMonth === month,
+  ) === true;
+  // Preserve the existing eligibility + perfect-attendance indicator for an
+  // open month. For a closed month, only the actual automatic bonus is applied.
+  const attendanceMaintained = !monthClosed && input.attendanceBonusEligible
+    && employee.attendanceStanding?.perfectAttendanceCurrent === true;
+  if (attendanceApplied || attendanceMaintained) badges.push({
+    key: "attendance", label: vi ? "Chuyên cần" : "개근",
+    description: attendanceApplied
+      ? (vi ? "Đã áp dụng thưởng chuyên cần" : "개근 보너스 반영")
+      : (vi ? "Đủ tư cách thưởng chuyên cần · đang duy trì chấm công, chưa xác nhận chi trả" : "개근 보너스 대상 · 현재 근태 유지 중, 지급 미확정"),
+  });
+  if (input.mealAllowanceEligible) badges.push({ key: "meal", label: vi ? "Ăn ca" : "식대", description: vi ? "Đối tượng trợ cấp ăn" : "식대 대상" });
+  if (employee.insuranceEnrolled === true) badges.push({ key: "insurance", label: vi ? "Bảo hiểm" : "보험", description: vi ? "Đã tham gia bảo hiểm" : "보험 가입 대상" });
+  // Zero tax is still applicable. A missing/reviewing profile or policy is not
+  // a confirmed applicable state, even when its mode is resident_progressive.
+  if (employee.tax?.taxMode === "resident_progressive" && employee.tax.status === "calculated") {
+    badges.push({ key: "tax", label: "TNCN", description: vi ? "Đối tượng tính thuế TNCN" : "TNCN 적용 대상" });
+  }
+  return badges.map(badge => ({ ...badge, description: `${month} · ${badge.description}` }));
+}
+
 export function buildPayrollDashboardSummary(employees: readonly DashboardEmployee[]) {
   const paid = employees.filter(isPayrollEmployeePaid).length;
   const review = employees.filter(isPayrollEmployeeReviewRequired).length;

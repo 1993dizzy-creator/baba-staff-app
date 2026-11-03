@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
-import { buildPayrollDashboardSummary, buildPayrollPartTotals, countPayrollDashboardFilters, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount, matchesPayrollDashboardFilter } from "../lib/payroll/payroll-dashboard.ts";
+import { buildPayrollDashboardSummary, buildPayrollPartTotals, countPayrollDashboardFilters, getPayrollActualPaidAmount, getPayrollApplicabilityBadges, getPayrollCalculatedNetAmount, matchesPayrollDashboardFilter } from "../lib/payroll/payroll-dashboard.ts";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { getPayrollHeaderAmount } from "../lib/payroll/payroll-page-display.ts";
 
@@ -75,6 +75,31 @@ test("payroll page wires summary and filters without changing payment or calcula
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /fetch\(`\/api\/admin\/payroll\/overview\?month=\$\{month\}`/);
   assert.match(card, /buildPayrollPartTotals\(employees, getPayrollHeaderAmount, future\)/);
-  for (const phrase of ["급여 대상", "계산 가능", "확인 필요", "지급완료", "미지급", "전체", "Nhân viên tính lương", "Tính được", "Cần kiểm tra", "Đã trả", "Chưa trả", "Tất cả"]) assert.ok(summary.includes(phrase), phrase);
+  for (const phrase of ["급여 대상", "확인 필요", "지급완료", "미지급", "전체", "Nhân viên tính lương", "Cần kiểm tra", "Đã trả", "Chưa trả", "Tất cả"]) assert.ok(summary.includes(phrase), phrase);
   for (const phrase of ["계산 실수령", "실제 지급", "Thực nhận đã tính", "Thực trả", "계약급여 (월 환산)", "Lương hợp đồng (quy đổi tháng)"]) assert.ok(card.includes(phrase), phrase);
+});
+
+test("monthly badges reuse confirmed applicability including zero TNCN and distinguish an unconfirmed attendance bonus", () => {
+  const input = {
+    employee: { insuranceEnrolled: true, tax: {status:"calculated",taxMode:"resident_progressive",employeePitDeductionAmount:0}, attendanceStanding: {perfectAttendanceCurrent:true} },
+    month:"2026-10",monthClosed:false,attendanceBonusEligible:true,mealAllowanceEligible:true,lang:"ko" as const,
+  };
+  const keys = (value: Parameters<typeof getPayrollApplicabilityBadges>[0]) => getPayrollApplicabilityBadges(value).map(badge=>badge.key);
+  assert.deepEqual(keys(input), ["attendance","meal","insurance","tax"]);
+  assert.match(getPayrollApplicabilityBadges(input)[0].description, /2026-10.*지급 미확정/);
+  assert.deepEqual(keys({...input,monthClosed:true}), ["meal","insurance","tax"]);
+  assert.deepEqual(keys({...input,attendanceBonusEligible:false}), ["meal","insurance","tax"]);
+  assert.deepEqual(keys({...input,employee:{...input.employee,attendanceStanding:null}}), ["meal","insurance","tax"]);
+  assert.deepEqual(keys({...input,employee:{...input.employee,attendanceStanding:{perfectAttendanceCurrent:false}}}), ["meal","insurance","tax"]);
+  for (const tax of [null, {status:"requires_review",taxMode:"resident_progressive"}, {status:"not_applicable",taxMode:"not_applicable"}]) {
+    assert.ok(!keys({...input,employee:{...input.employee,tax}}).includes("tax"));
+  }
+  assert.deepEqual(keys({...input,attendanceBonusEligible:false,mealAllowanceEligible:false,employee:{insuranceEnrolled:false,tax:null}}), []);
+  const applied={...input,monthClosed:true,attendanceBonusEligible:false,employee:{automaticIncentives:[{category:"attendance_bonus",sourceSnapshot:{payrollMonth:"2026-10"}}]}};
+  assert.deepEqual(keys(applied), ["attendance","meal"]);
+  assert.match(getPayrollApplicabilityBadges(applied)[0].description, /보너스 반영/);
+  assert.deepEqual(keys({...applied,month:"2026-09"}), ["meal"]);
+  const vi=getPayrollApplicabilityBadges({...input,lang:"vi"});
+  assert.deepEqual(vi.map(badge=>badge.label), ["Chuyên cần","Ăn ca","Bảo hiểm","TNCN"]);
+  assert.ok(vi.every(badge=>badge.description.startsWith("2026-10 · ")));
 });
