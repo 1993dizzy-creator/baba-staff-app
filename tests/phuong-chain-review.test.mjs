@@ -73,7 +73,8 @@ async function fixture(){
  const invoices=[];const amounts=new Map();
  for(const payment of [1641,2399,3336,3582]){
    const group=targetRows.filter(x=>Number(x.payment_id)===payment);
-   const total=Number(group[0].allocated),base=Math.floor(total/group.length);
+   // Shape synthetic FIFO links to the handed-off counts 12/12/18/15.
+   const total=Number(group[0].allocated),base=payment===1641?1530000:payment===3336?1500000:Math.floor(total/group.length);
    for(let i=0;i<group.length;i++){
      const r=group[i],id=Number(r.payable_id),amount=i===group.length-1?total-base*i:base;
      amounts.set(id,amount);
@@ -93,7 +94,14 @@ async function fixture(){
      row.left-=part;left-=part;if(!row.left)cursor++;
    }
  }
- await db.exec(`UPDATE ledger_payables p SET status=CASE WHEN a.paid=p.original_amount THEN 'paid'
+ await db.exec(`UPDATE ledger_payable_allocations SET id=id+10000;
+ WITH ranked AS (SELECT id,payment_transaction_id,row_number() OVER(PARTITION BY payment_transaction_id ORDER BY id) n
+   FROM ledger_payable_allocations WHERE payment_transaction_id IN(1641,2399,3336,3582))
+ UPDATE ledger_payable_allocations a SET id=CASE r.payment_transaction_id
+   WHEN 1641 THEN 121 WHEN 2399 THEN 927 WHEN 3336 THEN 1268 WHEN 3582 THEN 1345 END+r.n
+ FROM ranked r WHERE a.id=r.id;
+ SELECT setval(pg_get_serial_sequence('ledger_payable_allocations','id'),(SELECT max(id) FROM ledger_payable_allocations));
+ UPDATE ledger_payables p SET status=CASE WHEN a.paid=p.original_amount THEN 'paid'
  WHEN a.paid>0 THEN 'partially_paid' ELSE 'unpaid' END
  FROM (SELECT p.id,coalesce(sum(a.allocated_amount),0) paid FROM ledger_payables p LEFT JOIN ledger_payable_allocations a ON a.payable_id=p.id GROUP BY p.id) a WHERE p.id=a.id;`);
  return {db,invoices};

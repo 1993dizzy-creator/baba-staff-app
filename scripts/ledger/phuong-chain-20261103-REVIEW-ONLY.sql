@@ -7,10 +7,22 @@
 -- No new payment; only #1641 party changes on payment transactions.
 -- Movement, inventory, expense and request JSON are preserved.
 -- Correct BEFORE rebuild, then independently approve a NEW rebuild manifest.
+-- User-reported production read-only simulation PASS (not rerun locally):
+-- Phuong open 13,870,000; Carlsberg open 46,219,992; overallocations 0.
+-- Target payable IDs below retain the last explicitly supplied 57-ID list.
+-- Notion's latest list/items still require independent baseline/invoice approval.
 
 BEGIN ISOLATION LEVEL SERIALIZABLE;
 SET LOCAL lock_timeout='3s';
 SET LOCAL statement_timeout='30s';
+
+-- Exact existing allocation ID/payment pairs confirmed by production preflight.
+-- An extra, missing or reassigned ID blocks ALL four payments before mutation.
+CREATE TEMP TABLE pc_chain_original_ids ON COMMIT DROP AS
+SELECT payment_id,generate_series(first_id,last_id)::bigint allocation_id
+FROM (VALUES(1641::bigint,122,133),(2399,928,939),(3336,1269,1286),(3582,1346,1360))
+ c(payment_id,first_id,last_id);
+ALTER TABLE pc_chain_original_ids ADD PRIMARY KEY(allocation_id);
 
 CREATE TEMP TABLE pc_chain_targets ON COMMIT DROP AS
 SELECT payment_id,unnest(ids)::bigint payable_id,d1,d2,paid::numeric,allocated::numeric
@@ -134,6 +146,13 @@ BEGIN
  PERFORM public.ledger_assert_month_open_v1(DATE '2026-10-01');
  SELECT snapshot INTO before_state FROM pc_chain_snapshot;
  IF before_state IS DISTINCT FROM approved_baseline THEN RAISE EXCEPTION 'CHAIN_BASELINE_STALE'; END IF;
+ IF EXISTS(
+   (SELECT payment_id,allocation_id FROM pc_chain_original_ids
+    EXCEPT SELECT payment_transaction_id,id FROM public.ledger_payable_allocations WHERE payment_transaction_id IN(1641,2399,3336,3582))
+   UNION ALL
+   (SELECT payment_transaction_id,id FROM public.ledger_payable_allocations WHERE payment_transaction_id IN(1641,2399,3336,3582)
+    EXCEPT SELECT payment_id,allocation_id FROM pc_chain_original_ids)
+ ) THEN RAISE EXCEPTION 'CHAIN_ORIGINAL_ALLOCATION_IDS_DRIFT'; END IF;
  IF before_state->'augustSummary'->>'count' IS DISTINCT FROM '302'
    OR (before_state->'augustSummary'->>'amount')::numeric IS DISTINCT FROM 69215076 THEN RAISE EXCEPTION 'CHAIN_AUGUST_BASELINE_DRIFT'; END IF;
  IF (SELECT count(*) FROM jsonb_array_elements(before_state->'augustAllocations') j WHERE j->>'payment_transaction_id'='3337')<>6
@@ -194,11 +213,13 @@ BEGIN
    WHERE (j->>'payment_transaction_id')::bigint IN(1641,2399,3336,3582))<>13 THEN RAISE EXCEPTION 'CHAIN_AUGUST_RELEASE_SCOPE_DRIFT'; END IF;
 
  -- Keep original IDs for existing desired pairs; changes are recorded in audit.
- DELETE FROM public.ledger_payable_allocations a WHERE payment_transaction_id IN(1641,2399,3336,3582)
+ DELETE FROM public.ledger_payable_allocations a USING pc_chain_original_ids old
+ WHERE a.id=old.allocation_id AND a.payment_transaction_id=old.payment_id
    AND NOT EXISTS(SELECT 1 FROM pc_chain_targets c WHERE c.payable_id=a.payable_id AND c.payment_id=a.payment_transaction_id);
  UPDATE public.ledger_payable_allocations a SET allocated_amount=p.original_amount
  FROM pc_chain_targets c JOIN public.ledger_payables p ON p.id=c.payable_id
- WHERE a.payable_id=c.payable_id AND a.payment_transaction_id=c.payment_id AND a.allocated_amount<>p.original_amount;
+ WHERE a.payable_id=c.payable_id AND a.payment_transaction_id=c.payment_id AND a.allocated_amount<>p.original_amount
+ AND EXISTS(SELECT 1 FROM pc_chain_original_ids old WHERE old.allocation_id=a.id AND old.payment_id=a.payment_transaction_id);
  INSERT INTO public.ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount)
  SELECT c.payable_id,c.payment_id,p.original_amount FROM pc_chain_targets c JOIN public.ledger_payables p ON p.id=c.payable_id
  WHERE NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations a WHERE a.payable_id=c.payable_id AND a.payment_transaction_id=c.payment_id)
