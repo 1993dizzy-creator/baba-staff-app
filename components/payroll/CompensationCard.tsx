@@ -289,12 +289,12 @@ export function CombinedPartTotal({
     <div style={s.total}>
       <b style={s.totalTitle}>{title}</b>
       {future ? (
-        <small style={s.help}>{t.beforeCalculationPeriod}</small>
+        <small style={{...s.help,fontSize:12}}>{t.beforeCalculationPeriod}</small>
       ) : (
         <>
-          <Row label={vi ? "Lương hợp đồng (quy đổi tháng)" : "계약급여 (월 환산)"} value={formatVnd(totals.contractMonthlyTotal)} />
-          <Row label={vi ? "Thực nhận đã tính" : "계산 실수령"} value={formatVnd(totals.netTotal)} strong />
-          <Row label={vi ? `Thực trả (${people(totals.paidCount)})` : `실제 지급 (${people(totals.paidCount)})`} value={formatVnd(totals.paidTotal)} />
+          <div style={s.totalRow}><span style={s.totalLabel}>{vi ? "Lương hợp đồng (quy đổi tháng)" : "계약급여 (월 환산)"}</span><b style={s.totalAmount}>{formatVnd(totals.contractMonthlyTotal)}</b></div>
+          <div style={s.totalRow}><span style={s.totalLabel}>{vi ? "Thực nhận đã tính" : "계산 실수령"}</span><b style={s.totalAmount}>{formatVnd(totals.netTotal)}</b></div>
+          <div style={{...s.totalRow,borderBottom:0}}><span style={s.totalLabel}>{vi ? `Thực trả (${people(totals.paidCount)})` : `실제 지급 (${people(totals.paidCount)})`}</span><b style={s.totalAmount}>{formatVnd(totals.paidTotal)}</b></div>
           {totals.contractExcluded.length > 0 && (
             <small style={s.totalExcluded}>{vi ? "Chưa tính lương hợp đồng" : "계약급여 합계 제외"}: {excludedLine(totals.contractExcluded)}</small>
           )}
@@ -1003,12 +1003,15 @@ const s = {
   adjustmentValue: { fontWeight: 800, whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" },
   chevron: { fontSize: 15, lineHeight: 1, fontWeight: 900 },
   help: { color: "#64748b", lineHeight: 1.45 },
-  totalTitle: { fontSize: 12, fontWeight: 900, color: "#334155" },
-  totalExcluded: { display: "block", padding: "5px 7px", borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 10.5, lineHeight: 1.4, overflowWrap: "anywhere" },
+  totalTitle: { fontSize: 12, fontWeight: 800, color: "#334155" },
+  totalRow: { display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"baseline", gap:10, padding:"7px 0", borderBottom:"1px solid #e5e7eb", minWidth:0, fontSize:12, lineHeight:1.5 },
+  totalLabel: { minWidth:0, textAlign:"left", color:"#475569", overflowWrap:"anywhere" },
+  totalAmount: { textAlign:"right", whiteSpace:"nowrap", fontSize:12, fontWeight:700, fontVariantNumeric:"tabular-nums" },
+  totalExcluded: { display: "block", marginTop:6, padding: "7px", borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 12, lineHeight: 1.5, overflowWrap: "anywhere" },
   total: {
     display: "grid",
-    gap: 5,
-    padding: "9px 10px",
+    gap: 0,
+    padding: "10px",
     border: "1px solid #e2e8f0",
     borderRadius: 11,
     background: "#f8fafc",

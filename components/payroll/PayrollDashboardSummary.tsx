@@ -49,9 +49,10 @@ export function PayrollDashboardFilters({
   onChange: (filter: PayrollDashboardFilter) => void;
 }) {
   const t = text[lang];
+  const filters = PAYROLL_DASHBOARD_FILTERS.filter(filter => filter !== "paid");
   return (
     <div style={s.filters} role="group" aria-label={t.filterLabel}>
-      {PAYROLL_DASHBOARD_FILTERS.filter(filter => filter !== "paid").map((filter) => {
+      {filters.map((filter, index) => {
         const active = value === filter;
         return (
           <button
@@ -59,7 +60,7 @@ export function PayrollDashboardFilters({
             type="button"
             aria-pressed={active}
             onClick={() => onChange(filter)}
-            style={{ ...s.filter, ...(active ? s.filterActive : {}) }}
+            style={{ ...s.filter, marginLeft: index === 0 ? "auto" : 0, marginRight: index === filters.length - 1 ? "auto" : 0, ...(active ? s.filterActive : {}) }}
           >
             <span>{t.filters[filter]}</span>
             <span style={{ ...s.filterCount, ...(active ? s.filterCountActive : {}) }}>{counts[filter]}</span>
@@ -71,7 +72,7 @@ export function PayrollDashboardFilters({
 }
 
 const s = {
-  summary: { display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, fontSize: 12, lineHeight: 1.4, whiteSpace: "nowrap", color: "#475569" },
+  summary: { display: "flex", justifyContent: "center", alignItems: "baseline", gap: 6, minWidth: 0, fontSize: 12, lineHeight: 1.4, whiteSpace: "nowrap", color: "#475569" },
   summaryCount: { fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "#111827" },
   filters: { display: "flex", flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollSnapType: "x proximity", gap: 6, minWidth: 0, maxWidth: "100%", paddingBottom: 2 },
   filter: { display: "inline-flex", alignItems: "center", gap: 6, flex: "0 0 auto", whiteSpace: "nowrap", scrollSnapAlign: "start", minHeight: 34, padding: "6px 12px", borderRadius: 999, borderWidth: 1, borderStyle: "solid", borderColor: "#d1d5db", background: "#f9fafb", color: "#334155", fontSize: 12.5, fontWeight: 800 },
