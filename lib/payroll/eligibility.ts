@@ -34,16 +34,13 @@ export function isPayrollEligible(user: PayrollEligibilityUser) {
 export function isPayrollUserCandidate({
   user,
   employmentIntersects,
-  hasAttendance,
-  hasContract,
 }: {
   user: PayrollEligibilityUser;
   employmentIntersects: boolean;
   hasAttendance: boolean;
   hasContract: boolean;
 }) {
-  return (
-    isPayrollEligible(user) &&
-    (employmentIntersects || hasAttendance || hasContract)
-  );
+  // Contracts and attendance are calculation sources, not permission to
+  // extend employment. Overrides affect role eligibility only.
+  return isPayrollEligible(user) && employmentIntersects;
 }
