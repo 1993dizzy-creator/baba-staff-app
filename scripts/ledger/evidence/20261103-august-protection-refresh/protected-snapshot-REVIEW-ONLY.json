@@ -1,0 +1,95 @@
+{
+  "status": "REVIEW_ONLY_NON_ATOMIC_REST_CAPTURE",
+  "capturedFrom": "2026-11-03T15:47:37.663Z",
+  "capturedTo": "2026-11-03T15:47:57.521Z",
+  "source": "production read-only Data API GET; PostgreSQL ::text projections; no RPC or writes",
+  "consistency": {
+    "repeatableReadTransaction": false,
+    "twoPassFingerprintsEqual": true,
+    "auditMaxAtStart": "7062",
+    "auditMaxAtEnd": "7062",
+    "requiresSingleTransactionSqlConfirmation": true
+  },
+  "definition": {
+    "path": "scripts/ledger/august-rebuild-atomic-ISOLATED-ONLY.sql",
+    "sha256": "427074714e9c8b014097f313fe2591846263cec117d24e87c74c17e355631d2c"
+  },
+  "requiredProtectedFingerprints": [
+    {
+      "name": "payable_allocations",
+      "beforeCount": 289,
+      "fingerprint": "e41b545e00c8241e072cda1db32d6d95"
+    },
+    {
+      "name": "pos_receipts",
+      "beforeCount": 112,
+      "fingerprint": "067538e0b9a2dc754c8545a29ce9e448"
+    },
+    {
+      "name": "month_closure_history",
+      "beforeCount": 8,
+      "fingerprint": "5334f637cea5c53ce11270ef91e6d43b"
+    },
+    {
+      "name": "ledger_audit_history",
+      "beforeCount": 6879,
+      "fingerprint": "74d14ed45805fb654e6ebe9a51d654e3"
+    },
+    {
+      "name": "inventory_logs",
+      "beforeCount": 2016,
+      "fingerprint": "dbe203a7f5ebfaa87ef68e48acde599b"
+    }
+  ],
+  "payableProtection": {
+    "previousCount": 302,
+    "previousAmount": 69215076,
+    "currentCount": 289,
+    "currentAmount": 46053076,
+    "currentFingerprint": "e41b545e00c8241e072cda1db32d6d95"
+  },
+  "correctionAudit": {
+    "id": 7062,
+    "action": "payable_allocation_chain_corrected",
+    "entityType": "transaction",
+    "entityId": 1641,
+    "correctionKey": "phuong-chain-20261103-2399-exception-v1",
+    "afterSnapshotTextMd5": "fb7928e118380bff3bab2db026322835",
+    "comparisonFromStoredAudit": {
+      "id": 7062,
+      "beforeAugust": {
+        "count": 302,
+        "amount": 69215076,
+        "fingerprint": "2626e12bc4f115e8e97868a4037b4824"
+      },
+      "afterAugust": {
+        "count": 289,
+        "amount": 46053076,
+        "fingerprint": "e41b545e00c8241e072cda1db32d6d95"
+      },
+      "closureHistoryRowsBefore": 8,
+      "closureHistoryRowsAfter": 8,
+      "closureHistoryFullRowsEqual": true
+    }
+  },
+  "closures": [
+    {
+      "month": "2026-08-01",
+      "status": "reopened",
+      "revision": 4
+    },
+    {
+      "month": "2026-09-01",
+      "status": "reopened",
+      "revision": 4
+    }
+  ],
+  "approval": {
+    "approved": false,
+    "approvedManifestHash": null
+  },
+  "limitations": [
+    "REST pages/sources are separate transactions; stable two-pass reads are not an atomic SQL snapshot.",
+    "Prior signed complete August manifest was not found in repository; events and balances cannot be reconstructed from protection hashes."
+  ]
+}

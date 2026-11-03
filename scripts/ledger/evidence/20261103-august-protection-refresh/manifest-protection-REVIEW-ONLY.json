@@ -1,0 +1,65 @@
+{
+  "status": "BLOCKED_REVIEW_ONLY_INCOMPLETE_MANIFEST_DRAFT",
+  "month": "2026-08",
+  "sourceSnapshot": "protected-snapshot-REVIEW-ONLY.json",
+  "baseApprovedManifest": {
+    "path": null,
+    "sha256": null,
+    "approvalRecord": null
+  },
+  "requiredProtectedFingerprints": [
+    {
+      "name": "payable_allocations",
+      "beforeCount": 289,
+      "fingerprint": "e41b545e00c8241e072cda1db32d6d95"
+    },
+    {
+      "name": "pos_receipts",
+      "beforeCount": 112,
+      "fingerprint": "067538e0b9a2dc754c8545a29ce9e448"
+    },
+    {
+      "name": "month_closure_history",
+      "beforeCount": 8,
+      "fingerprint": "5334f637cea5c53ce11270ef91e6d43b"
+    },
+    {
+      "name": "ledger_audit_history",
+      "beforeCount": 6879,
+      "fingerprint": "74d14ed45805fb654e6ebe9a51d654e3"
+    },
+    {
+      "name": "inventory_logs",
+      "beforeCount": 2016,
+      "fingerprint": "dbe203a7f5ebfaa87ef68e48acde599b"
+    }
+  ],
+  "preserveFromOriginalManifest": [
+    "runId",
+    "sourceRows",
+    "cellCount",
+    "cardTotal",
+    "moneyScale",
+    "sheetCellDigest",
+    "effectDigest",
+    "expectedDaily",
+    "expectedOpening",
+    "expectedClosing",
+    "expectedCurrentClosing",
+    "expectedFollowup",
+    "requiredTechnicalMovementIds",
+    "events"
+  ],
+  "assemblyInstructions": "Copy the independently approved COMPLETE v3 manifest to a new version; replace only requiredProtectedFingerprints after atomic read-only confirmation. Preserve all source/cash/events/runId-key contracts. Do not execute this incomplete draft.",
+  "approval": {
+    "approved": false,
+    "approvedManifestHash": null,
+    "sheetApprovalReference": null
+  },
+  "blockers": [
+    "A single REPEATABLE READ READ ONLY SQL capture must independently confirm all five current fingerprints/counts and auditMaxId; REST two-pass capture is not atomic.",
+    "The previous approved complete manifest and its approval/digests were not found in the repository and must be supplied without overwriting originals.",
+    "The complete updated manifest must obtain a NEW independent md5(manifest::jsonb::text) approval; do not reuse prior approval hash.",
+    "Any later audit append changes the audit high-water/prefix and invalidates this protection snapshot."
+  ]
+}
