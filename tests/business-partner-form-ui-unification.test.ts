@@ -38,7 +38,7 @@ test("nothing in PartnerForm ever reassigns ledgerPartyId, so the initial value 
   // no onChange handler ever calls setValue({ ...value, ledgerPartyId: ... })
   assert.doesNotMatch(partnerForm, /setValue\(\{[^}]*ledgerPartyId:/);
   assert.match(partnerForm, /useState<PartnerFormValue>\(initial \?\? emptyValue\)/);
-  assert.match(partnerForm, /await onSubmit\(value.paymentMode === "unspecified" \? \{ \.\.\.value, settlementMode: null, settlementRule: null, defaultPaymentTermDays: null \} : value\)/);
+  assert.match(partnerForm, /await onSubmit\(value.paymentMode === "unspecified" \? \{ \.\.\.value, settlementMode: null, settlementRule: null, settlementDays: null, defaultPaymentTermDays: null \} : value\)/);
   // the edit page seeds `initial` straight from the API's existing bridge id
   assert.match(partnerDetail, /setPartner\(\{ \.\.\.body\.partner, ledgerPartyId: body\.partner\.ledgerParty\?\.id \?\? null \}\)/);
 });

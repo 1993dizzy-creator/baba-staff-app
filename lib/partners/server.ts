@@ -24,7 +24,7 @@ export async function requirePartnerManager() {
 export async function loadPartnerData(partnerId?: number) {
   let partnerQuery = supabaseServer
     .from("business_partners")
-    .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at")
+    .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,settlement_days,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at")
     .order("is_active", { ascending: false })
     .order("name");
   if (partnerId !== undefined) partnerQuery = partnerQuery.eq("id", partnerId);
@@ -79,7 +79,7 @@ export async function loadPartnerData(partnerId?: number) {
       partnerType: row.partner_type,
       paymentMode: row.payment_mode,
       settlementMode: row.settlement_mode,
-      settlementRule: row.settlement_rule,
+      settlementRule: row.settlement_rule, settlementDays: row.settlement_days ?? null,
       defaultPaymentTermDays: row.default_payment_term_days,
       defaultFundAccountId,
       defaultFundAccountCode: defaultFundAccountId === null ? null : fundAccountCodeById.get(defaultFundAccountId) ?? null,
@@ -111,7 +111,7 @@ export async function loadPartnerData(partnerId?: number) {
 export async function loadPartnerDetailData(partnerId: number) {
   const [partnerResult, mappingResult, fundAccountResult, subtypeResult] = await Promise.all([
     supabaseServer.from("business_partners")
-      .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at")
+      .select("id,name,partner_type,payment_mode,settlement_mode,settlement_rule,settlement_days,default_payment_term_days,default_fund_account_id,partner_subtype_id,display_tag,phone,contact_name,memo,is_active,created_at,updated_at")
       .eq("id", partnerId).maybeSingle(),
     supabaseServer.from("business_partner_ledger_parties")
       .select("ledger_party_id").eq("business_partner_id", partnerId).maybeSingle(),
@@ -145,7 +145,7 @@ export async function loadPartnerDetailData(partnerId: number) {
   return {
     partner: {
       id: Number(row.id), name: row.name, partnerType: row.partner_type, paymentMode: row.payment_mode,
-      settlementMode: row.settlement_mode, settlementRule: row.settlement_rule,
+      settlementMode: row.settlement_mode, settlementRule: row.settlement_rule, settlementDays: row.settlement_days ?? null,
       defaultPaymentTermDays: row.default_payment_term_days, defaultFundAccountId,
       defaultFundAccountCode: defaultFundAccountId === null ? null : fundAccountCodeById.get(defaultFundAccountId) ?? null,
       partnerSubtypeId, partnerSubtypeCode: partnerSubtype?.code ?? null, partnerSubtype,

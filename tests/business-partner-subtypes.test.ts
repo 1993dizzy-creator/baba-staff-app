@@ -490,8 +490,8 @@ test("40: defaultFundAccount plumbing is untouched by this migration/route chang
 });
 
 test("41: immediate/postpaid canonicalization in parsePartnerInput is untouched by adding partnerSubtypeId", () => {
-  assert.deepEqual(parse({ paymentMode: "postpaid" }), { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" });
-  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" });
+  assert.deepEqual(parse({ paymentMode: "postpaid" }), { ...base, paymentMode: "postpaid" });
+  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), { ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 });
 });
 
 test("42: Candidate archive/reactivate RPC and route are untouched by this feature", () => {

@@ -63,6 +63,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       p_payment_mode: partnerInput?.paymentMode ?? null,
       p_settlement_mode: partnerInput?.settlementMode ?? null,
       p_settlement_rule: partnerInput?.settlementRule ?? null,
+      p_settlement_days: partnerInput?.settlementDays ?? null,
       p_default_payment_term_days: partnerInput?.defaultPaymentTermDays ?? null,
       p_default_fund_account_id: partnerInput?.defaultFundAccountId ?? null,
       p_partner_subtype_id: partnerInput?.partnerSubtypeId ?? null,
