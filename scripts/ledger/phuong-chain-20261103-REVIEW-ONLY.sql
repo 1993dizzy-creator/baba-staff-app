@@ -1,7 +1,9 @@
 -- REVIEW-ONLY atomic alternative to Phase A, NOT a follow-up to it.
 -- Phase A file stays unchanged. No production execution authorized.
--- Candidates are NOT approved invoices. All 57 invoice reviews, independent
--- full-row baseline, actor and separate DB authorization are prerequisites.
+-- User-approved evidence policy: FOUR period-level cross-check approvals.
+-- No invented individual invoice evidence. Independent full-row baseline,
+-- actor and separate DB execution authorization remain prerequisites.
+-- #2399 lacks the 9/30 supplier original: explicit exception approval required.
 -- NULL inputs fail closed; even populated reviews end with ROLLBACK.
 -- #388 keeps original 3,300,000 and allocation #119/#1638/130,000;
 -- delete #928 only: partially_paid, remaining unpaid 3,170,000.
@@ -12,7 +14,7 @@
 -- User-reported production read-only simulation PASS (not rerun locally):
 -- Phuong open 13,870,000; Carlsberg open 46,219,992; overallocations 0.
 -- Target payable IDs below retain the last explicitly supplied 57-ID list.
--- Notion's latest list/items still require independent baseline/invoice approval.
+-- Notion's latest list still requires independent baseline/period approval.
 
 BEGIN ISOLATION LEVEL SERIALIZABLE;
 SET LOCAL lock_timeout='3s';
@@ -88,7 +90,7 @@ SELECT jsonb_build_object(
 ) snapshot;
 
 -- Capture this prefix in an independent consistent snapshot; inspect original
--- source_snapshot / invoice line evidence, not just date and amount matches.
+-- source_snapshot and period-level supplier/payment/APP evidence and exceptions.
 SELECT snapshot AS baseline_for_independent_review FROM pc_chain_snapshot;
 SELECT c.*,p.original_amount,e.id AS expense_id,to_jsonb(e) AS original_expense,
  (SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM public.ledger_payable_allocations a WHERE a.payable_id=c.payable_id) existing_allocations
@@ -98,18 +100,23 @@ LEFT JOIN public.ledger_transactions e ON e.id=p.expense_transaction_id ORDER BY
 DO $chain$
 DECLARE
  approved_baseline constant jsonb := NULL;
- -- Array of {payableId,paymentId,amount,invoiceReference,lineEvidence}; all 57.
- -- References must identify reviewed original invoice/item evidence, not these candidates.
- approved_invoice_rows constant jsonb := NULL;
+ -- Four objects: paymentId, from, to, supplierStatus, supplierEvidence,
+ -- supplierAmount (null if unverified), paymentEvidence, paymentAmount,
+ -- appAmount, unallocatedAmount, exceptions.
+ -- #1641: alreadyDeductedAmount=936000. #3336: supplierDocumentCount=7.
+ -- #2399: missingOriginalApproved=true AND exceptionApprovalReference required;
+ -- this is a separate evidence-exception approval, not DB execution permission.
+ -- Status: matched (#1641/#3336), missing_original (#2399), partial_unresolved (#3582).
+ approved_periods constant jsonb := NULL;
  actor_user_id constant bigint := NULL;
  before_state jsonb; after_state jsonb; expected_json jsonb; r record;
  phuong bigint; carlsberg bigint; n integer; paid_amount numeric; applied boolean;
 BEGIN
- IF approved_baseline IS NULL OR approved_invoice_rows IS NULL OR actor_user_id IS NULL THEN
-   RAISE EXCEPTION 'CHAIN_REVIEW_BLOCKED: independent baseline, invoice approvals and actor required';
+ IF approved_baseline IS NULL OR approved_periods IS NULL OR actor_user_id IS NULL THEN
+   RAISE EXCEPTION 'CHAIN_REVIEW_BLOCKED: independent baseline, period approvals and actor required';
  END IF;
- IF jsonb_typeof(approved_invoice_rows) IS DISTINCT FROM 'array' OR jsonb_array_length(approved_invoice_rows)<>57 THEN
-   RAISE EXCEPTION 'CHAIN_INVOICE_REVIEW_INCOMPLETE';
+ IF jsonb_typeof(approved_periods) IS DISTINCT FROM 'array' OR jsonb_array_length(approved_periods)<>4 THEN
+   RAISE EXCEPTION 'CHAIN_PERIOD_REVIEW_INCOMPLETE';
  END IF;
  IF NOT EXISTS(SELECT 1 FROM public.users WHERE id=actor_user_id AND lower(role::text) IN('owner','master') AND is_active AND app_login_enabled) THEN
    RAISE EXCEPTION 'CHAIN_ACTOR_REQUIRED';
@@ -176,15 +183,25 @@ BEGIN
    AND e.business_date BETWEEN c.d1 AND c.d2)<>57 THEN RAISE EXCEPTION 'CHAIN_CANDIDATE_DRIFT'; END IF;
  IF EXISTS(SELECT 1 FROM pc_chain_targets c JOIN public.ledger_payables p ON p.id=c.payable_id
    GROUP BY c.payment_id,c.allocated HAVING sum(p.original_amount)<>c.allocated) THEN RAISE EXCEPTION 'CHAIN_PERIOD_TOTAL_DRIFT'; END IF;
- -- Bidirectional exact match, no duplicates and no blank evidence strings.
- IF (SELECT count(DISTINCT (j->>'payableId')::bigint) FROM jsonb_array_elements(approved_invoice_rows) j)<>57
-   OR EXISTS(SELECT 1 FROM jsonb_array_elements(approved_invoice_rows) j
-     LEFT JOIN pc_chain_targets c ON c.payable_id=(j->>'payableId')::bigint
-     LEFT JOIN public.ledger_payables p ON p.id=c.payable_id
-     WHERE c.payable_id IS NULL OR (j->>'paymentId')::bigint IS DISTINCT FROM c.payment_id
-       OR (j->>'amount')::numeric IS DISTINCT FROM p.original_amount
-       OR nullif(btrim(j->>'invoiceReference'),'') IS NULL OR nullif(btrim(j->>'lineEvidence'),'') IS NULL) THEN
-   RAISE EXCEPTION 'CHAIN_INVOICE_REVIEW_MISMATCH'; END IF;
+ -- Exact four periods; the 57 target IDs/amount and allocation guards above stay.
+ IF (SELECT count(DISTINCT (j->>'paymentId')::bigint) FROM jsonb_array_elements(approved_periods) j)<>4
+   OR EXISTS(SELECT 1 FROM jsonb_array_elements(approved_periods) j
+     LEFT JOIN (SELECT DISTINCT payment_id,d1,d2,paid,allocated FROM pc_chain_targets) c ON c.payment_id=(j->>'paymentId')::bigint
+     WHERE c.payment_id IS NULL OR (j->>'from')::date IS DISTINCT FROM c.d1 OR (j->>'to')::date IS DISTINCT FROM c.d2
+       OR (j->>'paymentAmount')::numeric IS DISTINCT FROM c.paid OR (j->>'appAmount')::numeric IS DISTINCT FROM c.allocated
+       OR (j->>'unallocatedAmount')::numeric IS DISTINCT FROM c.paid-c.allocated
+       OR nullif(btrim(j->>'supplierEvidence'),'') IS NULL OR nullif(btrim(j->>'paymentEvidence'),'') IS NULL
+       OR nullif(btrim(j->>'exceptions'),'') IS NULL
+       OR j->>'supplierStatus' IS DISTINCT FROM CASE c.payment_id WHEN 2399 THEN 'missing_original' WHEN 3582 THEN 'partial_unresolved' ELSE 'matched' END
+       OR (c.payment_id IN(1641,3336) AND (j->>'supplierAmount')::numeric IS DISTINCT FROM c.allocated)
+       OR (c.payment_id=2399 AND (j->'supplierAmount') IS DISTINCT FROM 'null'::jsonb)
+       OR (c.payment_id=1641 AND (j->>'alreadyDeductedAmount')::numeric IS DISTINCT FROM 936000)
+       OR (c.payment_id=3336 AND (j->>'supplierDocumentCount')::integer IS DISTINCT FROM 7)) THEN
+   RAISE EXCEPTION 'CHAIN_PERIOD_REVIEW_MISMATCH'; END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(approved_periods) j WHERE j->>'paymentId'='2399'
+   AND ((j->'missingOriginalApproved') IS DISTINCT FROM 'true'::jsonb
+     OR nullif(btrim(j->>'exceptionApprovalReference'),'') IS NULL)) THEN
+   RAISE EXCEPTION 'CHAIN_2399_MISSING_ORIGINAL_EXCEPTION_APPROVAL_REQUIRED'; END IF;
  IF EXISTS(SELECT 1 FROM (VALUES(1641,DATE '2026-09-17',19992000::numeric),(2399,DATE '2026-10-03',18504000),
    (3336,DATE '2026-10-20',21900000),(3582,DATE '2026-10-31',20724000)) v(id,d,amount)
    LEFT JOIN public.ledger_transactions t ON t.id=v.id
@@ -281,9 +298,9 @@ BEGIN
    OR (after_state->'augustSummary'->>'amount')::numeric<>46053076 THEN RAISE EXCEPTION 'CHAIN_AUGUST_PRESERVATION_FAILED'; END IF;
  INSERT INTO public.ledger_audit_logs(actor_user_id,action,entity_type,entity_id,before_snapshot,after_snapshot,reason)
  VALUES(actor_user_id,'payable_allocation_chain_corrected','transaction',1641,
-   jsonb_build_object('scope',before_state,'invoiceApprovals',approved_invoice_rows),
+   jsonb_build_object('scope',before_state,'periodApprovals',approved_periods),
    jsonb_build_object('scope',after_state,'protectedUnpaid388',3170000,'unallocated3582',1296000),
-   'Atomic Phuong four-payment claim-window correction. Original allocation IDs/full rows archived in before_snapshot; '
+   'Atomic Phuong period-level cross-check correction; #2399 supplier original missing, explicitly approved evidence exception. Original allocation IDs/full rows archived in before_snapshot; '
    'unchanged pairs retain IDs. Payment requests/results and source snapshots stay historical. '
    '936000 already deducted in September; October HD015517/HD015523 differences remain unresolved. '
    'No Carlsberg invoice allocation. Requires new approved August rebuild protection manifest.');

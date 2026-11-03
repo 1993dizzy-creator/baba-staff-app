@@ -10,10 +10,20 @@ const prefix=sql.slice(0,sql.indexOf('DO $chain$'));
 const migration=n=>readFileSync(`supabase/migrations/${n}`,'utf8');
 const extract=(s,start)=>{const i=s.indexOf(start);assert.ok(i>=0);return s.slice(i,s.indexOf('end$$;',i)+7);};
 async function snapshot(db){await db.exec(prefix);const v=(await db.query('select snapshot from pc_chain_snapshot')).rows[0].snapshot;await db.exec('rollback');return v;}
-function review(baseline,invoices,{commit=false}={}){
+function periodApprovals(invoices){
+ return [[1641,'2026-09-01','2026-09-15',19992000,'matched'],[2399,'2026-09-16','2026-09-30',18504000,'missing_original'],
+   [3336,'2026-10-01','2026-10-15',21900000,'matched'],[3582,'2026-10-16','2026-10-28',20724000,'partial_unresolved']]
+   .map(([paymentId,from,to,paymentAmount,supplierStatus])=>({paymentId,from,to,paymentAmount,supplierStatus,
+     supplierAmount:paymentId===2399?null:paymentAmount,supplierEvidence:paymentId===2399?'TEST: supplier original not obtained':'TEST: period summary',
+     paymentEvidence:'TEST: payment transaction',appAmount:invoices.filter(x=>x.paymentId===paymentId).reduce((s,x)=>s+x.amount,0),
+     unallocatedAmount:paymentId===3582?1296000:0,exceptions:paymentId===2399?'TEST: missing supplier original explicitly accepted':paymentId===3582?'TEST: unresolved 1296000':paymentId===1641?'TEST: 936000 already deducted':'TEST: none',
+     alreadyDeductedAmount:paymentId===1641?936000:0,supplierDocumentCount:paymentId===3336?7:null,
+     missingOriginalApproved:paymentId===2399,exceptionApprovalReference:paymentId===2399?'TEST: separate evidence exception approval':null}));
+}
+function review(baseline,invoices,{commit=false,periods=periodApprovals(invoices)}={}){
  const quote=x=>"'"+JSON.stringify(x).replaceAll("'","''")+"'::jsonb";
  return sql.replace('approved_baseline constant jsonb := NULL',`approved_baseline constant jsonb := ${quote(baseline)}`)
-   .replace('approved_invoice_rows constant jsonb := NULL',`approved_invoice_rows constant jsonb := ${quote(invoices)}`)
+   .replace('approved_periods constant jsonb := NULL',`approved_periods constant jsonb := ${quote(periods)}`)
    .replace('actor_user_id constant bigint := NULL','actor_user_id constant bigint := 1')
    .replace(/ROLLBACK;\s*$/,commit?'COMMIT;':'ROLLBACK;');
 }
@@ -112,10 +122,11 @@ test('atomic Phuong chain review',async t=>{
  const {db,invoices}=await fixture();t.after(()=>db.close());
  await db.exec(readFileSync('scripts/ledger/phuong-chain-20261103-evidence-READONLY.sql','utf8'));
  const before=await snapshot(db);
- await t.test('missing approvals and incomplete/duplicate/mismatched invoice evidence block',async()=>{
+ await t.test('missing approvals and incomplete/duplicate/mismatched period evidence block',async()=>{
    await assert.rejects(db.exec(sql),/CHAIN_REVIEW_BLOCKED/);await db.exec('rollback');
-   for(const inv of [invoices.slice(1),invoices.map((r,i)=>i===0?invoices[1]:r),invoices.map((r,i)=>i===0?{...r,lineEvidence:''}:r)]){
-     await assert.rejects(db.exec(review(before,inv)),/CHAIN_INVOICE_REVIEW_/);await db.exec('rollback');
+   const periods=periodApprovals(invoices);
+   for(const rows of [periods.slice(1),periods.map((r,i)=>i===0?periods[1]:r),periods.map((r,i)=>i===0?{...r,paymentEvidence:''}:r)]){
+     await assert.rejects(db.exec(review(before,invoices,{periods:rows})),/CHAIN_PERIOD_REVIEW_/);await db.exec('rollback');
    }
  });
  await t.test('stale baseline, altered candidate and foreign allocation block',async()=>{
@@ -214,4 +225,29 @@ test('#388 retains allocation 119 and partially paid state before review ROLLBAC
  assert.deepEqual(after.allocations.filter(a=>a.payment_transaction_id===1638),before.allocations.filter(a=>a.payment_transaction_id===1638));
  assert.deepEqual(after.movements.filter(m=>m.transaction_id===1638),before.movements.filter(m=>m.transaction_id===1638));
  assert.deepEqual(await snapshot(db),before,'ROLLBACK restores allocation 928, paid status and the full original snapshot');
+});
+
+test('period policy requires four cross-checks and explicit missing-original exception; review rolls back',async t=>{
+ const {db,invoices}=await fixture();t.after(()=>db.close());
+ const before=await snapshot(db),periods=periodApprovals(invoices);
+ for(const bad of [periods.slice(1),periods.map((r,i)=>i===0?periods[1]:r),
+   periods.map(r=>r.paymentId===3582?{...r,appAmount:20724000,unallocatedAmount:0}:r),
+   periods.map(r=>r.paymentId===1641?{...r,alreadyDeductedAmount:0}:r),
+   periods.map(r=>r.paymentId===3336?{...r,supplierDocumentCount:6}:r)]){
+   await assert.rejects(db.exec(review(before,invoices,{periods:bad})),/CHAIN_PERIOD_REVIEW_/);
+   await db.exec('rollback');
+ }
+ for(const bad of [periods.map(r=>r.paymentId===2399?{...r,missingOriginalApproved:false}:r),
+   periods.map(r=>r.paymentId===2399?{...r,exceptionApprovalReference:''}:r)]){
+   await assert.rejects(db.exec(review(before,invoices,{periods:bad})),/CHAIN_2399_MISSING_ORIGINAL_EXCEPTION_APPROVAL_REQUIRED/);
+   await db.exec('rollback');
+ }
+ const result=await db.exec(review(before,invoices));
+ const proposed=result.find(r=>r.rows[0]?.proposed_after)?.rows[0].proposed_after;
+ const audit=proposed.audits.find(a=>a.action==='payable_allocation_chain_corrected');
+ assert.deepEqual(audit.before_snapshot.periodApprovals,periods);
+ assert.ok(!Object.hasOwn(audit.before_snapshot,'invoiceApprovals'));
+ assert.equal(proposed.payables.find(p=>p.id===388).status,'partially_paid');
+ assert.equal(audit.after_snapshot.unallocated3582,1296000);
+ assert.deepEqual(await snapshot(db),before);
 });
