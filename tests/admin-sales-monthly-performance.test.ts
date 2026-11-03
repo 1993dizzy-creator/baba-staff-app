@@ -4,6 +4,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { ScriptTarget, transpileModule } from "typescript";
+// @ts-expect-error Node strip-types resolves the TypeScript source directly.
+import { MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson } from "../lib/sales/menu-sales.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/sales/monthly/page.tsx");
@@ -76,7 +78,8 @@ test("monthly lines use business date and id ordering with the matching btree in
   assert.match(fetchLines, /\.gte\("business_date", fromDate\)\s*\.lte\("business_date", toDate\)\s*\.order\("business_date", \{ ascending: true \}\)\s*\.order\("id", \{ ascending: true \}\)\s*\.range\(offset, offset \+ LINE_PAGE_SIZE - 1\)/);
   assert.match(fetchLines, /offset \+= LINE_PAGE_SIZE/);
   assert.match(fetchLines, /if \(page\.length < LINE_PAGE_SIZE\) break;/);
-  assert.match(fetchLines, /raw_json/);
+  assert.match(fetchLines, /is_excluded, \$\{MENU_SALES_RAW_JSON_SELECT\}`/);
+  assert.match(fetchLines, /\(data \|\| \[\]\)\.map\(restoreMenuSalesRawJson\)/);
   assert.match(migration, /create index idx_pos_sales_receipt_lines_business_date_id\s+on public\.pos_sales_receipt_lines using btree \(business_date asc, id asc\);/i);
 });
 
@@ -99,7 +102,8 @@ test("monthly line pagination returns every row once across equal-date page boun
       const orderBy: Array<[string, boolean]> = [];
       return {
         select(columns: string) {
-          assert.match(columns, /raw_json/);
+          assert.match(columns, /raw_parent_id:raw_json->ParentID/);
+          assert.doesNotMatch(columns, /(^|,)\s*raw_json\s*(,|$)/);
           return this;
         },
         gte(column: string, value: string) {
@@ -140,10 +144,10 @@ test("monthly line pagination returns every row once across equal-date page boun
     route.indexOf("async function fetchProductCategories")
   );
   const executable = transpileModule(
-    `const LINE_PAGE_SIZE = 1000;\n${fetchLinesSource}\nfetchMonthlyLines;`,
+    `const LINE_PAGE_SIZE = 1000;\nconst MENU_SALES_RAW_JSON_SELECT = ${JSON.stringify(MENU_SALES_RAW_JSON_SELECT)};\n${fetchLinesSource}\nfetchMonthlyLines;`,
     { compilerOptions: { target: ScriptTarget.ES2022 } }
   ).outputText;
-  const fetchMonthlyLines = runInNewContext(executable, { supabaseServer }) as (
+  const fetchMonthlyLines = runInNewContext(executable, { supabaseServer, restoreMenuSalesRawJson }) as (
     fromDate: string,
     toDate: string
   ) => Promise<Line[]>;

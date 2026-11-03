@@ -27,6 +27,32 @@ export type MenuSalesLineRow = {
   raw_json: unknown;
 };
 
+// buildMenuSales reads only these raw_json keys. Date-range line reads select
+// them as jsonb paths instead of the whole document so PostgREST's sort/page
+// tuples stay narrow; restoreMenuSalesRawJson rebuilds the same lookup shape.
+export const MENU_SALES_RAW_JSON_SELECT =
+  "raw_parent_id:raw_json->ParentID,raw_addition_id:raw_json->InventoryItemAdditionID,raw_category_name:raw_json->CategoryName";
+
+type MenuSalesRawJsonFields = {
+  raw_parent_id?: unknown;
+  raw_addition_id?: unknown;
+  raw_category_name?: unknown;
+};
+
+export function restoreMenuSalesRawJson<T extends MenuSalesRawJsonFields>(
+  row: T
+): Omit<T, keyof MenuSalesRawJsonFields> & { raw_json: Record<string, unknown> } {
+  const { raw_parent_id, raw_addition_id, raw_category_name, ...rest } = row;
+  return {
+    ...rest,
+    raw_json: {
+      ParentID: raw_parent_id ?? null,
+      InventoryItemAdditionID: raw_addition_id ?? null,
+      CategoryName: raw_category_name ?? null,
+    },
+  };
+}
+
 export type MenuSalesProductCategoryRow = {
   source: string;
   pos_item_id: string | null;

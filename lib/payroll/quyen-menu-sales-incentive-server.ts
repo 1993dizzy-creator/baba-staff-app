@@ -3,6 +3,8 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   buildMenuSales,
+  MENU_SALES_RAW_JSON_SELECT,
+  restoreMenuSalesRawJson,
   type MenuSalesLineRow,
   type MenuSalesReceiptRow,
 } from "@/lib/sales/menu-sales";
@@ -32,14 +34,14 @@ async function loadMonthlyMenuSales(month: string) {
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const { data, error } = await supabaseServer
       .from("pos_sales_receipt_lines")
-      .select("id,receipt_id,ref_detail_id,parent_ref_detail_id,business_date,payment_status,is_canceled,item_id,item_code,item_name,quantity,final_amount,is_option,ref_detail_type,mapping_status,is_excluded,raw_json")
+      .select(`id,receipt_id,ref_detail_id,parent_ref_detail_id,business_date,payment_status,is_canceled,item_id,item_code,item_name,quantity,final_amount,is_option,ref_detail_type,mapping_status,is_excluded,${MENU_SALES_RAW_JSON_SELECT}`)
       .gte("business_date", fromDate)
       .lte("business_date", toDate)
       .order("business_date", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) throw new Error(`QUYEN_MENU_INCENTIVE_LINES_READ_FAILED:${error.message}`);
-    const page = (data || []) as MenuSalesLineRow[];
+    const page = (data || []).map(restoreMenuSalesRawJson) as MenuSalesLineRow[];
     lines.push(...page);
     if (page.length < PAGE_SIZE) break;
   }

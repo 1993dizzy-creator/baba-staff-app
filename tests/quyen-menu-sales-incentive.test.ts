@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
-import { buildMenuSales } from "../lib/sales/menu-sales.ts";
+import { buildMenuSales, MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson } from "../lib/sales/menu-sales.ts";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { QUYEN_MENU_SALES_INCENTIVE_POLICY, calculateQuyenMenuSalesIncentive, resolveQuyenMenuSalesIncentiveCronTarget, syncQuyenMenuSalesIncentive } from "../lib/payroll/quyen-menu-sales-incentive.ts";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
@@ -185,7 +185,7 @@ test("monthly API, payroll overview, readonly KO/VI UI, cron, and schema source 
   const adjustmentRoute = read("app/api/admin/payroll/adjustments/route.ts");
   const migration = read("supabase/migrations/20260928122112_allow_payroll_sales_menu_incentive_source.sql");
   const crons = JSON.parse(read("vercel.json")).crons as Array<{ path: string; schedule: string }>;
-  assert.match(monthly, /import \{ buildMenuSales \} from "@\/lib\/sales\/menu-sales"/);
+  assert.match(monthly, /import \{ buildMenuSales, MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson \} from "@\/lib\/sales\/menu-sales"/);
   assert.doesNotMatch(monthly, /function buildMenuSales/);
   assert.match(overviewServer, /source_type,source_key/);
   assert.match(overview, /payrollAdjustmentIncentiveAmount=manualIncentiveAmount\+salesMenuIncentiveAmount/);
@@ -197,4 +197,27 @@ test("monthly API, payroll overview, readonly KO/VI UI, cron, and schema source 
   assert.match(adjustmentRoute, /\.eq\("source_type","manual"\)/);
   assert.match(migration, /source_type in \('manual', 'sales_menu_incentive'\)/);
   assert.deepEqual(crons.find((cron) => cron.path === "/api/cron/payroll-quyen-menu-incentive"), { path: "/api/cron/payroll-quyen-menu-incentive", schedule: "15 20 * * *" });
+});
+
+test("menu-sales raw_json key projection yields the same menu sales as the full document", () => {
+  const base = { receipt_id: 1, parent_ref_detail_id: null, business_date: "2026-09-30", payment_status: 3, is_canceled: false, is_option: false, ref_detail_type: 1, mapping_status: "mapped", is_excluded: false };
+  const full = [
+    { ...base, id: 1, ref_detail_id: "P1", item_id: "beer", item_code: "B", item_name: "Beer", quantity: 2, final_amount: 100, raw_json: { CategoryName: "Drinks", Unrelated: "x".repeat(500) } },
+    { ...base, id: 2, ref_detail_id: "O1", item_id: "ice", item_code: "I", item_name: "Ice", quantity: 1, final_amount: 10, raw_json: { ParentID: "P1", InventoryItemAdditionID: "add-ice" } },
+    { ...base, id: 3, ref_detail_id: "O2", item_id: "x", item_code: "X", item_name: "Orphan", quantity: 1, final_amount: 5, raw_json: { ParentID: 404 } },
+    { ...base, id: 4, ref_detail_id: "P2", item_id: "food", item_code: "F", item_name: "Food", quantity: 1, final_amount: 50, raw_json: null },
+  ];
+  // Mirrors PostgREST `raw_json->Key`: the jsonb value, or null when absent.
+  const projected = full.map(({ raw_json, ...line }) => {
+    const raw = (raw_json || {}) as Record<string, unknown>;
+    return restoreMenuSalesRawJson({ ...line, raw_parent_id: raw.ParentID ?? null, raw_addition_id: raw.InventoryItemAdditionID ?? null, raw_category_name: raw.CategoryName ?? null });
+  });
+  const receipts = [receipt(1)];
+  const products = [{ source: "cukcuk", pos_item_id: null, item_id: "food", item_code: "F", category_name: "Food" }];
+  assert.deepEqual(buildMenuSales(receipts, projected, products, []), buildMenuSales(receipts, full, products, []));
+  assert.doesNotMatch(MENU_SALES_RAW_JSON_SELECT, /(^|,)\s*raw_json\s*(,|$)/);
+  for (const key of ["ParentID", "InventoryItemAdditionID", "CategoryName"]) assert.match(MENU_SALES_RAW_JSON_SELECT, new RegExp(`raw_json->${key}(,|$)`));
+  const server = read("lib/payroll/quyen-menu-sales-incentive-server.ts");
+  assert.match(server, /is_excluded,\$\{MENU_SALES_RAW_JSON_SELECT\}`\)/);
+  assert.match(server, /\(data \|\| \[\]\)\.map\(restoreMenuSalesRawJson\)/);
 });

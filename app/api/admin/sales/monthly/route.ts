@@ -4,7 +4,7 @@ import { resolveAdminSalesMonth } from "@/lib/sales/admin-sales-business-time";
 import { supabaseServer } from "@/lib/supabase/server";
 import { buildPaymentSummary, filterPaidPayments, type PosPaymentRow } from "@/lib/sales/payment-summary";
 import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
-import { buildMenuSales } from "@/lib/sales/menu-sales";
+import { buildMenuSales, MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson } from "@/lib/sales/menu-sales";
 
 type ReceiptRow = {
   id: number;
@@ -411,7 +411,7 @@ async function fetchMonthlyLines(fromDate: string, toDate: string) {
     const { data, error } = await supabaseServer
       .from("pos_sales_receipt_lines")
       .select(
-        "id, receipt_id, ref_detail_id, parent_ref_detail_id, business_date, payment_status, is_canceled, item_id, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount, is_option, ref_detail_type, mapping_status, is_excluded, raw_json"
+        `id, receipt_id, ref_detail_id, parent_ref_detail_id, business_date, payment_status, is_canceled, item_id, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount, is_option, ref_detail_type, mapping_status, is_excluded, ${MENU_SALES_RAW_JSON_SELECT}`
       )
       .gte("business_date", fromDate)
       .lte("business_date", toDate)
@@ -423,7 +423,7 @@ async function fetchMonthlyLines(fromDate: string, toDate: string) {
       throw new Error(`Failed to fetch monthly sales lines: ${error.message}`);
     }
 
-    const page = (data || []) as LineRow[];
+    const page = (data || []).map(restoreMenuSalesRawJson) as LineRow[];
     lines.push(...page);
 
     if (page.length < LINE_PAGE_SIZE) break;
