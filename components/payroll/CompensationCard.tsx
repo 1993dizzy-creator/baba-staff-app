@@ -15,6 +15,7 @@ import {
 } from "@/lib/payroll/payroll-page-money";
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
+import { buildPayrollPartTotals, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount } from "@/lib/payroll/payroll-dashboard";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import {
   getPaymentBadgePresentation,
@@ -82,6 +83,8 @@ export function CompensationCard({
       : combined === null
         ? t.levelBaseRequired
         : formatPayrollHeaderAmount(headerAmount ?? combined);
+  const calculatedNetAmount = getPayrollCalculatedNetAmount(employee, future);
+  const actualPaidAmount = getPayrollActualPaidAmount(employee);
   const employeeAge = age(employee.birthDate);
   const positionLabel = employee.role
     ? getEmployeeRoleLabel(employee.role, lang)
@@ -120,6 +123,7 @@ export function CompensationCard({
           <span style={s.position}>{positionLabel}</span>
         </span>
         <span style={s.headerPayment}>
+        {headerAmount !== null && <span style={s.amountCaption} title={lang === "vi" ? "Lương hợp đồng" : "계약급여"}>{lang === "vi" ? "HĐ" : "계약"}</span>}
         <b
           style={s.amount}
           title={headerAmount === null ? header : formatVnd(headerAmount)}
@@ -133,6 +137,22 @@ export function CompensationCard({
           {expanded ? "⌃" : "⌄"}
         </span>
       </button>
+      {!future && (
+        <div style={s.amountStrip}>
+          <span style={s.amountStripCell}>
+            <span style={s.amountStripLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
+            {calculatedNetAmount === null
+              ? <b style={{ ...s.amountStripValue, ...s.amountStripReview }}>{lang === "vi" ? "Cần kiểm tra" : "확인 필요"}</b>
+              : <b style={s.amountStripValue}>{formatVnd(calculatedNetAmount)}</b>}
+          </span>
+          <span style={s.amountStripCell}>
+            <span style={s.amountStripLabel}>{lang === "vi" ? "Thực trả" : "실제 지급"}</span>
+            {actualPaidAmount === null
+              ? <b style={{ ...s.amountStripValue, ...s.amountStripMuted }}>—</b>
+              : <b style={{ ...s.amountStripValue, ...s.amountStripPaid }}>{formatVnd(actualPaidAmount)}</b>}
+          </span>
+        </div>
+      )}
       {expanded && (
         <div style={s.detail}>
           {!employee.contract ? (
@@ -258,26 +278,31 @@ export function CombinedPartTotal({
   future?: boolean;
 }) {
   const t = payrollOverviewText[lang];
-  const values = employees.flatMap((employee) =>
-    employee.amounts.combinedSalary === null
-      ? []
-      : [employee.amounts.combinedSalary],
-  );
-  const excluded = employees.length - values.length;
-  const title = lang === "vi"
-    ? `${t.combinedSalaryTotal} ${partName} (${employees.length} ${t.people})`
-    : `${partName} ${t.combinedSalaryTotal} (${employees.length}${t.people})`;
+  const vi = lang === "vi";
+  const totals = buildPayrollPartTotals(employees, getPayrollHeaderAmount, future);
+  const people = (count: number) => vi ? `${count} ${t.people}` : `${count}${t.people}`;
+  const title = vi
+    ? `Tổng ${partName} (${people(employees.length)})`
+    : `${partName} 합계 (${people(employees.length)})`;
+  const excludedLine = (names: string[]) => `${people(names.length)} · ${names.join(", ")}`;
   return (
     <div style={s.total}>
-      <Row
-        label={title}
-        value={future ? "—" : formatVnd(values.reduce((a, b) => a + b, 0))}
-        strong
-      />
-      {!future && excluded > 0 && (
-        <Row label={t.settingsRequired} value={`${excluded}${t.people}`} />
+      <b style={s.totalTitle}>{title}</b>
+      {future ? (
+        <small style={s.help}>{t.beforeCalculationPeriod}</small>
+      ) : (
+        <>
+          <Row label={vi ? "Lương hợp đồng (quy đổi tháng)" : "계약급여 (월 환산)"} value={formatVnd(totals.contractMonthlyTotal)} />
+          <Row label={vi ? "Thực nhận đã tính" : "계산 실수령"} value={formatVnd(totals.netTotal)} strong />
+          <Row label={vi ? `Thực trả (${people(totals.paidCount)})` : `실제 지급 (${people(totals.paidCount)})`} value={formatVnd(totals.paidTotal)} />
+          {totals.contractExcluded.length > 0 && (
+            <small style={s.totalExcluded}>{vi ? "Chưa tính lương hợp đồng" : "계약급여 합계 제외"}: {excludedLine(totals.contractExcluded)}</small>
+          )}
+          {totals.netExcluded.length > 0 && (
+            <small style={s.totalExcluded}>{vi ? "Chưa tính thực nhận (cần kiểm tra)" : "실수령 합계 제외 (확인 필요)"}: {excludedLine(totals.netExcluded)}</small>
+          )}
+        </>
       )}
-      {future && <small style={s.help}>{t.beforeCalculationPeriod}</small>}
     </div>
   );
 }
@@ -911,6 +936,14 @@ const s = {
   },
   amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
   headerPayment: { display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4, minWidth:0 },
+  amountCaption: { color:"#94a3b8", fontSize:9.5, fontWeight:800, whiteSpace:"nowrap" },
+  amountStrip: { display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12, width:"100%", maxWidth:460, marginTop:5, marginLeft:"auto", paddingTop:5, borderTop:"1px dashed #e5e7eb", minWidth:0, boxSizing:"border-box" },
+  amountStripCell: { display:"flex", flexWrap:"wrap", alignItems:"baseline", columnGap:6, minWidth:0 },
+  amountStripLabel: { color:"#64748b", fontSize:10, fontWeight:700, lineHeight:1.3, overflowWrap:"anywhere", minWidth:0 },
+  amountStripValue: { marginLeft:"auto", color:"#1d4ed8", fontSize:12, fontWeight:900, whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums", textAlign:"right" },
+  amountStripReview: { color:"#b45309", fontSize:11 },
+  amountStripMuted: { color:"#94a3b8" },
+  amountStripPaid: { color:"#166534" },
   paymentBadge: { padding:"2px 6px", borderRadius:999, background:"#dcfce7", color:"#166534", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
   adjustedPaymentBadge: { background:"#fef3c7", color:"#92400e" },
   unpaidBadge: { padding:"2px 6px", borderRadius:999, background:"#f1f5f9", color:"#475569", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
@@ -971,6 +1004,8 @@ const s = {
   adjustmentValue: { fontWeight: 800, whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" },
   chevron: { fontSize: 15, lineHeight: 1, fontWeight: 900 },
   help: { color: "#64748b", lineHeight: 1.45 },
+  totalTitle: { fontSize: 12, fontWeight: 900, color: "#334155" },
+  totalExcluded: { display: "block", padding: "5px 7px", borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 10.5, lineHeight: 1.4, overflowWrap: "anywhere" },
   total: {
     display: "grid",
     gap: 5,

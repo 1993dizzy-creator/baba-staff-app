@@ -14,6 +14,8 @@ import type { PayrollOverviewEmployee } from "@/lib/payroll/overview";
 import type { PayrollOverviewProjectedSummary } from "@/lib/payroll/overview-projection";
 import { payrollCostTableText, payrollOverviewText } from "@/lib/text/payroll-overview";
 import { attendanceText } from "@/lib/text";
+import { PayrollDashboardFilters, PayrollDashboardSummary } from "@/components/payroll/PayrollDashboardSummary";
+import { buildPayrollDashboardSummary, countPayrollDashboardFilters, matchesPayrollDashboardFilter, type PayrollDashboardFilter } from "@/lib/payroll/payroll-dashboard";
 
 type InsuranceSummary = { totalPreInsurancePayoutAmount:number; totalEmployeeInsuranceDeductionAmount:number; totalEmployeePitDeductionAmount:number; totalCompanyPitAmount:number; totalAdvanceAmount:number; totalNetAmount:number; totalEmployerInsuranceAmount:number; directorInsuranceAmount:number; totalInsuranceRemittanceAmount:number; totalCompanyCostAmount:number; mealAllowanceAmount:number };
 type ProjectedSummaryWithMeal = PayrollOverviewProjectedSummary & { mealAllowanceAmount:number };
@@ -30,17 +32,22 @@ export default function AdminPayrollPage() {
   const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [expandedUserId,setExpandedUserId]=useState<number|null>(null);
   const refresh=useCallback(async(signal?:AbortSignal)=>{setLoading(true);setError("");try{const response=await fetch(`/api/admin/payroll/overview?month=${month}`,{cache:"no-store",signal});const data=await response.json();if(!response.ok)throw new Error(data.code);setOverview(data);return true}catch(cause){if((cause as Error).name!=="AbortError")setError(overviewText.loadError);return false}finally{if(!signal?.aborted)setLoading(false)}},[month,overviewText.loadError]);
   useEffect(()=>{const controller=new AbortController();setOverview(null);setExpandedUserId(null);void refresh(controller.signal);return()=>controller.abort()},[refresh]);
+  const [filter,setFilter]=useState<PayrollDashboardFilter>("all");
+  const dashboardSummary=useMemo(()=>buildPayrollDashboardSummary(overview?.employees??[]),[overview]);
+  const filterCounts=useMemo(()=>countPayrollDashboardFilters(overview?.employees??[]),[overview]);
   const groups=useMemo(()=>{const map=new Map<string,PayrollOverviewEmployee[]>();for(const employee of overview?.employees??[]){const key=getPartKey(employee.part);map.set(key,[...(map.get(key)??[]),employee])}return [...map.entries()].map(([part,employees])=>({part,meta:getPartMeta(part),employees:sortPayrollEmployeesByHeaderAmount(employees.sort(comparePayrollEmployees),overview?.future===true)})).sort((a,b)=>a.meta.rank-b.meta.rank||a.part.localeCompare(b.part))},[overview]);
+  const visibleGroups=useMemo(()=>groups.map(group=>({...group,visibleEmployees:group.employees.filter(employee=>matchesPayrollDashboardFilter(employee,filter))})).filter(group=>group.visibleEmployees.length>0),[groups,filter]);
   const mealAllowanceEligibleUserIds=useMemo(()=>new Set(overview?.mealAllowanceEligibleUserIds??[]),[overview]);
   const attendanceBonusEligibleUserIds=useMemo(()=>new Set(overview?.attendanceBonusEligibleUserIds??[]),[overview]);
   function moveMonth(amount:number){const[y,m]=month.split("-").map(Number);const next=new Date(Date.UTC(y,m-1+amount,1));setMonth(`${next.getUTCFullYear()}-${String(next.getUTCMonth()+1).padStart(2,"0")}`)}
 
   return <Container noPaddingTop><section style={styles.page}>
     <div style={styles.monthHeader}><button type="button" style={styles.monthButton} onClick={()=>moveMonth(-1)} aria-label={vi?"Tháng trước":"이전 달"}>‹</button><div style={styles.monthTitle}>{monthText(month,attendance.monthFormat)}</div><button type="button" style={styles.monthButton} onClick={()=>moveMonth(1)} aria-label={vi?"Tháng sau":"다음 달"}>›</button></div>
+    {overview&&overview.employees.length>0&&<><PayrollDashboardSummary summary={dashboardSummary} lang={lang}/><PayrollDashboardFilters value={filter} counts={filterCounts} lang={lang} onChange={setFilter}/></>}
     <section style={styles.overviewSection} aria-busy={loading}>
-      {loading&&!overview?<div style={styles.state}>{overviewText.loading}</div>:error&&!overview?<div role="alert" style={styles.error}>{error}</div>:groups.length===0?<div style={styles.state}>{overviewText.empty}</div>:groups.map(group=><section key={group.part} style={styles.partGroup}>
-        <div style={{...styles.partTitle,color:group.meta.color,background:group.meta.bg,borderLeft:`4px solid ${group.meta.border}`}}><span>{group.meta.emoji}</span><span>{partLabel(l,group.part)}</span><span style={styles.partCount}>{group.employees.length}</span></div>
-        <EmployeeLevelDisabledBadgeScope><div style={styles.staffList}>{group.employees.map(employee=><CompensationCard key={employee.userId} employee={employee} expanded={expandedUserId===employee.userId} toggle={()=>setExpandedUserId(expandedUserId===employee.userId?null:employee.userId)} lang={lang} month={month} future={overview?.future===true} monthClosed={overview?.monthClosed===true} refresh={()=>refresh()} mealAllowanceEligible={mealAllowanceEligibleUserIds.has(employee.userId)} attendanceBonusEligible={attendanceBonusEligibleUserIds.has(employee.userId)}/>)}</div></EmployeeLevelDisabledBadgeScope>
+      {loading&&!overview?<div style={styles.state}>{overviewText.loading}</div>:error&&!overview?<div role="alert" style={styles.error}>{error}</div>:groups.length===0?<div style={styles.state}>{overviewText.empty}</div>:visibleGroups.length===0?<div style={styles.state}>{vi?"Không có nhân viên phù hợp với bộ lọc.":"선택한 조건에 해당하는 직원이 없습니다."}</div>:visibleGroups.map(group=><section key={group.part} style={styles.partGroup}>
+        <div style={{...styles.partTitle,color:group.meta.color,background:group.meta.bg,borderLeft:`4px solid ${group.meta.border}`}}><span>{group.meta.emoji}</span><span>{partLabel(l,group.part)}</span><span style={styles.partCount}>{filter==="all"?group.employees.length:`${group.visibleEmployees.length} / ${group.employees.length}`}</span></div>
+        <EmployeeLevelDisabledBadgeScope><div style={styles.staffList}>{group.visibleEmployees.map(employee=><CompensationCard key={employee.userId} employee={employee} expanded={expandedUserId===employee.userId} toggle={()=>setExpandedUserId(expandedUserId===employee.userId?null:employee.userId)} lang={lang} month={month} future={overview?.future===true} monthClosed={overview?.monthClosed===true} refresh={()=>refresh()} mealAllowanceEligible={mealAllowanceEligibleUserIds.has(employee.userId)} attendanceBonusEligible={attendanceBonusEligibleUserIds.has(employee.userId)}/>)}</div></EmployeeLevelDisabledBadgeScope>
         {group.part!=="owner"&&<CombinedPartTotal employees={group.employees} lang={lang} partName={partLabel(l,group.part)} future={overview?.future===true}/>}
       </section>)}
     </section>
