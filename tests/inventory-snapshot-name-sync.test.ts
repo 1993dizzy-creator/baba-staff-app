@@ -111,7 +111,7 @@ test("language gaps remain detectable without today's purchase and after the sna
   assert.deepEqual(firstSelection[0].missingLanguages, ["ko"]);
 });
 
-test("filling a missing master name removes the language alert and preserves daily empty-to-name sync", () => {
+test("filling a missing master name removes the language alert without historical name sync", () => {
   const beforeEdit = languageInventory({ item_name: "", item_name_vi: "Khăn lau bát" });
   const afterEdit = languageInventory({ item_name: "설거지 행주", item_name_vi: "Khăn lau bát" });
 
@@ -120,15 +120,9 @@ test("filling a missing master name removes the language alert and preserves dai
 
   const dailyItems = findInventoryLogNameSyncItems("2026-09-23", [
     log({ item_id: 604, item_name: "", item_name_vi: "Khăn lau bát" }),
-    correction({ item_id: 604, item_name: "설거지 행주", item_name_vi: "Khăn lau bát" }),
+    correction({ item_id: 604, item_name: "설거지 행주", item_name_vi: "Khăn lau bát", new_purchase_price:75000, new_supplier:"Chợ", purchase_supplier_partner_id:7 }),
   ], [inventory({ id: 604, item_name: "설거지 행주", item_name_vi: "Khăn lau bát" })]);
-  assert.equal(dailyItems.length, 1);
-  assert.ok(dailyItems[0].issues.includes("missing_ko"));
-  assert.deepEqual(dailyItems[0].changes.find((change) => change.field === "item_name"), {
-    field: "item_name",
-    from: "",
-    to: "설거지 행주",
-  });
+  assert.deepEqual(dailyItems, []);
 });
 
 test("the single cutoff constant protects every business date before 2026-09-23", () => {
@@ -139,10 +133,11 @@ test("the single cutoff constant protects every business date before 2026-09-23"
   assert.equal((route.match(/2026-09-23/g) || []).length, 0);
 });
 
-test("same-day actual purchase followed by a zero-quantity name correction is detected", () => {
+test("name-only changes are excluded while genuine economic corrections remain reviewable", () => {
   const items = detect([log({ item_name: "" }), correction()]);
   assert.equal(items.length, 1);
-  assert.ok(items[0].issues.includes("missing_ko"));
+  assert.ok(!items[0].issues.includes("missing_ko"));
+  assert.ok(items[0].changes.every(change => change.field !== "item_name" && change.field !== "item_name_vi"));
   assert.deepEqual(items[0].logIds, [101]);
 });
 
@@ -341,7 +336,8 @@ test("current view: focus refresh, language list and post-sync reload remain wir
   assert.match(page, /window\.addEventListener\("focus", handleWindowFocus\)/);
   assert.match(page, /setLanguageMissingItems\(json\.languageMissingItems \|\| \[\]\)/);
   assert.match(page, /\[fetchMovementItems\(businessDate\), fetchNameSyncIssues\(businessDate\)\]/);
-  assert.match(monthlyPanel, /입고정보 동기화 필요/);
+  assert.match(monthlyPanel, /입고정보 변경 확인/);
+  assert.match(monthlyPanel, /monthly-sync-read-only/);
   assert.match(monthlyPanel, /일괄 동기화/);
   assert.match(monthlyPanel, /수량 변경은 별도 입고보정 필요/);
 });
@@ -436,9 +432,9 @@ test("pear #314 preserves 10/09 Chợ economics despite 10/10 An Liên master an
   const current = inventory({ id: 314, item_name: "배", supplier: "An Liên", purchase_price: 40000, supplier_partner_id: 27 });
   const all = [oldRoot, oldEdit, newRoot];
   assert.deepEqual(findInventoryLogNameSyncItems("2026-10-09", all, [current]), []);
-  const renamed = findInventoryLogNameSyncItems("2026-10-09", all, [{ ...current, item_name: "신선한 배" }]);
+  const renamed = findInventoryLogNameSyncItems("2026-10-09", all, [{ ...current, item_name: "신선한 배", category:"새 분류" }]);
   assert.equal(renamed.length, 1);
-  assert.deepEqual(renamed[0].changes.map(change => change.field), ["item_name"]);
+  assert.deepEqual(renamed[0].changes.map(change => change.field), ["category"]);
   assert.equal(renamed[0].targets[0].syncItem.supplier, "Chợ");
   assert.equal(renamed[0].targets[0].syncItem.purchase_price, 35000);
   assert.equal(renamed[0].targets[0].syncItem.supplier_partner_id, 7);
@@ -454,7 +450,7 @@ test("explicit correction identity never applies to an unrelated later purchase"
 });
 
 test("null economics on a display correction preserve the original economic values", () => {
-  const items = detect([log(), correction({ new_purchase_price: null, new_supplier: null, purchase_supplier_partner_id: null })]);
+  const items = detect([log(), correction({ new_purchase_price: null, new_supplier: null, purchase_supplier_partner_id: null })], inventory({category:"새 분류"}));
   assert.equal(items[0].targets[0].syncItem.purchase_price, 75000);
   assert.equal(items[0].targets[0].syncItem.supplier, "Chợ");
   assert.equal(items[0].targets[0].syncItem.supplier_partner_id, 7);
@@ -474,10 +470,10 @@ test("a receipt edited through 입고 수정 syncs display fields only; other li
   const edited = detect([
     log(),
     correction({ reason: "purchase", source: "edit_form", action: "receipt_edit", correction_of_inventory_log_id: 101 }),
-  ]);
+  ], inventory({category:"새 분류"}));
   assert.equal(edited.length, 1);
   const target = edited[0].targets[0];
-  assert.deepEqual(target.changes.map(change => change.field), ["item_name"]);
+  assert.deepEqual(target.changes.map(change => change.field), ["category"]);
   assert.equal(target.syncItem.item_name, "대형 지퍼백");
   assert.equal(target.syncItem.purchase_price, 75000);
   assert.equal(target.syncItem.supplier, "Chợ");

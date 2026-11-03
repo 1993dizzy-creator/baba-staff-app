@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getAuthenticatedActor } from "@/lib/auth/server-auth";
+import { withCurrentInventoryNames } from "@/lib/inventory/current-item-names-server";
 
 export async function GET(
   _request: Request,
@@ -63,7 +64,7 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      items: data ?? [],
+      items: await withCurrentInventoryNames(supabase, data ?? []),
     });
   } catch {
     return NextResponse.json(

@@ -12,6 +12,7 @@ import {
   fetchPreviousKegSummariesByLogId,
 } from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
+import { withCurrentInventoryNames } from "@/lib/inventory/current-item-names-server";
 import {
   syncInventoryLogRowsFromItem,
   updateInventoryLogRows,
@@ -59,6 +60,7 @@ const LOG_CARD_COLUMNS = [
 const LOG_PAGE_SIZE = 500;
 type InventoryLogQueryRow = {
   id: number;
+  item_id?: number | null;
   created_at: string | null;
   source?: string;
   [key: string]: unknown;
@@ -158,7 +160,7 @@ const loadInventoryLogs = async (options: InventoryLogsQueryOptions = {}) => {
       : log
   );
 
-  return { ok: true as const, data: enrichedLogs, ...(options.effectivePurchases ? {purchaseDiagnostics} : {}) };
+  return { ok: true as const, data: await withCurrentInventoryNames(supabaseServer, enrichedLogs), ...(options.effectivePurchases ? {purchaseDiagnostics} : {}) };
 };
 
 const loadInventoryNotes = async () => {
@@ -372,6 +374,7 @@ export async function PATCH(req: Request) {
         )
       : [];
     const syncCurrentItem = body?.syncCurrentItem === true;
+    if (syncCurrentItem) return NextResponse.json({ ok:false, code:"INVENTORY_HISTORICAL_SYNC_DISABLED", error:"Historical records are immutable; current item names are displayed automatically." }, { status:409 });
     const targetLogIds = syncCurrentItem && logIds.length > 0 ? logIds : [id];
     const hasReason = Object.prototype.hasOwnProperty.call(body, "reason");
     const hasNewSupplier = Object.prototype.hasOwnProperty.call(body, "new_supplier");

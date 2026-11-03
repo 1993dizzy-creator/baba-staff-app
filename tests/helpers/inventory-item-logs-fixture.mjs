@@ -43,7 +43,7 @@ export function database(tables,{delay=0,failTable=null}={}){
  }};
 }
 export function route(db,{authenticated=true}={}){
- return load('app/api/inventory/items/[id]/logs/route.ts',{'next/server':{NextResponse:{json:(v,o)=>Response.json(v,o)}},'@/lib/auth/server-auth':{getAuthenticatedActor:async()=>authenticated?{ok:true}:{ok:false,code:'UNAUTHENTICATED',status:401}},'@/lib/inventory/keg-replacement-summary':summaries,'@/lib/supabase/server':{supabaseServer:db}});
+ return load('app/api/inventory/items/[id]/logs/route.ts',{'next/server':{NextResponse:{json:(v,o)=>Response.json(v,o)}},'@/lib/auth/server-auth':{getAuthenticatedActor:async()=>authenticated?{ok:true}:{ok:false,code:'UNAUTHENTICATED',status:401}},'@/lib/inventory/keg-replacement-summary':summaries,'@/lib/inventory/current-item-names-server':load('lib/inventory/current-item-names-server.ts',{'server-only':{}}),'@/lib/supabase/server':{supabaseServer:db}});
 }
 export async function call(api,itemId,query=''){
  const start=performance.now(),response=await api.GET(new Request('http://isolated.test/api/inventory/items/'+itemId+'/logs'+query),{params:Promise.resolve({id:String(itemId)})});
