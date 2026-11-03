@@ -85,7 +85,7 @@ export function selectPayrollUsers(input:{users:PayrollSnapshotUserRow[];attenda
   const attendanceIds=new Set(input.attendance.map(row=>Number(row.user_id)));const contractIds=new Set(input.contracts.filter(row=>intersectsMonth(row,start,endExclusive)).map(row=>row.userId));
   const monthEnd=new Date(`${endExclusive}T00:00:00Z`);monthEnd.setUTCDate(monthEnd.getUTCDate()-1);const monthEndDate=monthEnd.toISOString().slice(0,10);
   return input.users.filter(user=>{
-    const intersects=Boolean(user.hire_date)&&user.hire_date!<=monthEndDate&&(!user.termination_date||user.termination_date>=start);
+    const intersects=Boolean(user.hire_date)&&user.hire_date!<=monthEndDate&&(!user.termination_date||(user.termination_date>=start&&user.termination_date>=user.hire_date!));
     return isPayrollUserCandidate({
       user,
       employmentIntersects:intersects,

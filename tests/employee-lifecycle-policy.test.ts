@@ -22,10 +22,11 @@ test("payroll eligibility uses role defaults, explicit overrides, and absolute s
   assert.equal(isPayrollEligible(user("owner",true,true)),false);
 });
 
-test("owner override still needs an existing payroll candidate condition",()=>{
+test("owner override requires employment overlap even with a payroll contract or attendance",()=>{
   const owner={role:"owner",is_system_account:false,payroll_eligible_override:true};
   assert.equal(isPayrollUserCandidate({user:owner,employmentIntersects:false,hasAttendance:false,hasContract:false}),false);
-  assert.equal(isPayrollUserCandidate({user:owner,employmentIntersects:false,hasAttendance:false,hasContract:true}),true);
+  assert.equal(isPayrollUserCandidate({user:owner,employmentIntersects:false,hasAttendance:false,hasContract:true}),false);
+  assert.equal(isPayrollUserCandidate({user:owner,employmentIntersects:false,hasAttendance:true,hasContract:false}),false);
   assert.equal(isPayrollUserCandidate({user:owner,employmentIntersects:true,hasAttendance:false,hasContract:false}),true);
 });
 
