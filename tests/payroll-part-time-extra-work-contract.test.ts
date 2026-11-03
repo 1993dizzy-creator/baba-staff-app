@@ -123,10 +123,10 @@ test("extra-work review calculation covers attendance-based contracts while fixe
   assert.doesNotMatch(read("lib/payroll/attendance-facts.ts"), /warnings\.push\("OVERTIME_APPROVAL_UNAVAILABLE"\)/);
 });
 
-test("employee card keeps a stable user key and shows the extra-work badge only for non-empty rows", () => {
+test("employee card keeps a stable user key and shows extra-work context in expanded details only for non-empty rows", () => {
   assert.match(payrollPage, /<CompensationCard key=\{employee\.userId\}/);
   assert.match(card, /const extraWorkCount = employee\.partTimeExtraWork\.length/);
   assert.match(card, /employee\.partTimeExtraWork\.some\(row => row\.status === "review_required" \|\| row\.status === "stale"\)/);
-  assert.match(card, /extraWorkCount > 0 \? \(/);
+  assert.match(card, /expanded && \([\s\S]*?layout\.detailMeta[\s\S]*?extraWorkCount > 0 && <span/);
   assert.doesNotMatch(card, /contract\.payType[^\n]*extraWorkBadge/);
 });

@@ -16,10 +16,10 @@ test("payment badges distinguish normal and adjusted payments in both directions
   assert.deepEqual(getPaymentBadgePresentation("vi", 1), { adjusted: true, label: "Trả điều chỉnh" });
 });
 
-test("adjusted payment badge uses amber while the normal badge stays green", () => {
-  assert.match(card, /paymentBadge:[^\n]+background:"#dcfce7"[^\n]+color:"#166534"/);
-  assert.match(card, /adjustedPaymentBadge: \{ background:"#fef3c7", color:"#92400e" \}/);
-  assert.match(card, /paymentBadge\.adjusted \? s\.adjustedPaymentBadge/);
+test("collapsed cards show actual payment once and only for paid employees", () => {
+  assert.match(card, /employee\.payment\?\.payment_status === "paid" && <span className=\{layout\.actualPaid\}/);
+  assert.match(card, /paymentBadge\.label/);
+  assert.doesNotMatch(card, /s\.adjustedPaymentBadge|s\.amountStrip/);
 });
 
 test("paid details use aligned common sections, cards, and rows", () => {

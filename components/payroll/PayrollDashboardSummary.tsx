@@ -1,109 +1,54 @@
 "use client";
 
-import type { CSSProperties } from "react";
-import {
-  PAYROLL_DASHBOARD_FILTERS,
-  type PayrollDashboardFilter,
-} from "@/lib/payroll/payroll-dashboard";
+import { payrollDashboardFilters, type PayrollDashboardFilter } from "@/lib/payroll/payroll-dashboard";
+import styles from "./PayrollDashboard.module.css";
 
 const text = {
   ko: {
-    title: "이번 달 급여 현황",
-    target: "급여 대상",
-    calculable: "계산 가능",
-    review: "확인 필요",
-    paid: "지급완료",
-    people: "명",
-    filterLabel: "직원 필터",
-    filters: { all: "전체", review: "확인 필요", unpaid: "미지급", paid: "지급완료" },
+    title: "급여 요약", target: "급여 대상", calculable: "계산 가능", review: "확인 필요", people: "명",
+    progress: "지급 진행", filterLabel: "직원 필터",
+    filters: { all: "전체", calculable: "계산 가능", review: "확인 필요", pending: "계산 대기", unpaid: "미지급", paid: "지급완료" },
   },
   vi: {
-    title: "Tình hình lương tháng này",
-    target: "Nhân viên tính lương",
-    calculable: "Tính được",
-    review: "Cần kiểm tra",
-    paid: "Đã trả",
-    people: "người",
-    filterLabel: "Lọc nhân viên",
-    filters: { all: "Tất cả", review: "Cần kiểm tra", unpaid: "Chưa trả", paid: "Đã trả" },
+    title: "Tổng quan lương", target: "Nhân viên tính lương", calculable: "Tính được", review: "Cần kiểm tra", people: "người",
+    progress: "Tiến độ chi trả", filterLabel: "Lọc nhân viên",
+    filters: { all: "Tất cả", calculable: "Tính được", review: "Cần kiểm tra", pending: "Chờ tính", unpaid: "Chưa trả", paid: "Đã trả" },
   },
 } as const;
 
-export function PayrollDashboardSummary({
-  summary,
-  lang,
-}: {
+export function PayrollDashboardSummary({ summary, lang, payable = false, progress }: {
   summary: { target: number; calculable: number; review: number; paid: number };
   lang: "ko" | "vi";
+  payable?: boolean;
+  progress?: { target_employee_count: number; paid_employee_count: number } | null;
 }) {
   const t = text[lang];
-  const tiles = [
-    { key: "target", label: t.target, value: summary.target, tone: s.toneNeutral },
-    { key: "calculable", label: t.calculable, value: summary.calculable, tone: s.toneOk },
-    { key: "review", label: t.review, value: summary.review, tone: summary.review > 0 ? s.toneWarn : s.toneNeutral },
-    { key: "paid", label: t.paid, value: summary.paid, tone: s.tonePaid },
-  ];
-  return (
-    <section style={s.summary} aria-label={t.title}>
-      {tiles.map((tile) => (
-        <div key={tile.key} style={{ ...s.tile, ...tile.tone }}>
-          <span style={s.tileLabel}>{tile.label}</span>
-          <b style={s.tileValue}>
-            {tile.value}
-            <small style={s.tileUnit}>{lang === "vi" ? ` ${t.people}` : t.people}</small>
-          </b>
-        </div>
-      ))}
-    </section>
-  );
+  const total = progress?.target_employee_count ?? summary.target;
+  const paid = progress?.paid_employee_count ?? summary.paid;
+  return <section className={styles.summary} aria-label={t.title}>
+    <div className={styles.summaryMetrics}>
+      {(["target", "calculable", "review"] as const).map(key => <div className={styles.summaryMetric} key={key}>
+        <span>{t[key]}</span><b className={key === "review" && summary.review > 0 ? styles.attention : undefined}>{summary[key]}<small> {t.people}</small></b>
+      </div>)}
+    </div>
+    {payable && <div className={styles.progress}>
+      <span>{t.progress}</span><progress aria-label={t.progress} max={total || 1} value={paid}/><b>{paid} / {total}</b>
+    </div>}
+  </section>;
 }
 
-export function PayrollDashboardFilters({
-  value,
-  counts,
-  lang,
-  onChange,
-}: {
+export function PayrollDashboardFilters({ value, counts, lang, onChange, payable = false }: {
   value: PayrollDashboardFilter;
   counts: Record<PayrollDashboardFilter, number>;
   lang: "ko" | "vi";
   onChange: (filter: PayrollDashboardFilter) => void;
+  payable?: boolean;
 }) {
   const t = text[lang];
-  return (
-    <div style={s.filters} role="group" aria-label={t.filterLabel}>
-      {PAYROLL_DASHBOARD_FILTERS.map((filter) => {
-        const active = value === filter;
-        return (
-          <button
-            key={filter}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(filter)}
-            style={{ ...s.filter, ...(active ? s.filterActive : {}) }}
-          >
-            <span>{t.filters[filter]}</span>
-            <span style={{ ...s.filterCount, ...(active ? s.filterCountActive : {}) }}>{counts[filter]}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+  return <div className={styles.filters} role="group" aria-label={t.filterLabel}>
+    {payrollDashboardFilters(payable).map(filter => <button key={filter} type="button" aria-pressed={value === filter}
+      onClick={() => onChange(filter)} className={styles.filter}>
+      {t.filters[filter]}<span className={styles.filterCount}>{counts[filter]}</span>
+    </button>)}
+  </div>;
 }
-
-const s = {
-  summary: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(132px,1fr))", gap: 6, minWidth: 0 },
-  tile: { display: "grid", gap: 2, minWidth: 0, padding: "6px 8px", borderRadius: 9, borderWidth: 1, borderStyle: "solid", borderColor: "#e5e7eb", background: "#fff" },
-  tileLabel: { fontSize: 10.5, lineHeight: 1.25, fontWeight: 700, color: "#64748b", overflowWrap: "anywhere" },
-  tileValue: { fontSize: 18, lineHeight: 1.15, fontWeight: 900, color: "#0f172a", fontVariantNumeric: "tabular-nums" },
-  tileUnit: { marginLeft: 2, fontSize: 10.5, fontWeight: 700, color: "#64748b" },
-  toneNeutral: {},
-  toneOk: { borderColor: "#bbf7d0", background: "#f0fdf4" },
-  toneWarn: { borderColor: "#fde68a", background: "#fffbeb" },
-  tonePaid: { borderColor: "#bfdbfe", background: "#eff6ff" },
-  filters: { display: "flex", flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollSnapType: "x proximity", gap: 6, minWidth: 0, maxWidth: "100%", paddingBottom: 2 },
-  filter: { display: "inline-flex", alignItems: "center", gap: 6, flex: "0 0 auto", whiteSpace: "nowrap", scrollSnapAlign: "start", minHeight: 34, padding: "6px 12px", borderRadius: 999, borderWidth: 1, borderStyle: "solid", borderColor: "#d1d5db", background: "#fff", color: "#334155", fontSize: 12.5, fontWeight: 800 },
-  filterActive: { borderColor: "#1d4ed8", background: "#1d4ed8", color: "#fff" },
-  filterCount: { minWidth: 18, padding: "0 6px", borderRadius: 999, background: "#f1f5f9", color: "#475569", fontSize: 11, lineHeight: "18px", textAlign: "center", fontVariantNumeric: "tabular-nums" },
-  filterCountActive: { background: "rgba(255,255,255,.22)", color: "#fff" },
-} satisfies Record<string, CSSProperties>;

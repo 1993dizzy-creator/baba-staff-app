@@ -1,9 +1,13 @@
 // Presentation-only projections for /admin/payroll. They read the overview
 // payload as-is and never recalculate payroll, payment, or ledger amounts.
 
-export type PayrollDashboardFilter = "all" | "review" | "unpaid" | "paid";
+export type PayrollDashboardFilter = "all" | "calculable" | "review" | "pending" | "unpaid" | "paid";
 
-export const PAYROLL_DASHBOARD_FILTERS: readonly PayrollDashboardFilter[] = ["all", "review", "unpaid", "paid"];
+export const PAYROLL_DASHBOARD_FILTERS: readonly PayrollDashboardFilter[] = ["all", "calculable", "review", "pending", "unpaid", "paid"];
+
+export function payrollDashboardFilters(payable: boolean): readonly PayrollDashboardFilter[] {
+  return payable ? ["all", "unpaid", "paid", "review"] : ["all", "calculable", "review", "pending"];
+}
 
 type DashboardEmployee = {
   userId: number;
@@ -22,11 +26,17 @@ type DashboardEmployee = {
 export const isPayrollEmployeePaid = (employee: DashboardEmployee) =>
   employee.payment?.payment_status === "paid";
 
-export const isPayrollEmployeeReviewRequired = (employee: DashboardEmployee) =>
-  employee.calculationStatus !== "calculable";
+export function payrollCalculationState(employee: DashboardEmployee, future = false): "calculable" | "review" | "pending" {
+  if (future) return "pending";
+  if (employee.calculationStatus === "requires_review") return "review";
+  if (employee.calculationStatus === "unavailable" || employee.amounts.currentAmount === null) return "pending";
+  return "calculable";
+}
+
+export const isPayrollEmployeeReviewRequired = (employee: DashboardEmployee) => payrollCalculationState(employee) === "review";
 
 // The calculated net payout is shown only for a calculable employee in a
-// started month; otherwise the card shows a "needs review" state instead.
+// started month; otherwise the card shows the review or pending state.
 export function getPayrollCalculatedNetAmount(employee: DashboardEmployee, future = false) {
   if (future || employee.calculationStatus !== "calculable" || employee.amounts.currentAmount === null) return null;
   return employee.amounts.netPayoutAmount;
@@ -36,28 +46,30 @@ export function getPayrollActualPaidAmount(employee: DashboardEmployee) {
   return isPayrollEmployeePaid(employee) ? employee.payment?.actual_paid_amount ?? null : null;
 }
 
-export function buildPayrollDashboardSummary(employees: readonly DashboardEmployee[]) {
+export function buildPayrollDashboardSummary(employees: readonly DashboardEmployee[], future = false) {
   const paid = employees.filter(isPayrollEmployeePaid).length;
-  const review = employees.filter(isPayrollEmployeeReviewRequired).length;
+  const review = employees.filter(employee => payrollCalculationState(employee, future) === "review").length;
+  const pending = employees.filter(employee => payrollCalculationState(employee, future) === "pending").length;
   return {
     target: employees.length,
-    calculable: employees.length - review,
+    calculable: employees.length - review - pending,
     review,
+    pending,
     paid,
     unpaid: employees.length - paid,
   };
 }
 
-export function matchesPayrollDashboardFilter(employee: DashboardEmployee, filter: PayrollDashboardFilter) {
-  if (filter === "review") return isPayrollEmployeeReviewRequired(employee);
+export function matchesPayrollDashboardFilter(employee: DashboardEmployee, filter: PayrollDashboardFilter, future = false) {
+  if (filter === "review" || filter === "calculable" || filter === "pending") return payrollCalculationState(employee, future) === filter;
   if (filter === "unpaid") return !isPayrollEmployeePaid(employee);
   if (filter === "paid") return isPayrollEmployeePaid(employee);
   return true;
 }
 
-export function countPayrollDashboardFilters(employees: readonly DashboardEmployee[]) {
+export function countPayrollDashboardFilters(employees: readonly DashboardEmployee[], future = false) {
   return Object.fromEntries(
-    PAYROLL_DASHBOARD_FILTERS.map((filter) => [filter, employees.filter((employee) => matchesPayrollDashboardFilter(employee, filter)).length]),
+    PAYROLL_DASHBOARD_FILTERS.map((filter) => [filter, employees.filter((employee) => matchesPayrollDashboardFilter(employee, filter, future)).length]),
   ) as Record<PayrollDashboardFilter, number>;
 }
 

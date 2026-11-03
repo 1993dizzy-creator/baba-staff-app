@@ -15,7 +15,8 @@ import {
 } from "@/lib/payroll/payroll-page-money";
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "@/lib/payroll/positive-integer-input";
 import { formatRecognizedWork, getPayrollHeaderAmount } from "@/lib/payroll/payroll-page-display";
-import { buildPayrollPartTotals, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount } from "@/lib/payroll/payroll-dashboard";
+import { buildPayrollPartTotals, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount, payrollCalculationState } from "@/lib/payroll/payroll-dashboard";
+import layout from "./PayrollDashboard.module.css";
 import { payrollOverviewText } from "@/lib/text/payroll-overview";
 import {
   getPaymentBadgePresentation,
@@ -84,6 +85,7 @@ export function CompensationCard({
         ? t.levelBaseRequired
         : formatPayrollHeaderAmount(headerAmount ?? combined);
   const calculatedNetAmount = getPayrollCalculatedNetAmount(employee, future);
+  const calculationState = payrollCalculationState(employee, future);
   const actualPaidAmount = getPayrollActualPaidAmount(employee);
   const employeeAge = age(employee.birthDate);
   const positionLabel = employee.role
@@ -103,58 +105,32 @@ export function CompensationCard({
       })()
     : [];
   return (
-    <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
-      <button style={s.head} onClick={toggle} aria-expanded={expanded}>
-        <span style={s.identity}>
-          <EmployeeNameWithLevel
-            name={`${employee.name}${employeeAge === null ? "" : ` (${employeeAge})`}`}
-            levelInfo={employee.levelInfo}
-            lang={lang}
-            nameStyle={s.name}
-          />
-          <AttendancePerfectScoreBadge eligible={attendanceBonusEligible} show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
-          {mealAllowanceEligible ? (
-            <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
-          ) : null}
-          {extraWorkCount > 0 ? (
-            <span style={{ ...s.extraWorkBadge, ...(extraWorkNeedsReview ? s.extraWorkBadgeAlert : {}) }} title={extraWorkBadgeLabel} aria-label={extraWorkBadgeLabel}>⏱️</span>
-          ) : null}
-          <span style={s.separator}>·</span>
-          <span style={s.position}>{positionLabel}</span>
+    <article className={`${layout.employeeCard} ${expanded ? layout.employeeCardExpanded : ""}`}>
+      <button type="button" className={layout.employeeHeader} onClick={toggle} aria-expanded={expanded}>
+        <span className={layout.employeeIdentity}>
+          <span className={layout.employeeName}>{employee.name}</span>
+          <span className={layout.employeeRole}>{positionLabel}</span>
+          <span className={layout.contract}>{lang === "vi" ? "Lương hợp đồng" : "계약급여"}{employee.contract?.payType === "hourly" ? (lang === "vi" ? " (quy đổi tháng)" : " (월 환산)") : ""} · {header}</span>
         </span>
-        <span style={s.headerPayment}>
-        {headerAmount !== null && <span style={s.amountCaption} title={lang === "vi" ? "Lương hợp đồng" : "계약급여"}>{lang === "vi" ? "HĐ" : "계약"}</span>}
-        <b
-          style={s.amount}
-          title={headerAmount === null ? header : formatVnd(headerAmount)}
-        >
-          {header}
-        </b>
-        {employee.payment?.payment_status === "paid" && <span style={{ ...s.paymentBadge, ...(paymentBadge.adjusted ? s.adjustedPaymentBadge : {}) }}>{paymentBadge.label}</span>}
-        {!future && employee.payment?.payment_status !== "paid" && <span style={s.unpaidBadge}>{lang === "vi" ? "Chưa trả" : "미지급"}</span>}
+        <span className={layout.amountColumn}>
+          <span className={layout.amountLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
+          {calculatedNetAmount !== null
+            ? <b className={`${layout.mainAmount} ${calculatedNetAmount < 0 ? layout.negative : ""}`}>{formatVnd(calculatedNetAmount)}</b>
+            : <b className={`${layout.calculationState} ${calculationState === "review" ? layout.reviewState : ""}`}>{calculationState === "review" ? (lang === "vi" ? "Cần kiểm tra" : "확인 필요") : (lang === "vi" ? "Chờ tính" : "계산 대기")}</b>}
+          {employee.payment?.payment_status === "paid" && <span className={layout.actualPaid}>{paymentBadge.label} · {lang === "vi" ? "Thực trả" : "실제 지급"} {actualPaidAmount === null ? "—" : formatVnd(actualPaidAmount)}</span>}
         </span>
-        <span style={s.expandIcon} aria-hidden="true">
+        <span className={layout.chevron} aria-hidden="true">
           {expanded ? "⌃" : "⌄"}
         </span>
       </button>
-      {!future && (
-        <div style={s.amountStrip}>
-          <span style={s.amountStripCell}>
-            <span style={s.amountStripLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
-            {calculatedNetAmount === null
-              ? <b style={{ ...s.amountStripValue, ...s.amountStripReview }}>{lang === "vi" ? "Cần kiểm tra" : "확인 필요"}</b>
-              : <b style={s.amountStripValue}>{formatVnd(calculatedNetAmount)}</b>}
-          </span>
-          <span style={s.amountStripCell}>
-            <span style={s.amountStripLabel}>{lang === "vi" ? "Thực trả" : "실제 지급"}</span>
-            {actualPaidAmount === null
-              ? <b style={{ ...s.amountStripValue, ...s.amountStripMuted }}>—</b>
-              : <b style={{ ...s.amountStripValue, ...s.amountStripPaid }}>{formatVnd(actualPaidAmount)}</b>}
-          </span>
-        </div>
-      )}
       {expanded && (
         <div style={s.detail}>
+          <div className={layout.detailMeta}>
+            <EmployeeNameWithLevel name={`${employee.name}${employeeAge === null ? "" : ` (${employeeAge})`}`} levelInfo={employee.levelInfo} lang={lang}/>
+            <AttendancePerfectScoreBadge eligible={attendanceBonusEligible} show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
+            {mealAllowanceEligible && <span>{mealAllowanceBadgeLabel(lang)}</span>}
+            {extraWorkCount > 0 && <span className={extraWorkNeedsReview ? layout.attention : undefined}>{extraWorkBadgeLabel}</span>}
+          </div>
           {!employee.contract ? (
             <>
               <p>{t.noContract}</p>
@@ -299,7 +275,7 @@ export function CombinedPartTotal({
             <small style={s.totalExcluded}>{vi ? "Chưa tính lương hợp đồng" : "계약급여 합계 제외"}: {excludedLine(totals.contractExcluded)}</small>
           )}
           {totals.netExcluded.length > 0 && (
-            <small style={s.totalExcluded}>{vi ? "Chưa tính thực nhận (cần kiểm tra)" : "실수령 합계 제외 (확인 필요)"}: {excludedLine(totals.netExcluded)}</small>
+            <small style={s.totalExcluded}>{vi ? "Chưa có kết quả thực nhận" : "실수령 계산 결과 없음"}: {excludedLine(totals.netExcluded)}</small>
           )}
         </>
       )}
@@ -883,77 +859,6 @@ function AdjustmentButton({ kind, label, manageLabel, value, onClick, disabled=f
   );
 }
 const s = {
-  card: {
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: "6px 9px",
-  },
-  expandedCard: {
-    background: "#f8fafc",
-    border: "1px solid #cbd5e1",
-    boxShadow: "0 3px 10px rgba(15, 23, 42, 0.07)",
-  },
-  head: {
-    width: "100%",
-    display: "grid",
-    gridTemplateColumns: "minmax(0,1fr) auto 12px",
-    gap: 6,
-    alignItems: "center",
-    border: 0,
-    background: "transparent",
-    padding: 0,
-    textAlign: "left",
-    cursor: "pointer",
-  },
-  identity: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    minWidth: 0,
-    overflow: "hidden",
-  },
-  name: {
-    fontSize: 13,
-    fontWeight: 800,
-    color: "#111827",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    minWidth: 0,
-  },
-  mealBadge: { fontSize: 12, lineHeight: 1, flexShrink: 0 },
-  extraWorkBadge: { padding: "1px 4px", borderRadius: 999, background: "#f1f5f9", fontSize: 11, lineHeight: 1.2, flexShrink: 0 },
-  extraWorkBadgeAlert: { background: "#ffedd5", boxShadow: "inset 0 0 0 1px #fed7aa" },
-  separator: { color: "#9ca3af", flexShrink: 0 },
-  position: {
-    fontSize: 11,
-    color: "#6b7280",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    minWidth: 0,
-  },
-  amount: { fontSize: 12, fontWeight: 900, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
-  headerPayment: { display:"flex", alignItems:"center", justifyContent:"flex-end", gap:4, minWidth:0 },
-  amountCaption: { color:"#94a3b8", fontSize:9.5, fontWeight:800, whiteSpace:"nowrap" },
-  amountStrip: { display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:12, width:"100%", maxWidth:460, marginTop:5, marginLeft:"auto", paddingTop:5, borderTop:"1px dashed #e5e7eb", minWidth:0, boxSizing:"border-box" },
-  amountStripCell: { display:"flex", flexWrap:"wrap", alignItems:"baseline", columnGap:6, minWidth:0 },
-  amountStripLabel: { color:"#64748b", fontSize:10, fontWeight:700, lineHeight:1.3, overflowWrap:"anywhere", minWidth:0 },
-  amountStripValue: { marginLeft:"auto", color:"#1d4ed8", fontSize:12, fontWeight:900, whiteSpace:"nowrap", fontVariantNumeric:"tabular-nums", textAlign:"right" },
-  amountStripReview: { color:"#b45309", fontSize:11 },
-  amountStripMuted: { color:"#94a3b8" },
-  amountStripPaid: { color:"#166534" },
-  paymentBadge: { padding:"2px 6px", borderRadius:999, background:"#dcfce7", color:"#166534", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
-  adjustedPaymentBadge: { background:"#fef3c7", color:"#92400e" },
-  unpaidBadge: { padding:"2px 6px", borderRadius:999, background:"#f1f5f9", color:"#475569", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
-  expandIcon: {
-    fontSize: 13,
-    color: "#6b7280",
-    width: 12,
-    textAlign: "center",
-    flexShrink: 0,
-  },
   detail: {
     display: "grid",
     gap: 12,
@@ -981,8 +886,8 @@ const s = {
   monthlyEquivalentHelp: { color: "#94a3b8", fontSize: 10, lineHeight: 1.3 },
   subtotalRow: { marginTop: 4, background: "#fff", boxShadow: "inset 0 1px #e2e8f0" },
   subtotalAmount: { fontSize: 13 },
-  netHighlightRow: { background: "#eff6ff", boxShadow: "inset 0 1px #bfdbfe" },
-  netHighlightAmount: { color: "#1d4ed8", fontSize: 15 },
+  netHighlightRow: { background: "#f1f4f6" },
+  netHighlightAmount: { color: "#18394d", fontSize: 15 },
   mutedRow: { background: "#f8fafc", padding: "6px 8px", borderRadius: 7 },
   mutedLabel: { color: "#64748b" },
   mutedAmount: { color: "#475569", fontWeight: 800 },
@@ -996,8 +901,8 @@ const s = {
   taxDetailsSummary: { cursor: "pointer", fontWeight: 700 },
   taxDetailsRows: { display: "grid", gap: 5, marginTop: 6, padding: "7px 8px", borderRadius: 8, background: "#fff" },
   adjustmentButton: { width: "100%", minWidth: 0, minHeight: 36, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, textAlign: "left", cursor: "pointer" },
-  incentiveButton: { border: "1px solid #dcfce7", background: "#f7fcf8", color: "#166534" },
-  penaltyButton: { border: "1px solid #fee2e2", background: "#fff8f8", color: "#991b1b" },
+  incentiveButton: { border: "1px solid #e5e7eb", background: "#fff", color: "#334155" },
+  penaltyButton: { border: "1px solid #e5e7eb", background: "#fff", color: "#334155" },
   disabledButton: { opacity:.55, cursor:"not-allowed" },
   adjustmentCopy: { minWidth: 0, display: "grid", gap: 1 },
   adjustmentHint: { fontSize: 10, fontWeight: 600, opacity: .72 },
@@ -1005,14 +910,11 @@ const s = {
   chevron: { fontSize: 15, lineHeight: 1, fontWeight: 900 },
   help: { color: "#64748b", lineHeight: 1.45 },
   totalTitle: { fontSize: 12, fontWeight: 900, color: "#334155" },
-  totalExcluded: { display: "block", padding: "5px 7px", borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 10.5, lineHeight: 1.4, overflowWrap: "anywhere" },
+  totalExcluded: { display: "block", color: "#64748b", fontSize: 10.5, lineHeight: 1.4, overflowWrap: "anywhere" },
   total: {
     display: "grid",
     gap: 5,
-    padding: "9px 10px",
-    border: "1px solid #e2e8f0",
-    borderRadius: 11,
-    background: "#f8fafc",
+    padding: "8px 2px",
     fontSize: 12,
   },
   field: {
