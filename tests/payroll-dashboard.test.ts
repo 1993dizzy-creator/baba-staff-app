@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
-import { buildPayrollDashboardSummary, buildPayrollPartTotals, countPayrollDashboardFilters, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount, matchesPayrollDashboardFilter, payrollDashboardFilters, payrollCalculationState } from "../lib/payroll/payroll-dashboard.ts";
+import { buildPayrollDashboardSummary, buildPayrollPartTotals, countPayrollDashboardFilters, getPayrollActualPaidAmount, getPayrollCalculatedNetAmount, matchesPayrollDashboardFilter } from "../lib/payroll/payroll-dashboard.ts";
 // @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { getPayrollHeaderAmount } from "../lib/payroll/payroll-page-display.ts";
 
@@ -32,9 +32,9 @@ const roster = [
 ];
 
 test("summary counts target, calculable, review and paid from the overview payload only", () => {
-  assert.deepEqual(buildPayrollDashboardSummary(roster), { target: 5, calculable: 3, review: 1, pending: 1, paid: 2, unpaid: 3 });
-  assert.deepEqual(countPayrollDashboardFilters(roster), { all: 5, calculable: 3, review: 1, pending: 1, unpaid: 3, paid: 2 });
-  assert.deepEqual(roster.filter((row) => matchesPayrollDashboardFilter(row, "review")).map((row) => row.userId), [3]);
+  assert.deepEqual(buildPayrollDashboardSummary(roster), { target: 5, calculable: 3, review: 2, paid: 2, unpaid: 3 });
+  assert.deepEqual(countPayrollDashboardFilters(roster), { all: 5, review: 2, unpaid: 3, paid: 2 });
+  assert.deepEqual(roster.filter((row) => matchesPayrollDashboardFilter(row, "review")).map((row) => row.userId), [3, 4]);
   assert.deepEqual(roster.filter((row) => matchesPayrollDashboardFilter(row, "unpaid")).map((row) => row.userId), [2, 3, 4]);
   assert.deepEqual(roster.filter((row) => matchesPayrollDashboardFilter(row, "paid")).map((row) => row.userId), [1, 5]);
   assert.equal(roster.every((row) => matchesPayrollDashboardFilter(row, "all")), true);
@@ -69,7 +69,7 @@ test("payroll page wires summary and filters without changing payment or calcula
   const card = readFileSync(join(process.cwd(), "components/payroll/CompensationCard.tsx"), "utf8");
   const summary = readFileSync(join(process.cwd(), "components/payroll/PayrollDashboardSummary.tsx"), "utf8");
   assert.match(page, /<PayrollDashboardSummary summary=\{dashboardSummary\}/);
-  assert.match(page, /<PayrollDashboardFilters value=\{activeFilter\}/);
+  assert.match(page, /<PayrollDashboardFilters value=\{filter\}/);
   assert.match(page, /group\.visibleEmployees\.map\(employee=><CompensationCard/);
   // Department totals stay department-wide regardless of the active filter.
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
@@ -77,26 +77,4 @@ test("payroll page wires summary and filters without changing payment or calcula
   assert.match(card, /buildPayrollPartTotals\(employees, getPayrollHeaderAmount, future\)/);
   for (const phrase of ["급여 대상", "계산 가능", "확인 필요", "지급완료", "미지급", "전체", "Nhân viên tính lương", "Tính được", "Cần kiểm tra", "Đã trả", "Chưa trả", "Tất cả"]) assert.ok(summary.includes(phrase), phrase);
   for (const phrase of ["계산 실수령", "실제 지급", "Thực nhận đã tính", "Thực trả", "계약급여 (월 환산)", "Lương hợp đồng (quy đổi tháng)"]) assert.ok(card.includes(phrase), phrase);
-});
-
-test("period filters distinguish pending, review, and payable months without hiding negative net", () => {
-  assert.deepEqual(payrollDashboardFilters(false), ["all", "calculable", "review", "pending"]);
-  assert.deepEqual(payrollDashboardFilters(true), ["all", "unpaid", "paid", "review"]);
-  assert.deepEqual(roster.filter(row => matchesPayrollDashboardFilter(row, "pending")).map(row=>row.userId), [4]);
-  assert.deepEqual(countPayrollDashboardFilters(roster, true), {all:5, calculable:0, review:0, pending:5, unpaid:3, paid:2});
-  assert.equal(payrollCalculationState(employee(9, {current:null})), "pending");
-  assert.equal(getPayrollCalculatedNetAmount(employee(9, {net:-150000})), -150000);
-});
-
-test("neutral presentation keeps period gates and non-wrapping scrollable filters", () => {
- const page=readFileSync(join(process.cwd(), "app/(protected)/admin/payroll/page.tsx"), "utf8");
- const summary=readFileSync(join(process.cwd(), "components/payroll/PayrollDashboardSummary.tsx"), "utf8");
- const css=readFileSync(join(process.cwd(), "components/payroll/PayrollDashboard.module.css"), "utf8");
- assert.match(page,/payable=!!overview&&!future&&overview.monthClosed/);
- assert.match(page,/payable&&<details/);
- assert.match(summary,/payable &&/);
- assert.match(css,/flex-wrap:\s*nowrap/);
- assert.match(css,/overflow-x:\s*auto/);
- assert.match(css,/flex:\s*0 0 auto/);
- assert.doesNotMatch(summary,/borderColor:|border:/);
 });

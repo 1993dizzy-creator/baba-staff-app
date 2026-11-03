@@ -99,7 +99,7 @@ test("cost table uses concise bilingual labels and uniform row alignment",()=>{
 });
 
 test("payment status card keeps only progress and three payment totals",()=>{
-  for(const phrase of ["지급 현황","Tình trạng chi trả","지급 중","지급완료","Đang chi trả","Đã trả","계산 실수령 합계","실제 지급 합계","차액 합계"]) assert.ok(page.includes(phrase),phrase);
+  for(const phrase of ["💳","지급 현황","Tình trạng chi trả","지급 중","지급완료","Đang chi trả","Đã trả","계산 실수령 합계","실제 지급 합계","차액 합계"]) assert.ok(page.includes(phrase),phrase);
   for(const field of ["calculated_net_total","actual_paid_total","difference_total"]) assert.match(page,new RegExp(`run\\.${field}`));
   for(const duplicatedField of ["employee_pit_total","company_pit_total","advance_total","employer_insurance_total","director_insurance_amount","insurance_remittance_total","actual_company_cost_total"]) assert.doesNotMatch(page,new RegExp(`run\\.${duplicatedField}`));
   assert.match(page,/run\.status==="completed"&&run\.completed_at/);
