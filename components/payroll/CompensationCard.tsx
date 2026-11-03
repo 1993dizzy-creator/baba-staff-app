@@ -128,7 +128,6 @@ export function CompensationCard({
           {header}
         </b>
         {employee.payment?.payment_status === "paid" && <span style={{ ...s.paymentBadge, ...(paymentBadge.adjusted ? s.adjustedPaymentBadge : {}) }}>{paymentBadge.label}</span>}
-        {!future && employee.payment?.payment_status !== "paid" && <span style={s.unpaidBadge}>{lang === "vi" ? "Chưa trả" : "미지급"}</span>}
         </span>
         <span style={s.expandIcon} aria-hidden="true">
           {expanded ? "⌃" : "⌄"}
@@ -947,7 +946,6 @@ const s = {
   amountStripReview: { color:"#b45309", fontSize:11 },
   paymentBadge: { padding:"2px 6px", borderRadius:999, background:"#dcfce7", color:"#166534", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
   adjustedPaymentBadge: { background:"#fef3c7", color:"#92400e" },
-  unpaidBadge: { padding:"2px 6px", borderRadius:999, background:"#f1f5f9", color:"#475569", fontSize:9, fontWeight:800, whiteSpace:"nowrap" },
   expandIcon: {
     fontSize: 13,
     color: "#6b7280",
