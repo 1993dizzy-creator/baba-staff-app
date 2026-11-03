@@ -85,6 +85,7 @@ export function CompensationCard({
         : formatPayrollHeaderAmount(headerAmount ?? combined);
   const calculatedNetAmount = getPayrollCalculatedNetAmount(employee, future);
   const applicabilityBadges = getPayrollApplicabilityBadges({ employee, month, monthClosed, attendanceBonusEligible, mealAllowanceEligible, lang });
+  const attendanceBadge = applicabilityBadges.find(badge => badge.key === "attendance");
   const employeeAge = age(employee.birthDate);
   const positionLabel = employee.role
     ? getEmployeeRoleLabel(employee.role, lang)
@@ -112,10 +113,6 @@ export function CompensationCard({
             lang={lang}
             nameStyle={s.name}
           />
-          <AttendancePerfectScoreBadge eligible={attendanceBonusEligible} show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>
-          {mealAllowanceEligible ? (
-            <span style={s.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>
-          ) : null}
           {extraWorkCount > 0 ? (
             <span style={{ ...s.extraWorkBadge, ...(extraWorkNeedsReview ? s.extraWorkBadgeAlert : {}) }} title={extraWorkBadgeLabel} aria-label={extraWorkBadgeLabel}>⏱️</span>
           ) : null}
@@ -137,17 +134,24 @@ export function CompensationCard({
           {expanded ? "⌃" : "⌄"}
         </span>
       </button>
-      {!future && (
+      {(!future || mealAllowanceEligible || (attendanceBonusEligible && employee.attendanceStanding?.perfectAttendanceCurrent === true)) && (
         <div style={s.amountStrip}>
           <span style={s.applicabilityBadges} role="group" aria-label={lang === "vi" ? "Đối tượng áp dụng trong tháng" : "조회 월 적용 대상"}>
-            {applicabilityBadges.map(badge => <span key={badge.key} style={s.applicabilityBadge} aria-label={badge.description} title={badge.description}>{badge.label}</span>)}
+            {/* A closed month may retain the old perfect-attendance indicator
+                without an applied bonus. Keep that meaning, without duplicating it. */}
+            {!future && attendanceBadge
+              ? <span role="img" style={s.applicabilityBadge} aria-label={attendanceBadge.description} title={attendanceBadge.description}>💯</span>
+              : <AttendancePerfectScoreBadge eligible={attendanceBonusEligible} show={employee.attendanceStanding?.perfectAttendanceCurrent===true} vi={lang==="vi"}/>}
+            {future
+              ? mealAllowanceEligible && <span role="img" style={s.applicabilityBadge} aria-label={mealAllowanceBadgeLabel(lang)} title={mealAllowanceBadgeLabel(lang)}>🍚</span>
+              : applicabilityBadges.filter(badge => badge.key !== "attendance").map(badge => <span key={badge.key} role={badge.key === "tax" ? undefined : "img"} style={{...s.applicabilityBadge,...(badge.key === "tax" ? s.taxApplicabilityBadge : {})}} aria-label={badge.description} title={badge.description}>{badge.key === "meal" ? "🍚" : badge.key === "insurance" ? "🛡️" : badge.label}</span>)}
           </span>
-          <span style={s.amountStripCell}>
+          {!future && <span style={s.amountStripCell}>
             <span style={s.amountStripLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
             {calculatedNetAmount === null
               ? <b style={{ ...s.amountStripValue, ...s.amountStripReview }}>{lang === "vi" ? "Cần kiểm tra" : "확인 필요"}</b>
               : <b style={s.amountStripValue}>{formatVnd(calculatedNetAmount)}</b>}
-          </span>
+          </span>}
         </div>
       )}
       {expanded && (
@@ -919,7 +923,6 @@ const s = {
     textOverflow: "ellipsis",
     minWidth: 0,
   },
-  mealBadge: { fontSize: 12, lineHeight: 1, flexShrink: 0 },
   extraWorkBadge: { padding: "1px 4px", borderRadius: 999, background: "#f1f5f9", fontSize: 11, lineHeight: 1.2, flexShrink: 0 },
   extraWorkBadgeAlert: { background: "#ffedd5", boxShadow: "inset 0 0 0 1px #fed7aa" },
   separator: { color: "#9ca3af", flexShrink: 0 },
@@ -936,7 +939,8 @@ const s = {
   amountCaption: { color:"#94a3b8", fontSize:9.5, fontWeight:800, whiteSpace:"nowrap" },
   amountStrip: { display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", alignItems:"center", gap:8, width:"100%", marginTop:5, paddingTop:5, borderTop:"1px dashed #e5e7eb", minWidth:0, boxSizing:"border-box" },
   applicabilityBadges: { display:"flex", flexWrap:"wrap", alignItems:"center", gap:4, minWidth:0 },
-  applicabilityBadge: { maxWidth:"100%", padding:"2px 5px", borderRadius:5, background:"#f1f5f9", color:"#475569", fontSize:9.5, lineHeight:1.3, overflowWrap:"anywhere" },
+  applicabilityBadge: { display:"inline-flex", alignItems:"center", maxWidth:"100%", color:"#475569", fontSize:14, lineHeight:1.3 },
+  taxApplicabilityBadge: { fontSize:11, fontWeight:800 },
   amountStripCell: { display:"flex", flexWrap:"wrap", justifyContent:"flex-end", alignItems:"baseline", columnGap:6, minWidth:0 },
   amountStripLabel: { color:"#64748b", fontSize:10, fontWeight:700, lineHeight:1.3, overflowWrap:"anywhere", minWidth:0 },
   amountStripValue: { maxWidth:"100%", color:"#1d4ed8", fontSize:12, fontWeight:900, overflowWrap:"anywhere", fontVariantNumeric:"tabular-nums", textAlign:"right" },
