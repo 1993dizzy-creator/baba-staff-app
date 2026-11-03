@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {atomicInventoryDatabase} from './helpers/inventory-atomic-fixture.mjs';
 import {safeFixture,snapshot as safeSnapshot} from './helpers/inventory-safe-correction-fixture.mjs';
 import * as partnerSelectOptionsModule from '../lib/partners/select-options.ts';
+import {createQuickSaveRecovery, confirmedQuickSave} from '../lib/inventory/quick-save-recovery.ts';
 const load=(file,deps={})=>{const m={exports:{}};const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;new Function('require','module','exports',code)(name=>{assert.ok(name in deps,'unexpected dependency '+name);return deps[name];},m,m.exports);return m.exports;};
 const version='2026-10-10T03:00:00.000Z';
 function setup({role='owner',authenticated=true,inactive=false,race=false,closed=false,quantity=2,postCommitFailure=false,rpcHandler=null,correctionRows=[],stockCheck=null,paid=false,rootDate="2026-10-03",extraRoots=[],rootOverrides={},itemOverrides={},businessDate="2026-10-10",candidateOverride=undefined,transactionOverride=undefined,payableOverride=undefined,allocations=[],others=[]}={}) {
@@ -54,9 +55,66 @@ function setup({role='owner',authenticated=true,inactive=false,race=false,closed
  '@/lib/inventory/parts':load('lib/inventory/parts.ts'),
  '@/lib/inventory/writer-rpc':load('lib/inventory/writer-rpc.ts',{'server-only':{},'node:crypto':{createHash}}),
  });
- return {item,calls,writes,projections,get:(id=1)=>route.GET(new Request('http://test/api/inventory/items?itemId='+id)),patch:body=>route.PATCH(new Request('http://test/api/inventory/items',{method:'PATCH',body:JSON.stringify(body)})),delete:body=>route.DELETE(new Request('http://test/api/inventory/items',{method:'DELETE',body:JSON.stringify(body)}))};
+ return {item,calls,writes,projections,get:(id=1,query='')=>route.GET(new Request('http://test/api/inventory/items?itemId='+id+query)),patch:body=>route.PATCH(new Request('http://test/api/inventory/items',{method:'PATCH',body:JSON.stringify(body)})),delete:body=>route.DELETE(new Request('http://test/api/inventory/items',{method:'DELETE',body:JSON.stringify(body)}))};
 }
 const edit=overrides=>({id:1,payload:{item_name:'Renamed'},source:'edit_form',reason:'other',expectedQuantity:2,expectedUpdatedAt:version,...overrides});
+
+test('save-check/item-only GETs are authenticated, uncached, bounded to one item and never load POS or supplier masters',async()=>{
+ const s=setup();const r=await s.get(1,'&saveCheck=true');const b=await r.json();assert.equal(r.status,200);
+ assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(b.actorId,7);assert.equal(b.data[0].id,1);assert.ok(Array.isArray(b.auditLogs));
+ assert.deepEqual(s.calls,['inventory','inventory_logs']);assert.deepEqual(s.writes,[]);assert.deepEqual(s.projections,[]);
+ const only=setup();assert.equal((await only.get(1,'&itemOnly=true')).status,200);assert.deepEqual(only.calls,['inventory']);
+ const anon=setup({authenticated:false});assert.equal((await anon.get(1,'&saveCheck=true')).status,401);assert.deepEqual(anon.calls,[]);
+ assert.equal((await setup({role:'staff',inactive:true}).get(1,'&saveCheck=true')).status,403);
+});
+
+test('quick save distinguishes rolled-back PostgreSQL timeout from lost transport and does not replay journal writes',async()=>{
+ const previous=process.env.INVENTORY_WRITER_MODE;
+ try{
+  for(const journal of [false,true])for(const code of ['57014','08006']){
+   if(journal)process.env.INVENTORY_WRITER_MODE='journal';else delete process.env.INVENTORY_WRITER_MODE;
+   let writes=0;const s=setup({rpcHandler:async()=>{writes++;return {data:null,error:{code,message:'private details'}};}});
+   const response=await s.patch(edit({mode:'quick-save',reason:'stock_check',payload:{quantity:3}}));const reply=await response.json();
+   assert.equal(writes,1);assert.equal(reply.ok,false);assert.doesNotMatch(JSON.stringify(reply),/private details/);
+   if(code==='57014'){assert.equal(reply.error,'inventory_save_timeout');assert.equal(reply.writeState,'not_saved');}
+  }
+ }finally{if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous;}
+ const normal=setup();const result=await normal.patch(edit({mode:'quick-save',reason:'stock_check',payload:{quantity:3}}));
+ assert.equal(result.status,200);assert.match(result.headers.get('server-timing'),/inventory-write;dur=\d/);
+});
+
+const recoveryIntent={itemId:111,expectedQuantity:0,expectedUpdatedAt:version,payload:{quantity:1.5,supplier:'Romen',supplierPartnerId:10,purchase_price:30000},reason:'purchase',purchaseBilledAmount:{mode:'auto'}};
+const recoveryItem={id:111,quantity:1.5,updated_at:'2026-10-10T05:00:00.000Z'};
+const recoveryLog={id:14768,item_id:111,source_actor_user_id:7,source:'quick_save',reason:'purchase',created_at:'2026-10-10T05:00:00Z',prev_quantity:0,new_quantity:1.5,change_quantity:1.5,new_supplier:'Romen',purchase_supplier_partner_id:10,new_purchase_price:30000,billed_amount_mode:'auto',billed_amount:null};
+const recoverySnapshot={ok:true,data:[recoveryItem],actorId:7,auditLogs:[recoveryLog]};
+
+test('response-only loss / HTTP 500 / abort / invalid JSON recover exactly one committed Romen receipt without another write',async()=>{
+ for(const failure of [()=>Promise.reject(new TypeError('lost response')),()=>Promise.reject(new DOMException('timeout','TimeoutError')),async()=>new Response('gateway',{status:504}),async()=>Response.json({ok:false},{status:500}),async()=>new Response('<html>',{status:200})]){
+  const attempt=createQuickSaveRecovery(recoveryIntent);let writes=0,reads=0;
+  const run=()=>attempt.run(()=>{writes++;return failure();},async()=>{reads++;return structuredClone(recoverySnapshot);});
+  const result=await run();assert.equal(result.kind,'saved');assert.equal(result.item.quantity,1.5);assert.equal(result.reply.ledgerSync.inventoryLogId,14768);
+  assert.equal(result.reply.ledgerSync.status,'pending','do not falsely confirm Ledger status');
+  assert.equal((await run()).kind,'saved');assert.equal(writes,1);assert.equal(reads,1);assert.equal(1.5*recoveryLog.new_purchase_price,45000);
+ }
+});
+
+test('uncertain save retains original intent, blocks duplicate clicks and only reads again; known rollback requires a matching unchanged row',async()=>{
+ const attempt=createQuickSaveRecovery(recoveryIntent);let release;const gate=new Promise(resolve=>{release=resolve;});let writes=0,reads=0;
+ const write=async()=>{writes++;await gate;throw Error('lost');};
+ const read=async()=>{reads++;throw Error('lookup timeout');};
+ const first=attempt.run(write,read);assert.equal((await attempt.run(write,read)).kind,'busy');release();assert.equal((await first).kind,'uncertain');
+ assert.equal((await attempt.run(write,read)).kind,'uncertain');assert.equal(writes,1);assert.equal(reads,2);
+ assert.equal((await attempt.run(write,async()=>recoverySnapshot)).kind,'saved');assert.equal(writes,1);
+ const rollback=createQuickSaveRecovery(recoveryIntent);
+ assert.equal((await rollback.run(async()=>Response.json({ok:false,error:'inventory_save_timeout',writeState:'not_saved'},{status:500}),async()=>({ok:true,data:[{id:111,quantity:0,updated_at:version}],actorId:7,auditLogs:[]}))).kind,'not_saved');
+ const rejected=createQuickSaveRecovery(recoveryIntent);let unexpectedRead=0;
+ assert.equal((await rejected.run(async()=>Response.json({ok:false,error:'INVENTORY_CONFLICT'},{status:409}),async()=>{unexpectedRead++;return recoverySnapshot;})).kind,'rejected');assert.equal(unexpectedRead,0);
+});
+
+test('quantity alone, another actor, stale/ambiguous logs, manual billed mismatch, missing version or concurrent changes never confirm success',()=>{
+ for(const changes of [{auditLogs:[]},{actorId:8},{data:[{...recoveryItem,quantity:2}]},{data:[{...recoveryItem,updated_at:version}]},{auditLogs:[{...recoveryLog,created_at:version}]},{auditLogs:[recoveryLog,recoveryLog]},{auditLogs:[{...recoveryLog,id:14769,reason:'stock_check'},recoveryLog]},{auditLogs:[{...recoveryLog,new_purchase_price:40000}]},{auditLogs:[{...recoveryLog,purchase_supplier_partner_id:11}]},{auditLogs:[{...recoveryLog,billed_amount_mode:'manual',billed_amount:45000}]}])assert.equal(confirmedQuickSave(recoveryIntent,{...recoverySnapshot,...changes}),null);
+ assert.equal(confirmedQuickSave({...recoveryIntent,expectedUpdatedAt:null},recoverySnapshot),null);
+});
 
 test('journal mode sends the authenticated actor and explicit event to the common writer RPC',async()=>{
  const previous=process.env.INVENTORY_WRITER_MODE;let captured;
@@ -172,7 +230,7 @@ test('actual API -> actual DB RPC: change between read and write is 409 and pres
  }finally{await db.close();}
 });
 test('missing transaction RPC never falls back to separate writes or displays success',async()=>{
- const s=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});const r=await s.patch(edit());assert.equal(r.status,500);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.item.item_name,'Oil');
+ const s=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});const r=await s.patch(edit());assert.equal(r.status,503);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.item.item_name,'Oil');
 });
 test('correction passes complete read snapshot and maps DB metadata conflict to 409 without projection',async()=>{
  const s=setup({rpcHandler:async(name,args)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');assert.deepEqual(args.p_expected_item,s.item);return {data:{status:'inventory_conflict'},error:null};}});
@@ -188,7 +246,7 @@ for(const [dbStatus,httpStatus] of [['not_found',404],['forbidden',403],['quanti
 
 test('missing atomic correction v3 fails without legacy or post-commit projection fallback',async()=>{
  const s=setup({rpcHandler:async(name)=>{assert.equal(name,'inventory_apply_purchase_correction_v3');return {data:null,error:{code:'PGRST202'}};}});
- const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,500);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
+ const r=await s.patch(edit({payload:{quantity:1,unit:'bottle',supplier:'QA',purchase_price:30000},reason:'purchase',selectedPurchaseRootId:12407}));assert.equal(r.status,503);assert.equal((await r.json()).ok,false);assert.equal(s.writes.length,0);assert.equal(s.projections.length,0);
 });
 test('quick-save automatically links one receipt from today and calls the existing atomic RPC once',async()=>{
  const s=setup({role:'staff',rootDate:'2026-10-10',correctionRows:[{id:10,correction_of_inventory_log_id:12407,change_quantity:-0.5}]});
@@ -343,7 +401,7 @@ test('receipt edit: RPC statuses map to HTTP status and keep the block reason fo
   [null,409,'purchase_correction_failed'],
  ]){const s=setup({rpcHandler:receiptRpc(result)});const r=await s.patch(receiptEdit());const body=await r.json();
   assert.equal(r.status,status,JSON.stringify(result));assert.equal(body.ok,false);assert.equal(body.error,error);assert.equal(body.blockReason,blockReason);}
- const failing=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});assert.equal((await failing.patch(receiptEdit())).status,500);
+ const failing=setup({rpcHandler:async()=>({data:null,error:{code:'PGRST202'}})});assert.equal((await failing.patch(receiptEdit())).status,503);
 });
 
 // 실청구금액: every receipt path forwards the billed state; corrections never carry a manual amount.

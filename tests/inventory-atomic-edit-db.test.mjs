@@ -9,6 +9,20 @@ const correct=async(db,old,payload={quantity:9},actor=2)=>(await one(db,"select 
 async function state(db){const out={};for(const t of ['inventory','inventory_logs','inventory_price_logs','ledger_audit_logs','ledger_transactions','ledger_payables','ledger_movements'])out[t]=(await db.query(`select to_jsonb(x) as row from ${t} x order by to_jsonb(x)::text`)).rows;return out;}
 const fail=async(db,table)=>db.exec(`create function qa_fail_write() returns trigger language plpgsql as $$begin raise exception 'QA_REQUIRED_AUDIT_FAILURE';end$$;create trigger qa_fail before insert on ${table} for each row execute function qa_fail_write()`);
 
+test('KO/VI category-only edit with one absent translation preserves stock, prices, supplier, unit and Ledger',async()=>{
+ const db=await fixture();try{
+  for(const lang of ['ko','vi']){
+   await db.exec(lang==='ko'?"update inventory set item_name='',item_name_vi='Vietnamese only' where id=1":"update inventory set item_name='Korean only',item_name_vi='' where id=1");
+   const old=await snapshot(db),before=await state(db);
+   const result=await save(db,old,{category:lang==='ko'?'Vegetables':'Meat',category_vi:lang==='ko'?'Rau':'Thit'},1,'other');
+   assert.equal(result.status,'ok');const now=await snapshot(db);
+   for(const key of ['quantity','purchase_price','supplier','supplier_partner_id','unit','item_name','item_name_vi'])assert.deepEqual(now[key],old[key],key);
+   const audit=await one(db,'select * from inventory_logs where id=$1',[result.inventoryLogId]);assert.equal(Number(audit.change_quantity),0);
+   const after=await state(db);for(const table of ['inventory_price_logs','ledger_transactions','ledger_payables','ledger_movements','ledger_audit_logs'])assert.deepEqual(after[table],before[table]);
+  }
+ }finally{await db.close();}
+});
+
 test('ordinary edit commits item, required audit and changed price together',async()=>{const db=await fixture();try{
  const old=await snapshot(db),before=await state(db),r=await save(db,old,{item_name:'Renamed',purchase_price:21000,updated_by_name:'Spoof'});assert.equal(r.status,'ok');const now=await snapshot(db);
  assert.equal(now.item_name,'Renamed');assert.equal(now.purchase_price,21000);assert.equal(now.quantity,old.quantity);assert.equal(now.updated_by_name,'Session actor');assert.ok(Date.parse(now.updated_at)>Date.parse(old.updated_at));
