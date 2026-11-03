@@ -1,6 +1,7 @@
 "use client";
 import { inventoryPurchaseErrorMessage, type InventoryPurchaseErrorDetails } from "@/lib/inventory/reasons";
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
+import { isNameOnlyInventoryEdit } from "@/lib/inventory/current-item-names";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "@/lib/language-context";
@@ -155,7 +156,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
     initialAliases?: SupplierAliasOption[];
     focusLanguage?: "ko" | "vi";
     embedded?: boolean;
-    onSaved?: (item: InventoryItem) => void;
+    onSaved?: (item: InventoryItem, change?: { namesOnly: boolean; beforeUpdatedAt?: string | null }) => void;
     onClose?: () => void;
     onBusyChange?: (busy: boolean) => void;
 }) {
@@ -352,7 +353,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                 if (isDuplicateInventoryItemResult(res, result)) setEditFormPendingSave(null);
                 return;
             }
-            onSaved?.({ ...inventoryList[0], ...editFormPendingSave.payload } as InventoryItem);
+            onSaved?.({ ...inventoryList[0], ...editFormPendingSave.payload } as InventoryItem, { namesOnly: isNameOnlyInventoryEdit(inventoryList[0] as unknown as Record<string, unknown>, editFormPendingSave.payload), beforeUpdatedAt: inventoryList[0].updated_at });
         }
         catch {
             alert(c.editFail);

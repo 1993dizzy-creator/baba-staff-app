@@ -59,6 +59,7 @@ function setup({ ledgerFailure = false, logId = 100, latestLogId = logId, reason
     'server-only': {}, '@/lib/supabase/server': { supabaseServer: supabase },
   });
   const route = load('app/api/inventory/logs/route.ts', {
+    '@/lib/inventory/current-item-names-server':load('lib/inventory/current-item-names-server.ts',{'server-only':{}}),
     '@/lib/inventory/daily-effective-purchases':load('lib/inventory/daily-effective-purchases.ts',{}),
     'next/server': { NextResponse: { json: (body, options) => Response.json(body, options) } },
     '@/lib/auth/server-auth': { getAuthenticatedActor: async () => ({ ok: true, actor: { id: 7, username: 'staff', role: 'staff' } }),requireRole:async()=>({ok:true,actor:{id:7,username:'master',role:'master'}}) },
@@ -81,47 +82,19 @@ test('journal mode refuses audit rewrites before any source/ledger update', asyn
     assert.deepEqual(state.log,before);assert.deepEqual(state.calls,[]);
   } finally { if(previous===undefined)delete process.env.INVENTORY_WRITER_MODE;else process.env.INVENTORY_WRITER_MODE=previous; }
 });
-test('explicit purchase sync updates current economics and reports Ledger failure separately', async () => {
-  const state = setup({ ledgerFailure: true, logId: 200, latestLogId: 200 });
-  const response = await state.patch({ id: 200, logIds: [200], businessDate: '2026-09-10', syncCurrentItem: true });
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.data.item_name, 'Coca-Cola');
-  assert.equal(body.data.change_quantity, 3);
-  assert.equal(body.data.new_supplier, 'Shopee');
-  assert.equal(body.data.new_purchase_price, 19000);
-  assert.equal(body.data.purchase_supplier_partner_id, 42);
-  assert.equal(body.ledgerSync.status, 'failed');
-  assert.equal(body.ledgerSync.code, 'NETWORK_TEST_FAILURE');
-  assert.deepEqual(state.projectedAmounts, [57000]);
-  assert.deepEqual(state.calls, ['source-commit', 'ledger-projection']);
+test('explicit purchase sync is blocked before source or Ledger writes',async()=>{
+ const state=setup({ledgerFailure:true,logId:200,latestLogId:200}),before=JSON.stringify(state.log);const response=await state.patch({id:200,logIds:[200],syncCurrentItem:true,businessDate:'2026-09-10'});
+ assert.equal(response.status,409);assert.equal((await response.json()).code,'INVENTORY_HISTORICAL_SYNC_DISABLED');assert.equal(JSON.stringify(state.log),before);assert.deepEqual(state.calls,[]);assert.deepEqual(state.projectedAmounts,[]);
 });
 
-test('explicit sync on an older purchase keeps its economics and Ledger amount', async () => {
-  const state = setup({ logId: 100, latestLogId: 200, businessDate: '2026-08-10', purchasePrice: 20000 });
-  const response = await state.patch({ id: 100, logIds: [100], businessDate: '2026-08-10', syncCurrentItem: true });
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.equal(body.data.item_name, 'Coca-Cola');
-  assert.equal(body.data.new_supplier, 'Old supplier');
-  assert.equal(body.data.new_purchase_price, 20000);
-  assert.equal(body.data.purchase_supplier_partner_id, 7);
-  assert.deepEqual(state.projectedAmounts, [60000]);
-  assert.deepEqual(state.calls, ['source-commit', 'ledger-projection']);
+test('explicit sync on an older purchase is blocked while retaining historical economics',async()=>{
+ const state=setup({logId:100,latestLogId:200,businessDate:'2026-08-10',purchasePrice:20000}),before=JSON.stringify(state.log);const response=await state.patch({id:100,logIds:[100],syncCurrentItem:true,businessDate:'2026-09-10'});
+ assert.equal(response.status,409);assert.equal((await response.json()).code,'INVENTORY_HISTORICAL_SYNC_DISABLED');assert.equal(JSON.stringify(state.log),before);assert.deepEqual(state.calls,[]);assert.deepEqual(state.projectedAmounts,[]);
 });
 
-test('explicit current-item sync keeps non-purchase economics unchanged', async () => {
-  const state = setup({ reason: 'stock_check' });
-  const response = await state.patch({ id: 100, logIds: [100], businessDate: '2026-09-10', syncCurrentItem: true });
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.equal(body.data.item_name, 'Coca-Cola');
-  assert.equal(body.data.new_supplier, 'Old supplier');
-  assert.equal(body.data.new_purchase_price, 23333);
-  assert.equal(body.data.purchase_supplier_partner_id, 7);
-  assert.equal(body.ledgerSync.status, 'synced');
-  assert.deepEqual(state.calls, ['source-commit']);
+test('explicit current-item sync is blocked without rewriting non-purchase audit rows',async()=>{
+ const state=setup({reason:'stock_check'}),before=JSON.stringify(state.log);const response=await state.patch({id:100,logIds:[100],syncCurrentItem:true,businessDate:'2026-09-10'});
+ assert.equal(response.status,409);assert.equal((await response.json()).code,'INVENTORY_HISTORICAL_SYNC_DISABLED');assert.equal(JSON.stringify(state.log),before);assert.deepEqual(state.calls,[]);assert.deepEqual(state.projectedAmounts,[]);
 });
 
 test('explicit historical price/supplier correction does not overwrite a newer purchase master', async () => {
@@ -601,10 +574,10 @@ test('cross-day stock_check and other do not infer purchase intent',async()=>{
 });
 
 test('history classification cannot turn a negative count into a standalone purchase, even in bulk/sync requests',async()=>{
- for(const change_quantity of [-4.52,0]){const state=setup({reason:'stock_check'});state.log.change_quantity=change_quantity;const before=JSON.stringify(state.log);const response=await state.patch({id:100,logIds:[100],reason:'purchase',syncCurrentItem:true});assert.equal(response.status,409);assert.equal((await response.json()).error,'inventory_nonpositive_purchase_classification');assert.deepEqual(state.calls,[]);assert.equal(JSON.stringify(state.log),before);}
+ for(const syncCurrentItem of [false,true])for(const change_quantity of [-4.52,0]){const state=setup({reason:'stock_check'});state.log.change_quantity=change_quantity;const before=JSON.stringify(state.log);const response=await state.patch({id:100,logIds:[100],reason:'purchase',syncCurrentItem});assert.equal(response.status,409);const result=await response.json();assert.equal(syncCurrentItem?result.code:result.error,syncCurrentItem?'INVENTORY_HISTORICAL_SYNC_DISABLED':'inventory_nonpositive_purchase_classification');assert.deepEqual(state.calls,[]);assert.equal(JSON.stringify(state.log),before);}
 });
 test('purchase history relabeling fails before source, inventory, price history or projection writes',async()=>{
- for(const [reason,next] of [['purchase','stock_check'],['other','purchase']]){const state=setup({reason});const response=await state.patch({id:100,reason:next,syncCurrentItem:true});assert.equal(response.status,409);assert.equal((await response.json()).error,'inventory_purchase_reclassification_requires_review');assert.deepEqual(state.calls,[]);}
+ for(const syncCurrentItem of [false,true])for(const [reason,next] of [['purchase','stock_check'],['other','purchase']]){const state=setup({reason});const response=await state.patch({id:100,reason:next,syncCurrentItem});assert.equal(response.status,409);const result=await response.json();assert.equal(syncCurrentItem?result.code:result.error,syncCurrentItem?'INVENTORY_HISTORICAL_SYNC_DISABLED':'inventory_purchase_reclassification_requires_review');assert.deepEqual(state.calls,[]);}
 });
 test('new item creation cannot emit an unlinked nonpositive purchase',async()=>{
  for(const quantity of [-1,0]){const state=itemSetup();const response=await state.invoke('POST',{registrationType:'new_purchase',payload:createPayload({quantity})});assert.equal(response.status,400);assert.equal((await response.json()).error,'inventory_purchase_quantity_must_increase');assert.deepEqual(state.calls,[]);assert.deepEqual(state.logs,[]);}
@@ -620,11 +593,13 @@ test('a receipt edited through 입고 수정 keeps its price and supplier agains
     assert.equal(state.log.new_purchase_price, 23333);
   }
   const synced = setup({ logOverrides: { action: 'receipt_edit', correction_of_inventory_log_id: 90 } });
+  const originalName=synced.log.item_name;
   const response = await synced.patch({ id: 100, syncCurrentItem: true, logIds: [100] });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code,'INVENTORY_HISTORICAL_SYNC_DISABLED');
   assert.equal(synced.log.new_purchase_price, 23333);
   assert.equal(synced.log.new_supplier, 'Old supplier');
-  assert.equal(synced.log.item_name, 'Coca-Cola');
+  assert.equal(synced.log.item_name, originalName);
   assert.ok(!synced.calls.includes('master-update'));
 });
 

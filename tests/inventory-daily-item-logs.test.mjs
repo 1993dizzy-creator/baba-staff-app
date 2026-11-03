@@ -33,7 +33,7 @@ test('business-day item logs: day rows plus the linked family of every receipt t
  assert.deepEqual(r.body.data.map(row=>row.id).sort((a,b)=>a-b),[90,100,101,102,103,110,120,130,131,140,160,161]);
  assert.ok(r.body.data.every(row=>row.item_id===1));
  assert.equal(JSON.stringify(tables),original);
- assert.ok(db.reads.every(read=>['inventory_logs','inventory_keg_sessions','ledger_inventory_projection_status'].includes(read.table)));
+ assert.ok(db.reads.every(read=>['inventory_logs','inventory_keg_sessions','ledger_inventory_projection_status','inventory'].includes(read.table)));
  for(const bad of ['2026-13-01','2026-02-30','28-10-2026','','x'])assert.equal((await call(route(database(tables)),1,'?businessDate='+encodeURIComponent(bad))).status,400,bad);
  // Without businessDate the existing latest-50 read is unchanged.
  const legacy=await call(route(database(tables)),1);assert.equal(legacy.status,200);assert.equal(legacy.body.businessDate,undefined);assert.equal(legacy.body.data.length,14);

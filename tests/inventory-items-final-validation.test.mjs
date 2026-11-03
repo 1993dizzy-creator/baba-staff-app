@@ -183,7 +183,7 @@ test('real log GET omits cancelled #613, retains inactive history, and leaves ra
  '@/lib/auth/server-auth':{getAuthenticatedActor:async()=>({ok:true,actor:{id:7,role:'owner'}})},
  '@/lib/inventory/reasons':load('lib/inventory/reasons.ts'),
  '@/lib/inventory/keg-replacement-summary':{fetchPreviousKegSessionSummariesByLogId:async()=>new Map(),fetchPreviousKegSummariesByLogId:async()=>new Map()},
- '@/lib/supabase/server':{supabaseServer:db},'@/lib/inventory/log-sync-server':{},'@/lib/ledger/inventory-projection':{},'@/lib/inventory/supplier-partners-server':{},'@/lib/inventory/price-logs':{},
+ '@/lib/inventory/current-item-names-server':load('lib/inventory/current-item-names-server.ts',{'server-only':{}}),'@/lib/supabase/server':{supabaseServer:db},'@/lib/inventory/log-sync-server':{},'@/lib/ledger/inventory-projection':{},'@/lib/inventory/supplier-partners-server':{},'@/lib/inventory/price-logs':{},
  });
  for(const view of ['', '&view=cards']){
  const response=await route.GET(new Request('http://test/api/inventory/logs?mode=logs&businessDate=2026-10-03&effectivePurchases=true'+view));

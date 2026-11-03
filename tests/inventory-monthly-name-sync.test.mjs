@@ -19,7 +19,7 @@ const receipt=(id,itemId,date,names)=>[
 const master=(id,name,nameVi,extra={})=>({id,item_name:name,item_name_vi:nameVi,part:'kitchen',category:'Fruit',category_vi:'Fruit',code:'P',unit:'kg',purchase_price:35000,supplier:'Chợ',supplier_partner_id:7,quantity:2,is_active:true,created_at:'2026-10-01T03:00:00Z',updated_at:'2026-10-20T03:00:00Z',...extra});
 
 function fixture(){
- const inventory=[master(314,'Fresh pear','Lê'),master(624,'','Dầu ớt cay nóng 500ml'),master(700,'Old','Cũ',{is_active:false}),master(800,'Apple','Táo')];
+ const inventory=[master(314,'Fresh pear','Lê',{category:'New fruit'}),master(624,'','Dầu ớt cay nóng 500ml'),master(700,'Old','Cũ',{is_active:false}),master(800,'Apple','Táo')];
  const logs=[
   ...receipt(12848,314,'2026-10-09',['Pear','Lê']),
   ...receipt(12900,314,'2026-10-21',['Pear','Lê']),
@@ -34,8 +34,8 @@ function fixture(){
  return {inventory_logs:logs,inventory,inventory_snapshot_batches:[]};
 }
 function setup(tables=fixture(),role='owner'){
- const ranges=[];
- const db={from(table){const filters=[],orders=[];let from=0,to=Infinity,single=false;const q={
+ const ranges=[],calls=[];
+ const db={from(table){calls.push(table);const filters=[],orders=[];let from=0,to=Infinity,single=false;const q={
   select(){return q;},eq(k,v){filters.push(r=>r[k]===v);return q;},in(k,v){filters.push(r=>v.includes(r[k]));return q;},not(k,op,v){filters.push(r=>r[k]!==v);return q;},
   gte(k,v){filters.push(r=>r[k]>=v);return q;},lt(k,v){filters.push(r=>r[k]<v);return q;},order(k,o={}){orders.push([k,o.ascending!==false]);return q;},
   range(a,b){from=a;to=b;ranges.push({table,from:a,to:b});return q;},limit(n){to=n-1;return q;},maybeSingle(){single=true;return q;},
@@ -51,7 +51,7 @@ function setup(tables=fixture(),role='owner'){
   '@/lib/inventory/daily-sync-result':load('lib/inventory/daily-sync-result.ts'),'@/lib/ledger/inventory-projection':{},
  });
  process.env.NEXT_PUBLIC_SUPABASE_URL='http://isolated.test';process.env.SUPABASE_SERVICE_ROLE_KEY='fixture-key-not-a-credential';
- return {tables,ranges,get:query=>route.GET(new Request('http://test/api/inventory/snapshot/name-sync?'+query))};
+ return {tables,ranges,calls,get:query=>route.GET(new Request('http://test/api/inventory/snapshot/name-sync?'+query)),post:body=>route.POST(new Request('http://test/api/inventory/snapshot/name-sync',{method:'POST',body:JSON.stringify(body)}))};
 }
 
 test('month range: YYYY-MM only, clipped to the sync start date, December rolls over',()=>{
@@ -64,10 +64,10 @@ test('month range: YYYY-MM only, clipped to the sync start date, December rolls 
 
 test('every date of the month is checked: two dates of one item stay separate, each with its own businessDate',async()=>{
  const s=setup();const body=await(await s.get('month=2026-10')).json();
- assert.equal(body.ok,true);assert.equal(body.month,'2026-10');assert.equal(body.canSync,true);
- assert.deepEqual(body.monthlySyncItems.map(item=>[item.businessDate,item.itemId,item.logIds]),[['2026-10-09',314,[12848]],['2026-10-21',314,[12900]],['2026-10-21',624,[13000]]]);
- assert.deepEqual(body.monthlySyncItems[0].changes,[{field:'item_name',from:'Pear',to:'Fresh pear'}]);
- assert.deepEqual(body.monthlySyncItems[2].changes,[{field:'item_name_vi',from:'Dầu ớt',to:'Dầu ớt cay nóng 500ml'}]);
+ assert.equal(body.ok,true);assert.equal(body.month,'2026-10');assert.equal(body.canSync,false);assert.equal(body.syncDisabledReason,"INVENTORY_HISTORICAL_SYNC_DISABLED");
+ assert.deepEqual(body.monthlySyncItems.map(item=>[item.businessDate,item.itemId,item.logIds]),[['2026-10-09',314,[12848]],['2026-10-21',314,[12900]]]);
+ assert.deepEqual(body.monthlySyncItems[0].changes,[{field:'category',from:'Fruit',to:'New fruit'}]);
+ assert.ok(body.monthlySyncItems.every(item=>item.changes.every(change=>!['item_name','item_name_vi'].includes(change.field))));
  // Every page of the month was read (1,214 rows → two pages), none from outside it.
  assert.deepEqual(s.ranges.filter(r=>r.table==='inventory_logs').map(r=>[r.from,r.to]),[[0,999],[1000,1999]]);
  // Language-missing covers all active items, independent of the month.
@@ -91,6 +91,14 @@ test('invalid month is 400; a month before the start date reads no logs; staff c
  assert.equal((await(await setup(fixture(),'staff').get('month=2026-10')).json()).canSync,false);
  // The daily mode is unchanged.
  assert.equal((await setup().get('businessDate=2026-10-32')).status,400);
+});
+
+test('legacy daily and monthly sync writes are rejected before creating a database query',async()=>{
+ for(const action of ['sync_item','sync_all','sync_month']){
+  const s=setup(),response=await s.post({action,business_date:'2026-10-09',item_id:314,month:'2026-10',targets:[{businessDate:'2026-10-09',itemId:314}]});
+  const body=await response.json();assert.equal(response.status,409);assert.equal(body.code,'INVENTORY_HISTORICAL_SYNC_DISABLED');assert.ok(body.message&&body.messageVi);assert.deepEqual(s.calls,[]);assert.equal(response.headers.get('Cache-Control'),'no-store');
+ }
+ const staff=setup(fixture(),'staff');assert.equal((await staff.post({action:'sync_all'})).status,403);assert.deepEqual(staff.calls,[]);
 });
 
 test('monthly helper ignores logs outside the month and inactive items',()=>{

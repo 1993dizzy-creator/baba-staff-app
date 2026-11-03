@@ -247,7 +247,9 @@ export function findInventoryLogNameSyncItems(
 
       const syncItem = toSyncItem(corrections, current, root, !nextRoot);
       if (receiptEdited) for (const field of ECONOMIC_FIELDS) Object.assign(syncItem, { [field]: logValue(root, field) ?? null });
-      const changes = (receiptEdited ? DISPLAY_FIELDS : SYNC_FIELDS).flatMap((field) => {
+      // KO/VI names are resolved from the master when reading. They never
+      // require a historical-row write or a pending synchronization entry.
+      const changes = (receiptEdited ? DISPLAY_FIELDS : SYNC_FIELDS).filter(field => field !== "item_name" && field !== "item_name_vi").flatMap((field) => {
         const from = logValue(root, field);
         const to = syncItem[field];
         if (valuesEqual(field, from, to)) return [];

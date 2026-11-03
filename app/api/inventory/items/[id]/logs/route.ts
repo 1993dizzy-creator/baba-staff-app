@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { fetchPreviousKegSessionSummariesByLogId, fetchPreviousKegSummariesByLogId } from "@/lib/inventory/keg-replacement-summary";
 import { supabaseServer } from "@/lib/supabase/server";
+import { withCurrentInventoryNames } from "@/lib/inventory/current-item-names-server";
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -159,7 +160,7 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      data: enrichedLogs,
+      data: await withCurrentInventoryNames(supabaseServer, enrichedLogs),
       ...(businessDate !== null ? { businessDate } : {}),
     });
   } catch (error) {

@@ -28,6 +28,11 @@ import {
 export const dynamic = "force-dynamic";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
+// Legacy economic/display synchronization rewrites protected source rows.
+// Retain the review/planning code, but do not enable writes without a separately
+// reviewed correction flow. This is intentionally not an environment switch.
+const HISTORICAL_SYNC_BLOCKED = true;
+const SYNC_DISABLED_REASON = "INVENTORY_HISTORICAL_SYNC_DISABLED";
 const LOG_PAGE_SIZE = 1000;
 const LOG_SELECT = [
   "id", "item_id", "business_date", "created_at", "reason", "source", "action", "change_quantity", "correction_of_inventory_log_id",
@@ -236,7 +241,7 @@ async function loadActiveInventoryForMonth(supabase: ReturnType<typeof createSup
   }
 }
 
-async function getMonthlySync(month: string, canSync: boolean) {
+async function getMonthlySync(month: string) {
   const range = inventoryNameSyncMonthRange(month);
   const supabase = createSupabaseAdmin();
   const [inventory, logs] = await Promise.all([
@@ -248,7 +253,8 @@ async function getMonthlySync(month: string, canSync: boolean) {
   return NextResponse.json({
     ok: true,
     month,
-    canSync,
+    canSync: false,
+    syncDisabledReason: SYNC_DISABLED_REASON,
     // Not limited to the month: every active item whose name is missing in a language.
     languageMissingItems: findInventoryLanguageMissingItems(inventory.inventoryItems),
     monthlySyncItems: findMonthlyInventoryNameSyncItems(month, logs.logs, inventory.inventoryItems),
@@ -302,7 +308,7 @@ export async function GET(request: Request) {
     if (searchParams.has("month")) {
       const month = searchParams.get("month");
       if (!isInventoryNameSyncMonth(month)) return NextResponse.json({ ok: false, error: "inventory_monthly_sync_invalid_month" }, { status: 400, headers: NO_STORE_HEADERS });
-      return await getMonthlySync(month, canRunInventorySnapshotNameSync(auth.actor.role));
+      return await getMonthlySync(month);
     }
     const businessDate = searchParams.get("businessDate");
     if (!isValidBusinessDate(businessDate)) return NextResponse.json({ ok: false, error: "inventory_daily_sync_invalid_business_date" }, { status: 400, headers: NO_STORE_HEADERS });
@@ -311,11 +317,11 @@ export async function GET(request: Request) {
     const languageRows = await loadActiveInventoryLanguageRows(supabase);
     if (!languageRows.ok) return NextResponse.json({ ok: false, error: languageRows.error }, { status: 500, headers: NO_STORE_HEADERS });
 
-    const canSync = canRunInventorySnapshotNameSync(auth.actor.role);
     if (!isInventorySnapshotNameSyncEligible(businessDate)) return NextResponse.json({
       ok: true,
       businessDate,
-      canSync,
+      canSync: false,
+      syncDisabledReason: SYNC_DISABLED_REASON,
       languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
       dailySyncItems: [],
     }, { headers: NO_STORE_HEADERS });
@@ -324,7 +330,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       businessDate,
-      canSync,
+      canSync: false,
+      syncDisabledReason: SYNC_DISABLED_REASON,
       languageMissingItems: findInventoryLanguageMissingItems(languageRows.inventoryItems),
       dailySyncItems: findInventoryLogNameSyncItems(businessDate, rows.logs, rows.inventoryItems),
     }, { headers: NO_STORE_HEADERS });
@@ -339,6 +346,11 @@ export async function POST(request: Request) {
     const auth = await getAuthenticatedActor();
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code, code: auth.code }, { status: auth.status, headers: NO_STORE_HEADERS });
     if (!canRunInventorySnapshotNameSync(auth.actor.role)) return NextResponse.json({ ok: false, error: "inventory_snapshot_name_sync_forbidden" }, { status: 403, headers: NO_STORE_HEADERS });
+    if (HISTORICAL_SYNC_BLOCKED) return NextResponse.json({
+      ok: false, code: SYNC_DISABLED_REASON, error: SYNC_DISABLED_REASON,
+      message: "품목명은 최신 마스터를 자동 표시합니다. 과거 입고정보 동기화는 원본 보호를 위해 중지되어 있습니다.",
+      messageVi: "Tên mặt hàng tự động hiển thị theo danh mục hiện tại. Đồng bộ thông tin nhập cũ đã dừng để bảo vệ bản gốc.",
+    }, { status: 409, headers: NO_STORE_HEADERS });
 
     let body: { action?: unknown; business_date?: unknown; item_id?: unknown; month?: unknown; targets?: unknown };
     try { body = await request.json(); }

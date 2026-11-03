@@ -11,8 +11,9 @@ type Lang = "ko" | "vi";
 
 const text = {
   ko: {
-    title: (month: string, count: number, days: number) => `${Number(month.slice(5))}월 입고정보 동기화 필요 ${count}개 · ${days}일`,
-    none: (month: string) => `${Number(month.slice(5))}월 입고정보 동기화 필요 항목 없음`,
+    title: (month: string, count: number, days: number) => `${Number(month.slice(5))}월 입고정보 변경 확인 ${count}개 · ${days}일`,
+    none: (month: string) => `${Number(month.slice(5))}월 입고정보 변경 확인 항목 없음`,
+    blocked: "품목명은 최신 마스터를 자동 표시합니다. 과거 입고정보 동기화는 원본 보호를 위해 중지되어 변경 내역 확인만 가능합니다.",
     loading: "월간 동기화 항목 확인 중...",
     loadFailed: "월간 동기화 항목을 확인하지 못했습니다.",
     syncAll: "일괄 동기화",
@@ -36,8 +37,9 @@ const text = {
     },
   },
   vi: {
-    title: (month: string, count: number, days: number) => `Tháng ${Number(month.slice(5))}: cần đồng bộ ${count} mặt hàng · ${days} ngày`,
-    none: (month: string) => `Tháng ${Number(month.slice(5))}: không có mặt hàng cần đồng bộ`,
+    title: (month: string, count: number, days: number) => `Tháng ${Number(month.slice(5))}: kiểm tra thay đổi ${count} mặt hàng · ${days} ngày`,
+    none: (month: string) => `Tháng ${Number(month.slice(5))}: không có thay đổi thông tin nhập hàng cần kiểm tra`,
+    blocked: "Tên mặt hàng tự động hiển thị theo danh mục hiện tại. Đồng bộ thông tin nhập cũ đã dừng để bảo vệ bản gốc; chỉ có thể xem các thay đổi.",
     loading: "Đang kiểm tra mục cần đồng bộ trong tháng...",
     loadFailed: "Không thể kiểm tra mục cần đồng bộ trong tháng.",
     syncAll: "Đồng bộ tất cả",
@@ -79,6 +81,7 @@ export default function MonthlyNameSyncPanel({ month, lang, reloadKey, onSynced 
   const t = text[lang];
   const [items, setItems] = useState<MonthlyInventoryNameSyncItem[]>([]);
   const [canSync, setCanSync] = useState(false);
+  const [syncBlocked, setSyncBlocked] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -94,12 +97,13 @@ export default function MonthlyNameSyncPanel({ month, lang, reloadKey, onSynced 
     setError("");
     try {
       const response = await fetchInventoryApi(`/api/inventory/snapshot/name-sync?month=${encodeURIComponent(targetMonth)}`, { cache: "no-store" });
-      const json = await response.json() as { ok?: boolean; month?: string; canSync?: boolean; monthlySyncItems?: MonthlyInventoryNameSyncItem[] };
+      const json = await response.json() as { ok?: boolean; month?: string; canSync?: boolean; syncDisabledReason?: string; monthlySyncItems?: MonthlyInventoryNameSyncItem[] };
       // A response for a month the user has already left never replaces the current list.
       if (sequence !== sequenceRef.current) return;
       if (!response.ok || !json.ok || json.month !== targetMonth) { setItems([]); setCanSync(false); setError(text[lang].loadFailed); return; }
       setItems(json.monthlySyncItems ?? []);
       setCanSync(json.canSync === true);
+      setSyncBlocked(json.syncDisabledReason === "INVENTORY_HISTORICAL_SYNC_DISABLED");
     } catch {
       if (sequence === sequenceRef.current) { setItems([]); setCanSync(false); setError(text[lang].loadFailed); }
     } finally {
@@ -219,6 +223,7 @@ export default function MonthlyNameSyncPanel({ month, lang, reloadKey, onSynced 
         </button> : null}
       </div>
       {error ? <div role="alert" style={{ fontSize: 12, fontWeight: 700, color: "#b91c1c" }}>{error}</div> : null}
+      {syncBlocked ? <div role="note" data-testid="monthly-sync-read-only" style={{fontSize:11,color:"#64748b",lineHeight:1.4}}>{t.blocked}</div> : null}
       {result ? <div role="status" data-testid="monthly-name-sync-result" style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8" }}>
         {result.message}
         <InventoryDailySyncResults results={result.results} businessDate={result.businessDate} lang={lang} />

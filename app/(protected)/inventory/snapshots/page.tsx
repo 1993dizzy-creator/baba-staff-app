@@ -6,6 +6,7 @@ import { renderPartnerOptionGroups } from "@/components/partners/PartnerOptionGr
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
+import { inventoryDisplayName, type InventoryItemNames, type SavedInventoryItemNames } from "@/lib/inventory/current-item-names";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLanguage } from "@/lib/language-context";
@@ -107,6 +108,7 @@ type PreviousKegSummary = {
 };
 
 type SnapshotItem = {
+    currentItemNames?: InventoryItemNames | null;
     id: number;
     syncLogIds?: number[];
     batch_id: number | null;
@@ -138,6 +140,7 @@ type SnapshotItem = {
 };
 
 type InventoryLog = {
+    currentItemNames?: InventoryItemNames | null;
     id: number;
     item_id: number | null;
     action: string | null;
@@ -389,6 +392,7 @@ export default function InventorySnapshotsPage() {
     const movementItemsRequestSequenceRef = useRef(0);
     const [dateContentTransitioning, setDateContentTransitioning] = useState(false);
     const [logModalItem, setLogModalItem] = useState<SnapshotItem | null>(null);
+    const [savedItemNames, setSavedItemNames] = useState<Record<number, SavedInventoryItemNames>>({});
     const [itemLogs, setItemLogs] = useState<InventoryLog[]>([]);
     const [purchaseDiagnostics,setPurchaseDiagnostics]=useState<PurchaseDiagnostic[]>([]);
     const [completedCancellationsExpanded, setCompletedCancellationsExpanded] = useState(false);
@@ -503,10 +507,8 @@ export default function InventorySnapshotsPage() {
     };
 
     const getDisplayItemName = useCallback((item: SnapshotItem) => {
-        return lang === "vi"
-            ? item.item_name_vi || item.item_name || "-"
-            : item.item_name || item.item_name_vi || "-";
-    }, [lang]);
+        return inventoryDisplayName(item, lang, savedItemNames[Number(item.item_id)]);
+    }, [lang, savedItemNames]);
 
     const getDisplayCategory = useCallback((item: SnapshotItem) => {
         return lang === "vi"
@@ -518,9 +520,7 @@ export default function InventorySnapshotsPage() {
         item.category || item.category_vi || "-";
 
     const getDisplayLogItemName = (log: InventoryLog) => {
-        return lang === "vi"
-            ? log.item_name_vi || log.item_name || "-"
-            : log.item_name || log.item_name_vi || "-";
+        return inventoryDisplayName(log, lang, savedItemNames[Number(log.item_id)]);
     };
 
     const formatCompactLogDateTime = (value?: string | null) => {
@@ -905,6 +905,7 @@ export default function InventorySnapshotsPage() {
             id: log.id,
             batch_id: null,
             item_id: log.item_id,
+            currentItemNames: log.currentItemNames,
             item_name: log.item_name,
             item_name_vi: log.item_name_vi,
             part: log.part,
@@ -4148,7 +4149,13 @@ export default function InventorySnapshotsPage() {
                         <button type="button" className={editorStyles.close} aria-label={c.close} disabled={editorBusy} onClick={() => closeInventoryEditor()}>{"\u2715"}</button>
                     </header>
                     <div className={editorStyles.content} data-testid="inventory-editor-scroll">
-                    <InventoryEditor key={editingItemId} itemId={editingItemId} embedded focusLanguage={editorFocusLanguage} onBusyChange={handleEditorBusyChange} onClose={() => closeInventoryEditor()} onSaved={(savedItem) => {
+                    <InventoryEditor key={editingItemId} itemId={editingItemId} embedded focusLanguage={editorFocusLanguage} onBusyChange={handleEditorBusyChange} onClose={() => closeInventoryEditor()} onSaved={(savedItem, change) => {
+                        setSavedItemNames(previous => {
+                            const next = { ...previous };
+                            if (savedItem.is_active === false) delete next[savedItem.id];
+                            else next[savedItem.id] = { item_name: savedItem.item_name ?? null, item_name_vi: savedItem.item_name_vi ?? null, beforeUpdatedAt: change?.beforeUpdatedAt };
+                            return next;
+                        });
                         setLanguageMissingItems(previous => previous.flatMap(row => {
                             if (row.itemId !== savedItem.id) return [row];
                             const missingLanguages: ("ko" | "vi")[] = [];
@@ -4157,6 +4164,9 @@ export default function InventorySnapshotsPage() {
                             return missingLanguages.length ? [{ ...row, currentItemName: savedItem.item_name || null, currentItemNameVi: savedItem.item_name_vi || null, missingLanguages }] : [];
                         }));
                         closeInventoryEditor(true);
+                        // Keep the successful master names above any older in-flight
+                        // response. Name-only edits need no history/ledger reload.
+                        if (change?.namesOnly) return;
                         setMonthlySyncReloadKey((key) => key + 1);
                         void fetchNameSyncIssues(activeBusinessDateKey);
                         if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
