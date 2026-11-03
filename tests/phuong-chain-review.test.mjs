@@ -23,7 +23,7 @@ function periodApprovals(invoices){
 function review(baseline,invoices,{commit=false,periods=periodApprovals(invoices)}={}){
  const quote=x=>"'"+JSON.stringify(x).replaceAll("'","''")+"'::jsonb";
  return sql.replace('approved_baseline constant jsonb := NULL',`approved_baseline constant jsonb := ${quote(baseline)}`)
-   .replace('approved_periods constant jsonb := NULL',`approved_periods constant jsonb := ${quote(periods)}`)
+   .replace(/approved_periods constant jsonb := \$periods\$[\s\S]*?\$periods\$::jsonb/,`approved_periods constant jsonb := ${quote(periods)}`)
    .replace('actor_user_id constant bigint := NULL','actor_user_id constant bigint := 1')
    .replace(/ROLLBACK;\s*$/,commit?'COMMIT;':'ROLLBACK;');
 }
@@ -200,8 +200,46 @@ test('atomic Phuong chain review',async t=>{
    const phuongOpen=after.payables.filter(x=>x.party_id===20).reduce((s,p)=>s+Number(p.original_amount)-after.allocations.filter(a=>a.payable_id===p.id).reduce((s,a)=>s+Number(a.allocated_amount),0),0);
    const beforeOpen=before.payables.filter(x=>x.party_id===20).reduce((s,p)=>s+Number(p.original_amount)-before.allocations.filter(a=>a.payable_id===p.id).reduce((s,a)=>s+Number(a.allocated_amount),0),0);
    assert.equal(phuongOpen-beforeOpen,-18696000);assert.equal(phuongOpen,3170000);
-   await assert.rejects(db.exec(review(before,invoices)),/CHAIN_BASELINE_STALE/);await db.exec('rollback');
+   await assert.rejects(db.exec(review(before,invoices)),/CHAIN_CORRECTION_ALREADY_APPLIED/);await db.exec('rollback');
  });
+});
+
+test('2399 approved exception and execution draft: authorization, atomic rollback, audit and one-time guard',async t=>{
+ const {db}=await fixture();t.after(()=>db.close());
+ const draft=readFileSync('scripts/ledger/phuong-chain-20261103-EXECUTION-DRAFT.sql','utf8');
+ // Compare the actual entire transaction bodies, excluding only mode and terminator.
+ const body=s=>s.slice(s.indexOf('BEGIN ISOLATION LEVEL')).replace('execution_mode constant boolean := true;','execution_mode constant boolean := false;')
+   .replace(/^-- (?:No operational execution path.*|COMMIT permitted only.*)\r?\n/gm,'').replace(/(?:ROLLBACK|COMMIT);\s*$/,'');
+ assert.equal(body(draft),body(sql));
+ const before=await snapshot(db);
+ const fill=s=>s.replace('approved_baseline constant jsonb := NULL',`approved_baseline constant jsonb := '${JSON.stringify(before).replaceAll("'","''")}'::jsonb`)
+   .replace('actor_user_id constant bigint := NULL','actor_user_id constant bigint := 1');
+ await assert.rejects(db.exec(draft),/CHAIN_EXECUTION_NOT_AUTHORIZED/);await db.exec('rollback');
+ await assert.rejects(db.exec(fill(draft)),/CHAIN_EXECUTION_NOT_AUTHORIZED/);await db.exec('rollback');
+ // REVIEW uses the actual approved period records, no synthetic invoice/approval substitution.
+ const reviewed=await db.exec(fill(sql));
+ const proposed=reviewed.find(r=>r.rows[0]?.proposed_after)?.rows[0].proposed_after;
+ const proposedAudit=proposed.audits.find(a=>a.action==='payable_allocation_chain_corrected');
+ const exception=proposedAudit.before_snapshot.periodApprovals.find(p=>p.paymentId===2399);
+ assert.equal(exception.missingOriginalApproved,true);assert.equal(exception.supplierStatus,'missing_original');
+ assert.equal(exception.supplierAmount,null);assert.equal(exception.paymentAmount,18504000);
+ assert.equal(exception.appAmount,18504000);assert.match(exception.exceptions,/ONE-TIME/);
+ assert.match(proposedAudit.reason,/original and invoice items UNVERIFIED/);
+ assert.deepEqual(await snapshot(db),before,'REVIEW rolls back with actual exception records');
+ const execution=fill(draft).replace('execution_authorization_reference constant text := NULL',"execution_authorization_reference constant text := 'TEST: isolated memory DB only'");
+ // Fail AFTER DML and audit insertion; even the execution copy must roll back everything.
+ const errorVersion=execution.replace("RAISE NOTICE 'CHAIN_REVIEW_OK:","RAISE EXCEPTION 'TEST_DRAFT_POSTWRITE_ROLLBACK';\n RAISE NOTICE 'CHAIN_REVIEW_OK:");
+ await assert.rejects(db.exec(errorVersion),/TEST_DRAFT_POSTWRITE_ROLLBACK/);await db.exec('rollback');
+ assert.deepEqual(await snapshot(db),before);
+ await db.exec(execution); // Synthetic PGlite COMMIT only; no external credentials/network.
+ const after=await snapshot(db),audit=after.audits.find(a=>a.action==='payable_allocation_chain_corrected');
+ assert.equal(audit.after_snapshot.correctionKey,'phuong-chain-20261103-2399-exception-v1');
+ assert.equal(audit.after_snapshot.executionApprovalReference,'TEST: isolated memory DB only');
+ assert.deepEqual(audit.before_snapshot.periodApprovals.find(p=>p.paymentId===2399),exception);
+ assert.equal(after.payables.find(p=>p.id===388).status,'partially_paid');
+ assert.deepEqual(after.allocations.find(a=>a.id===119),before.allocations.find(a=>a.id===119));
+ assert.equal(audit.after_snapshot.unallocated3582,1296000);
+ await assert.rejects(db.exec(execution),/CHAIN_CORRECTION_ALREADY_APPLIED/);await db.exec('rollback');
 });
 
 test('#388 retains allocation 119 and partially paid state before review ROLLBACK',async t=>{

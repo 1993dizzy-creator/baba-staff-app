@@ -3,7 +3,10 @@
 -- User-approved evidence policy: FOUR period-level cross-check approvals.
 -- No invented individual invoice evidence. Independent full-row baseline,
 -- actor and separate DB execution authorization remain prerequisites.
--- #2399 lacks the 9/30 supplier original: explicit exception approval required.
+-- #2399 one-time evidence exception explicitly approved by user:
+-- 2026-10-03 paid 18,504,000 == APP 16 purchases for 2026-09-16..30.
+-- Supplier 9/30 settlement original is STILL MISSING; never mark verified.
+-- Evidence exception approval is NOT production execution authorization.
 -- NULL inputs fail closed; even populated reviews end with ROLLBACK.
 -- #388 keeps original 3,300,000 and allocation #119/#1638/130,000;
 -- delete #928 only: partially_paid, remaining unpaid 3,170,000.
@@ -104,14 +107,42 @@ DECLARE
  -- supplierAmount (null if unverified), paymentEvidence, paymentAmount,
  -- appAmount, unallocatedAmount, exceptions.
  -- #1641: alreadyDeductedAmount=936000. #3336: supplierDocumentCount=7.
- -- #2399: missingOriginalApproved=true AND exceptionApprovalReference required;
- -- this is a separate evidence-exception approval, not DB execution permission.
+ -- #2399 exception below records the user's explicit one-time approval.
+ -- Other evidence statements reuse user handoff, not new source inspection.
  -- Status: matched (#1641/#3336), missing_original (#2399), partial_unresolved (#3582).
- approved_periods constant jsonb := NULL;
+ approved_periods constant jsonb := $periods$[
+   {"paymentId":1641,"from":"2026-09-01","to":"2026-09-15","supplierStatus":"matched",
+    "supplierEvidence":"User handoff: supplier settlement 20928000 less undelivered dark beer 936000; net agrees with payment and APP.",
+    "supplierAmount":19992000,"paymentEvidence":"User-confirmed 2026-09-17 payment #1641, 19992000 VND.",
+    "paymentAmount":19992000,"appAmount":19992000,"unallocatedAmount":0,"alreadyDeductedAmount":936000,
+    "exceptions":"936000 already deducted; do not deduct again. Individual invoice items not newly verified."},
+   {"paymentId":2399,"from":"2026-09-16","to":"2026-09-30","supplierStatus":"missing_original",
+    "supplierEvidence":"Supplier 2026-09-30 original settlement statement NOT OBTAINED; original invoice items unverified.",
+    "supplierAmount":null,"paymentEvidence":"User-confirmed actual 2026-10-03 payment #2399, 18504000 VND.",
+    "paymentAmount":18504000,"appAmount":18504000,"unallocatedAmount":0,
+    "exceptions":"User knowingly grants ONE-TIME evidence exception: APP 16 purchases total 18504000 equals actual payment; missing supplier original remains disclosed.",
+    "missingOriginalApproved":true,"exceptionApprovalReference":"user-conversation:phuong-2399-20261003-18504000-one-time-evidence-exception"},
+   {"paymentId":3336,"from":"2026-10-01","to":"2026-10-15","supplierStatus":"matched",
+    "supplierEvidence":"User handoff: seven supplier transaction statements agree with actual payment and APP total.",
+    "supplierAmount":21900000,"supplierDocumentCount":7,"paymentEvidence":"User-confirmed 2026-10-20 payment #3336, 21900000 VND.",
+    "paymentAmount":21900000,"appAmount":21900000,"unallocatedAmount":0,
+    "exceptions":"Period-level comparison only; individual invoice items not newly verified."},
+   {"paymentId":3582,"from":"2026-10-16","to":"2026-10-28","supplierStatus":"partial_unresolved",
+    "supplierEvidence":"User handoff: late-October settlement; HD015517 and HD015523 receipt discrepancies remain unresolved.",
+    "supplierAmount":null,"paymentEvidence":"User-confirmed 2026-10-31 payment #3582, 20724000 VND.",
+    "paymentAmount":20724000,"appAmount":19428000,"unallocatedAmount":1296000,
+    "exceptions":"Allocate APP 19428000 only; leave 1296000 unallocated. No invented purchase or offset."}
+ ]$periods$::jsonb;
+ correction_key constant text := 'phuong-chain-20261103-2399-exception-v1';
+ execution_mode constant boolean := false;
+ execution_authorization_reference constant text := NULL; -- future separate user DB approval
  actor_user_id constant bigint := NULL;
  before_state jsonb; after_state jsonb; expected_json jsonb; r record;
  phuong bigint; carlsberg bigint; n integer; paid_amount numeric; applied boolean;
 BEGIN
+ IF execution_mode AND nullif(btrim(execution_authorization_reference),'') IS NULL THEN
+   RAISE EXCEPTION 'CHAIN_EXECUTION_NOT_AUTHORIZED: separate user DB approval reference required';
+ END IF;
  IF approved_baseline IS NULL OR approved_periods IS NULL OR actor_user_id IS NULL THEN
    RAISE EXCEPTION 'CHAIN_REVIEW_BLOCKED: independent baseline, period approvals and actor required';
  END IF;
@@ -123,6 +154,10 @@ BEGIN
  END IF;
  -- Match rebuild/month close and V2 party lock namespaces. V1 uses payable rows.
  PERFORM pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
+ IF EXISTS(SELECT 1 FROM public.ledger_audit_logs WHERE action='payable_allocation_chain_corrected'
+   AND entity_type='transaction' AND entity_id=1641 AND after_snapshot->>'correctionKey'=correction_key) THEN
+   RAISE EXCEPTION 'CHAIN_CORRECTION_ALREADY_APPLIED';
+ END IF;
  SELECT count(*),min(id) INTO n,phuong FROM public.ledger_parties WHERE name='Phương' AND type='supplier' AND is_active;
  IF n<>1 THEN RAISE EXCEPTION 'CHAIN_PHUONG_AMBIGUOUS'; END IF;
  SELECT count(*),min(id) INTO n,carlsberg FROM public.ledger_parties WHERE name='Carlsberg' AND type='supplier';
@@ -299,8 +334,11 @@ BEGIN
  INSERT INTO public.ledger_audit_logs(actor_user_id,action,entity_type,entity_id,before_snapshot,after_snapshot,reason)
  VALUES(actor_user_id,'payable_allocation_chain_corrected','transaction',1641,
    jsonb_build_object('scope',before_state,'periodApprovals',approved_periods),
-   jsonb_build_object('scope',after_state,'protectedUnpaid388',3170000,'unallocated3582',1296000),
-   'Atomic Phuong period-level cross-check correction; #2399 supplier original missing, explicitly approved evidence exception. Original allocation IDs/full rows archived in before_snapshot; '
+   jsonb_build_object('scope',after_state,'protectedUnpaid388',3170000,'unallocated3582',1296000,
+     'correctionKey',correction_key,'executionApprovalReference',execution_authorization_reference),
+   'Atomic Phuong period-level cross-check correction; #2399 supplier 2026-09-30 original and invoice items UNVERIFIED. '
+   'User ONE-TIME evidence exception: 16 APP purchases 2026-09-16..30 total 18504000 equal actual 2026-10-03 payment #2399. '
+   'Evidence exception is separate from DB execution approval. Original allocation IDs/full rows archived in before_snapshot; '
    'unchanged pairs retain IDs. Payment requests/results and source snapshots stay historical. '
    '936000 already deducted in September; October HD015517/HD015523 differences remain unresolved. '
    'No Carlsberg invoice allocation. Requires new approved August rebuild protection manifest.');
