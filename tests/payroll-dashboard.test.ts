@@ -75,7 +75,7 @@ test("payroll page wires summary and filters without changing payment or calcula
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /fetch\(`\/api\/admin\/payroll\/overview\?month=\$\{month\}`/);
   assert.match(card, /buildPayrollPartTotals\(employees, getPayrollHeaderAmount, future\)/);
-  for (const phrase of ["급여 대상", "확인 필요", "지급완료", "미지급", "전체", "Nhân viên tính lương", "Cần kiểm tra", "Đã trả", "Chưa trả", "Tất cả"]) assert.ok(summary.includes(phrase), phrase);
+  for (const phrase of ["급여지급현황", "확인 필요", "미지급", "전체", "Tình hình chi trả lương", "Cần kiểm tra", "Chưa trả", "Tất cả"]) assert.ok(summary.includes(phrase), phrase);
   for (const phrase of ["계산 실수령", "실제 지급", "Thực nhận đã tính", "Thực trả", "계약급여 (월 환산)", "Lương hợp đồng (quy đổi tháng)"]) assert.ok(card.includes(phrase), phrase);
 });
 
