@@ -19,11 +19,11 @@ test("partner input canonicalizes immediate policy", () => {
   assert.deepEqual(parsePartnerInput({ ...base, settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), { ...base, phone: "090", contactName: "Lan", memo: null });
 });
 
-test("postpaid policy is always canonical ad hoc", () => {
-  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid" })?.settlementMode, "ad_hoc");
+test("postpaid keeps scheduled policy and leaves unspecified terms unconfirmed", () => {
+  assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid" })?.settlementMode, null);
   assert.equal(parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" })?.settlementMode, "ad_hoc");
   const stale = parsePartnerInput({ ...base, paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 });
-  assert.deepEqual({ settlementMode: stale?.settlementMode, settlementRule: stale?.settlementRule, defaultPaymentTermDays: stale?.defaultPaymentTermDays }, { settlementMode: "ad_hoc", settlementRule: null, defaultPaymentTermDays: null });
+  assert.deepEqual({ settlementMode: stale?.settlementMode, settlementRule: stale?.settlementRule, defaultPaymentTermDays: stale?.defaultPaymentTermDays }, { settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 });
 });
 
 test("V1 supports update deactivate and reactivate without DELETE", () => {

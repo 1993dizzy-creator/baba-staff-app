@@ -36,11 +36,11 @@ test("immediate canonicalizes all internal settlement fields to null", () => {
   });
 });
 
-test("postpaid needs no settlement selection and canonicalizes stale policy input", () => {
-  const expected = { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" };
+test("postpaid preserves explicit policies without auto-confirming unspecified terms", () => {
+  const expected = { ...base, paymentMode: "postpaid" };
   assert.deepEqual(parse({ paymentMode: "postpaid" }), expected);
-  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), expected);
-  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), expected);
+  assert.equal(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "monthly_twice", defaultPaymentTermDays: 30 }), null);
+  assert.deepEqual(parse({ paymentMode: "postpaid", settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 }), { ...expected, settlementMode: "scheduled", settlementRule: "net_days", defaultPaymentTermDays: 30 });
 });
 
 test("legacy database states remain schema-compatible while mutations canonicalize them", () => {
@@ -48,7 +48,7 @@ test("legacy database states remain schema-compatible while mutations canonicali
   assert.match(legacyBranch, /settlement_rule is null/);
   assert.match(legacyBranch, /default_payment_term_days between 0 and 3650/);
   assert.doesNotMatch(legacyBranch, /default_payment_term_days is not null/);
-  assert.deepEqual(parse({ paymentMode: "postpaid", defaultPaymentTermDays: 30 }), { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc" });
+  assert.deepEqual(parse({ paymentMode: "postpaid", defaultPaymentTermDays: 30 }), { ...base, paymentMode: "postpaid", defaultPaymentTermDays: 30 });
 });
 
 test("payment labels depend only on payment mode", () => {
@@ -120,13 +120,13 @@ test("all app mutations carry settlement fields through to their active RPC and 
   assert.match(partnerServer, /settlementMode: row\.settlement_mode/);
 });
 
-test("both forms expose only the shared immediate or postpaid control", () => {
+test("both forms expose the shared settlement controls", () => {
   assert.match(partnerForm, /PartnerSettlementFields/);
   assert.match(candidateForm, /PartnerSettlementFields/);
   assert.doesNotMatch(partnerForm + candidateForm + settlementFields, /\?\? 30|defaultPaymentTermDays: 30/);
-  assert.match(settlementFields, /paymentMode === "postpaid" \? "ad_hoc" : null/);
-  assert.doesNotMatch(settlementFields, /BarField|SettlementMode|SettlementRule|legacySettlement|paymentDeadline|monthlyOnce|monthlyTwice|netDays|adHoc|scheduled/);
-  assert.doesNotMatch(read("lib/partners/text.ts"), /수시정산|정기정산|N일 후 지급|월 1회|월 2회|지급기한|정책 미설정|기존 후불 설정/);
+  for (const field of ["settlementRule", "settlementDays", "defaultPaymentTermDays"]) assert.ok(settlementFields.includes(field));
+  assert.match(settlementFields, /말일/);
+  assert.match(settlementFields, /Cuối tháng/);
 });
 
 test("candidate defaults to unspecified and list formatter is wired", () => {

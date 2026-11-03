@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       p_payment_mode: input.paymentMode,
       p_settlement_mode: input.settlementMode,
       p_settlement_rule: input.settlementRule,
+      p_settlement_days: input.settlementDays ?? null,
       p_default_payment_term_days: input.defaultPaymentTermDays,
       p_default_fund_account_id: input.defaultFundAccountId,
       p_partner_subtype_id: input.partnerSubtypeId,

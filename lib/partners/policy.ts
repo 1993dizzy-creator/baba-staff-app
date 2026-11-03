@@ -3,7 +3,7 @@ export const PARTNER_TYPES = ["food", "alcohol", "beverage", "consumable", "equi
 export const PARTNER_TYPE_GROUP_ORDER = ["alcohol", "beverage", "food", "consumable", "equipment", "service", "rent", "utilities", "other"] as const;
 export const PAYMENT_MODES = ["unspecified", "immediate", "postpaid"] as const;
 export const SETTLEMENT_MODES = ["ad_hoc", "scheduled"] as const;
-export const SETTLEMENT_RULES = ["net_days", "monthly_once", "monthly_twice"] as const;
+export const SETTLEMENT_RULES = ["weekly", "net_days", "monthly_once", "monthly_twice"] as const;
 
 export type PartnerType = (typeof PARTNER_TYPES)[number];
 export type PaymentMode = (typeof PAYMENT_MODES)[number];
@@ -59,6 +59,7 @@ export type PartnerInput = {
   paymentMode: PaymentMode;
   settlementMode: SettlementMode | null;
   settlementRule: SettlementRule | null;
+  settlementDays?: number[] | null;
   defaultPaymentTermDays: number | null;
   defaultFundAccountId: number | null;
   partnerSubtypeId: number | null;
@@ -106,16 +107,41 @@ export function parsePartnerInput(value: unknown): PartnerInput | null {
   if (ledgerPartyId !== null && (!Number.isSafeInteger(ledgerPartyId) || ledgerPartyId < 1)) return null;
   if (defaultFundAccountId !== null && (!Number.isSafeInteger(defaultFundAccountId) || defaultFundAccountId < 1)) return null;
   if (partnerSubtypeId !== null && (!Number.isSafeInteger(partnerSubtypeId) || partnerSubtypeId < 1)) return null;
-  if (paymentMode === "unspecified" && [input.settlementMode, input.settlementRule, input.defaultPaymentTermDays].some(value => value != null)) return null;
-  const settlementMode: SettlementMode | null = paymentMode === "postpaid" ? "ad_hoc" : null;
+  if (paymentMode === "unspecified" && [input.settlementMode, input.settlementRule, input.defaultPaymentTermDays, input.settlementDays].some(value => value != null)) return null;
+  // Preserve legacy/unclassified rows, including their uninterpreted term days.
+  const settlementMode = paymentMode === "postpaid" ? input.settlementMode ?? null : null;
+  const settlementRule = paymentMode === "postpaid" ? input.settlementRule ?? null : null;
+  const defaultPaymentTermDays = paymentMode === "postpaid" ? input.defaultPaymentTermDays ?? null : null;
+  const settlementDays = paymentMode === "postpaid" ? input.settlementDays ?? null : null;
+  const validTerm = defaultPaymentTermDays === null || (typeof defaultPaymentTermDays === "number" && Number.isInteger(defaultPaymentTermDays) && defaultPaymentTermDays >= 0 && defaultPaymentTermDays <= 3650);
+  if (!validTerm) return null;
+  if (settlementMode === null || settlementMode === "ad_hoc") {
+    if (settlementRule !== null || settlementDays !== null || (settlementMode === "ad_hoc" && defaultPaymentTermDays !== null)) return null;
+  } else if (settlementMode === "scheduled") {
+    if (!SETTLEMENT_RULES.includes(settlementRule as SettlementRule)) return null;
+    if (settlementRule === "net_days") {
+      if (defaultPaymentTermDays === null || settlementDays !== null) return null;
+    } else {
+      if (defaultPaymentTermDays !== null) return null;
+      // Existing monthly policies without dates remain editable without inventing dates.
+      if (settlementDays === null) { if (settlementRule === "weekly") return null; }
+      else {
+        const count = settlementRule === "monthly_twice" ? 2 : 1;
+        const min = settlementRule === "weekly" ? 1 : 0;
+        const max = settlementRule === "weekly" ? 7 : 31;
+        if (!Array.isArray(settlementDays) || settlementDays.length !== count || !settlementDays.every(day => typeof day === "number" && Number.isInteger(day) && day >= min && day <= max) || new Set(settlementDays).size !== count) return null;
+      }
+    }
+  } else return null;
 
   return {
     name,
     partnerType: partnerType as PartnerType,
     paymentMode: paymentMode as PaymentMode,
     settlementMode: settlementMode as SettlementMode | null,
-    settlementRule: null,
-    defaultPaymentTermDays: null,
+    settlementRule: settlementRule as SettlementRule | null,
+    defaultPaymentTermDays: defaultPaymentTermDays as number | null,
+    ...(Object.hasOwn(input, "settlementDays") ? { settlementDays: settlementDays as number[] | null } : {}),
     defaultFundAccountId,
     partnerSubtypeId,
     phone,

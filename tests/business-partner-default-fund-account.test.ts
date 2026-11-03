@@ -41,7 +41,7 @@ test("parser allows null and positive safe integers only", () => {
 });
 
 test("field is independent of immediate/postpaid canonicalization", () => {
-  assert.deepEqual(parse({ paymentMode: "postpaid", defaultFundAccountId: 3 }), { ...base, paymentMode: "postpaid", settlementMode: "ad_hoc", defaultFundAccountId: 3 });
+  assert.deepEqual(parse({ paymentMode: "postpaid", defaultFundAccountId: 3 }), { ...base, paymentMode: "postpaid", defaultFundAccountId: 3 });
   assert.deepEqual(parse({ paymentMode: "immediate", defaultFundAccountId: 3 }), { ...base, defaultFundAccountId: 3 });
 });
 

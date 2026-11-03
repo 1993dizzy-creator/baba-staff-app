@@ -6,7 +6,7 @@ import PartnerSettlementFields from "@/components/PartnerSettlementFields";
 import { PARTNER_TYPES, type PartnerType, type PaymentMode, type SettlementMode, type SettlementRule } from "@/lib/partners/policy";
 import { formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 
-export type PartnerFormValue = { name: string; partnerType: PartnerType; paymentMode: PaymentMode; settlementMode: SettlementMode | null; settlementRule: SettlementRule | null; defaultPaymentTermDays: number | null; defaultFundAccountId: number | null; partnerSubtypeId: number | null; contactName: string | null; phone: string | null; memo: string | null; isActive: boolean; ledgerPartyId: number | null };
+export type PartnerFormValue = { name: string; partnerType: PartnerType; paymentMode: PaymentMode; settlementMode: SettlementMode | null; settlementRule: SettlementRule | null; settlementDays?: number[] | null; defaultPaymentTermDays: number | null; defaultFundAccountId: number | null; partnerSubtypeId: number | null; contactName: string | null; phone: string | null; memo: string | null; isActive: boolean; ledgerPartyId: number | null };
 export type FundAccount = { id: number; code: string; displayName: string; type: string };
 export type PartnerSubtype = { id: number; code: string; partnerType: PartnerType; nameKo: string | null; nameVi: string | null; emoji: string | null; sortOrder: number; isActive: boolean };
 
@@ -43,7 +43,7 @@ export default function PartnerForm({ lang, initial, fundAccounts, partnerSubtyp
   async function submit(event: FormEvent) {
     event.preventDefault();
     setSaving(true); onSavingChange?.(true);
-    try { const ok = await onSubmit(value.paymentMode === "unspecified" ? { ...value, settlementMode: null, settlementRule: null, defaultPaymentTermDays: null } : value); if (ok && !initial) setValue(emptyValue); }
+    try { const ok = await onSubmit(value.paymentMode === "unspecified" ? { ...value, settlementMode: null, settlementRule: null, settlementDays: null, defaultPaymentTermDays: null } : value); if (ok && !initial) setValue(emptyValue); }
     finally { setSaving(false); onSavingChange?.(false); }
   }
 
