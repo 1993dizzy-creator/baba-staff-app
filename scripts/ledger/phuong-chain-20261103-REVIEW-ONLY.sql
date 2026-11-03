@@ -3,7 +3,9 @@
 -- Candidates are NOT approved invoices. All 57 invoice reviews, independent
 -- full-row baseline, actor and separate DB authorization are prerequisites.
 -- NULL inputs fail closed; even populated reviews end with ROLLBACK.
--- #388 becomes unpaid 3,170,000; #3582 retains unallocated 1,296,000.
+-- #388 keeps original 3,300,000 and allocation #119/#1638/130,000;
+-- delete #928 only: partially_paid, remaining unpaid 3,170,000.
+-- #3582 retains unallocated 1,296,000.
 -- No new payment; only #1641 party changes on payment transactions.
 -- Movement, inventory, expense and request JSON are preserved.
 -- Correct BEFORE rebuild, then independently approve a NEW rebuild manifest.
@@ -201,10 +203,11 @@ BEGIN
    AND (p.party_id<>carlsberg OR e.party_id IS DISTINCT FROM carlsberg OR e.status<>'confirmed' OR p.status='cancelled'
      OR e.business_date NOT BETWEEN DATE '2026-08-01' AND DATE '2026-08-31')) THEN RAISE EXCEPTION 'CHAIN_1641_TARGET_DRIFT'; END IF;
  IF NOT EXISTS(SELECT 1 FROM public.ledger_payables p JOIN public.ledger_transactions e ON e.id=p.expense_transaction_id
-   WHERE p.id=388 AND p.party_id=phuong AND p.original_amount=3170000 AND p.status<>'cancelled'
+   WHERE p.id=388 AND p.party_id=phuong AND p.original_amount=3300000 AND p.status='paid'
    AND e.party_id=phuong AND e.status='confirmed' AND e.business_date=DATE '2026-08-31')
-   OR (SELECT count(*) FROM public.ledger_payable_allocations WHERE payable_id=388)<>1
-   OR NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE payable_id=388 AND payment_transaction_id=2399 AND allocated_amount=3170000) THEN
+   OR (SELECT count(*) FROM public.ledger_payable_allocations WHERE payable_id=388)<>2
+   OR NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE id=119 AND payable_id=388 AND payment_transaction_id=1638 AND allocated_amount=130000)
+   OR NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE id=928 AND payable_id=388 AND payment_transaction_id=2399 AND allocated_amount=3170000) THEN
    RAISE EXCEPTION 'CHAIN_388_PROTECTION_DRIFT'; END IF;
  IF EXISTS(SELECT 1 FROM public.ledger_payable_allocations a WHERE a.payable_id IN(SELECT payable_id FROM pc_chain_targets)
    AND a.payment_transaction_id NOT IN(1641,2399,3336,3582)) THEN RAISE EXCEPTION 'CHAIN_FOREIGN_PAYMENT_ON_CANDIDATE'; END IF;
@@ -236,8 +239,12 @@ BEGIN
  OR EXISTS(SELECT 1 FROM pc_chain_targets c JOIN public.ledger_payables p ON p.id=c.payable_id
    WHERE NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations a WHERE a.payable_id=c.payable_id
      AND a.payment_transaction_id=c.payment_id AND a.allocated_amount=p.original_amount) OR p.status<>'paid')
- OR EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE payable_id=388)
- OR NOT EXISTS(SELECT 1 FROM public.ledger_payables WHERE id=388 AND status='unpaid' AND original_amount=3170000) THEN
+ OR (SELECT count(*) FROM public.ledger_payable_allocations WHERE payable_id=388)<>1
+ OR EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE id=928)
+ OR NOT EXISTS(SELECT 1 FROM public.ledger_payable_allocations WHERE id=119 AND payable_id=388 AND payment_transaction_id=1638 AND allocated_amount=130000)
+ OR (SELECT sum(allocated_amount) FROM public.ledger_payable_allocations WHERE payable_id=388) IS DISTINCT FROM 130000
+ OR NOT EXISTS(SELECT 1 FROM public.ledger_payables WHERE id=388 AND status='partially_paid' AND original_amount=3300000
+   AND original_amount-(SELECT sum(allocated_amount) FROM public.ledger_payable_allocations WHERE payable_id=388)=3170000) THEN
    RAISE EXCEPTION 'CHAIN_TARGET_POSTSTATE_INVALID'; END IF;
  IF EXISTS(SELECT 1 FROM public.ledger_payables p JOIN pc_chain_affected s ON s.id=p.id WHERE p.status IS DISTINCT FROM
    (SELECT CASE WHEN coalesce(sum(a.allocated_amount),0)=p.original_amount THEN 'paid'

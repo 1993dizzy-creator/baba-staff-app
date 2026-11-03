@@ -61,12 +61,13 @@ async function fixture(){
  await db.exec(`INSERT INTO ledger_transactions(id,party_id,type,business_date,recognition_month,amount,status)
  SELECT 20000+i,CASE WHEN i IN(19,20) THEN 20 ELSE 10 END,'expense','2026-08-31','2026-08-01',
  CASE WHEN i<12 THEN 1000000 WHEN i=12 THEN 8992000 WHEN i<18 THEN 1000000 WHEN i=18 THEN 4587992
- WHEN i=19 THEN 3170000 WHEN i=20 THEN 10362000 WHEN i=302 THEN 26102803 ELSE 1 END,'confirmed' FROM generate_series(1,302) i;
+ WHEN i=19 THEN 3300000 WHEN i=20 THEN 10232000 WHEN i=301 THEN 26102804 ELSE 1 END,'confirmed' FROM generate_series(1,301) i;
  INSERT INTO ledger_payables(id,expense_transaction_id,party_id,original_amount,status)
  SELECT CASE WHEN id=20019 THEN 388 ELSE id END,id,party_id,amount,'paid' FROM ledger_transactions WHERE id>20000;
  INSERT INTO ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount)
  SELECT CASE WHEN id=20019 THEN 388 ELSE id END,CASE WHEN id<=20012 THEN 1641 WHEN id<=20018 THEN 3337
- WHEN id=20019 THEN 2399 WHEN id=20020 THEN 1638 ELSE 9999 END,amount FROM ledger_transactions WHERE id>20000;`);
+ WHEN id=20019 THEN 2399 WHEN id=20020 THEN 1638 ELSE 9999 END,
+ CASE WHEN id=20019 THEN 3170000 ELSE amount END FROM ledger_transactions WHERE id>20000;`);
  await db.exec(prefix);
  const targetRows=(await db.query('select * from pc_chain_targets order by payment_id,payable_id')).rows;
  await db.exec('rollback');
@@ -100,6 +101,7 @@ async function fixture(){
  UPDATE ledger_payable_allocations a SET id=CASE r.payment_transaction_id
    WHEN 1641 THEN 121 WHEN 2399 THEN 927 WHEN 3336 THEN 1268 WHEN 3582 THEN 1345 END+r.n
  FROM ranked r WHERE a.id=r.id;
+ INSERT INTO ledger_payable_allocations(id,payable_id,payment_transaction_id,allocated_amount) VALUES(119,388,1638,130000);
  SELECT setval(pg_get_serial_sequence('ledger_payable_allocations','id'),(SELECT max(id) FROM ledger_payable_allocations));
  UPDATE ledger_payables p SET status=CASE WHEN a.paid=p.original_amount THEN 'paid'
  WHEN a.paid>0 THEN 'partially_paid' ELSE 'unpaid' END
@@ -173,7 +175,7 @@ test('atomic Phuong chain review',async t=>{
      assert.deepEqual(rows.map(x=>x.payable_id).sort((a,b)=>a-b),invoices.filter(x=>x.paymentId===payment).map(x=>x.payableId).sort((a,b)=>a-b));
      assert.equal(rows.reduce((s,x)=>s+Number(x.allocated_amount),0),payment===3582?19428000:before.transactions.find(x=>x.id===payment).amount);
    }
-   assert.equal(after.payables.find(x=>x.id===388).status,'unpaid');
+   assert.equal(after.payables.find(x=>x.id===388).status,'partially_paid');
    for(const p of [1638,1796,1797,3337])assert.deepEqual(after.allocations.filter(x=>x.payment_transaction_id===p),before.allocations.filter(x=>x.payment_transaction_id===p));
    for(const old of before.allocations.filter(x=>[1641,2399,3336,3582].includes(x.payment_transaction_id))){
      const retained=after.allocations.find(x=>x.payable_id===old.payable_id&&x.payment_transaction_id===old.payment_transaction_id);
@@ -189,4 +191,27 @@ test('atomic Phuong chain review',async t=>{
    assert.equal(phuongOpen-beforeOpen,-18696000);assert.equal(phuongOpen,3170000);
    await assert.rejects(db.exec(review(before,invoices)),/CHAIN_BASELINE_STALE/);await db.exec('rollback');
  });
+});
+
+test('#388 retains allocation 119 and partially paid state before review ROLLBACK',async t=>{
+ const {db,invoices}=await fixture();t.after(()=>db.close());
+ const before=await snapshot(db);
+ const original=before.allocations.find(a=>a.id===119);
+ assert.equal(before.payables.find(p=>p.id===388).original_amount,3300000);
+ assert.equal(before.payables.find(p=>p.id===388).status,'paid');
+ assert.equal(before.allocations.filter(a=>a.payable_id===388).length,2);
+ assert.equal(original.payment_transaction_id,1638);assert.equal(original.allocated_amount,130000);
+ assert.equal(before.allocations.find(a=>a.id===928).allocated_amount,3170000);
+ const results=await db.exec(review(before,invoices)); // Keep original trailing ROLLBACK.
+ const after=results.find(result=>result.rows[0]?.proposed_after)?.rows[0].proposed_after;
+ assert.ok(after,'capture proposed state before the SQL rolls back');
+ const payable=after.payables.find(p=>p.id===388);
+ const remaining=after.allocations.filter(a=>a.payable_id===388);
+ assert.equal(payable.original_amount,3300000);assert.equal(payable.status,'partially_paid');
+ assert.deepEqual(remaining,[original]);assert.ok(!after.allocations.some(a=>a.id===928));
+ const allocated=remaining.reduce((sum,a)=>sum+Number(a.allocated_amount),0);
+ assert.equal(allocated,130000);assert.equal(payable.original_amount-allocated,3170000);
+ assert.deepEqual(after.allocations.filter(a=>a.payment_transaction_id===1638),before.allocations.filter(a=>a.payment_transaction_id===1638));
+ assert.deepEqual(after.movements.filter(m=>m.transaction_id===1638),before.movements.filter(m=>m.transaction_id===1638));
+ assert.deepEqual(await snapshot(db),before,'ROLLBACK restores allocation 928, paid status and the full original snapshot');
 });
