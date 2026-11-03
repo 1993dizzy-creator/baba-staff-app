@@ -60,13 +60,13 @@ test("successful payroll settings are component-local while failures remain retr
 
 test("detail request sequence blocks stale state and loading completion", () => {
   const fetchDetail = page.slice(
-    page.indexOf("const fetchDetail = async"),
+    page.indexOf("const fetchDetail = useCallback(async"),
     page.indexOf("const selectedRecord = useMemo"),
   );
   assert.match(page, /const detailRequestSequenceRef = useRef\(0\)/);
   assert.match(fetchDetail, /const requestSequence = \+\+detailRequestSequenceRef\.current/);
-  assert.match(fetchDetail, /if \(requestSequence !== detailRequestSequenceRef\.current\) return/);
-  assert.ok(fetchDetail.indexOf("if (requestSequence !== detailRequestSequenceRef.current) return") < fetchDetail.indexOf("setUser(userData || null)"));
+  assert.match(fetchDetail, /requestSequence === detailRequestSequenceRef\.current && requestScope === scopeRef\.current/);
+  assert.ok(fetchDetail.indexOf("if (!isCurrent()) return") < fetchDetail.indexOf("setUser(userData || null)"));
   assert.ok(fetchDetail.indexOf("setUser(userData || null)") < fetchDetail.indexOf("setRecords(recordData || [])"));
-  assert.match(fetchDetail, /finally[\s\S]*?requestSequence === detailRequestSequenceRef\.current[\s\S]*?setIsLoading\(false\)/);
+  assert.match(fetchDetail, /finally[\s\S]*?if \(isCurrent\(\)\)[\s\S]*?setIsLoading\(false\)/);
 });

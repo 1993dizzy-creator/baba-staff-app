@@ -13,16 +13,31 @@ export type PublicMonthlyAttendanceSummary = {
 };
 
 const cache = new Map<string, Promise<PublicMonthlyAttendanceSummary[]>>();
+const invalidationEvent = "attendance-monthly-summary-invalidated";
+
+export function invalidateMonthlyAttendanceSummary(month: string) {
+  cache.delete(month);
+  window.dispatchEvent(new CustomEvent(invalidationEvent, { detail: month }));
+}
 
 export function currentVietnamMonth() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 }
 
 export function useMonthlyAttendanceSummary(month: string, refreshKey?: unknown, staffCurrent = false) {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const invalidate = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === month) setRevision(value => value + 1);
+    };
+    window.addEventListener(invalidationEvent, invalidate);
+    return () => window.removeEventListener(invalidationEvent, invalidate);
+  }, [month]);
   const [snapshot, setSnapshot] = useState<{
     month: string;
     refreshKey: unknown;
     staffCurrent: boolean;
+    revision: number;
     rows: PublicMonthlyAttendanceSummary[];
   } | null>(null);
 
@@ -46,19 +61,18 @@ export function useMonthlyAttendanceSummary(month: string, refreshKey?: unknown,
       }
     }
     void request.then((rows) => {
-      if (active) setSnapshot({ month, refreshKey, staffCurrent, rows });
+      if (active && (staffCurrent || cache.get(month) === request)) setSnapshot({ month, refreshKey, staffCurrent, revision, rows });
     }).catch(() => undefined);
     return () => {
       active = false;
       controller?.abort();
     };
-  }, [month, refreshKey, staffCurrent]);
+  }, [month, refreshKey, staffCurrent, revision]);
 
   return useMemo(() => {
-    // Only the live staff screen hides obsolete badges while a replacement is loading.
-    const rows = !staffCurrent ? snapshot?.rows ?? []
-      : snapshot?.month === month && snapshot.refreshKey === refreshKey && snapshot.staffCurrent === staffCurrent
+    // Hide obsolete badges while a replacement month or revision is loading.
+    const rows = snapshot?.month === month && snapshot.refreshKey === refreshKey && snapshot.staffCurrent === staffCurrent && snapshot.revision === revision
         ? snapshot.rows : [];
     return new Map(rows.map((row) => [row.userId, row]));
-  }, [snapshot, month, refreshKey, staffCurrent]);
+  }, [snapshot, month, refreshKey, staffCurrent, revision]);
 }

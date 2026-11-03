@@ -30,6 +30,11 @@ test("past and future months use the selected month end", () => {
   ]);
 });
 
+test("month-start recent days never label unloaded prior-month records as missing", () => {
+  assert.deepEqual(getRecentAttendanceDateKeys("2026-11", new Date("2026-10-31T18:00:00Z")), ["2026-11-01"]);
+  assert.deepEqual(getRecentAttendanceDateKeys("2026-11", new Date("2026-11-02T18:00:00Z")), ["2026-11-01", "2026-11-02", "2026-11-03"]);
+});
+
 test("February month end supports leap and non-leap years", () => {
   const now = new Date("2026-07-30T05:00:00.000Z");
   assert.equal(getRecentAttendanceDateKeys("2024-02", now).at(-1), "2024-02-29");

@@ -948,6 +948,24 @@ export async function POST(req: Request) {
     }
 
     if (action === "update_record") {
+      // A memo edit must never re-evaluate persisted attendance decisions.
+      // Paid-month authorization above and the existing DB guards still apply.
+      if (existing && is_new !== true && !check_in_datetime && !check_out_datetime && clear_check_out !== true) {
+        const { data, error } = await supabaseServer
+          .from("attendance_records")
+          .update({ note: note ?? existing.note ?? null, updated_at: nowIso })
+          .eq("id", existing.id)
+          .select(MUTATION_RECORD_FIELDS)
+          .single();
+        if (error) throw error;
+        await recordAttendanceAuditLog({
+          attendanceRecordId: data.id, sourceAttendanceRecordId: existing.id,
+          targetUserId: Number(existing.user_id), workDate: existing.work_date,
+          action: "manual_update", actorUserId: auth.actor.id,
+          beforeSnapshot: existing, afterSnapshot: data, reason: note?.trim() || null,
+        });
+        return NextResponse.json({ ok: true, record: data });
+      }
       // 이미 휴무로 처리된 날짜에는 이 액션으로 출퇴근 데이터를 추가/수정할 수 없다
       // (근무/휴무 충돌 방지). 메모만 바꾸는 것은 허용한다.
       if (existing && existing.status === ATTENDANCE_STATUS.LEAVE) {

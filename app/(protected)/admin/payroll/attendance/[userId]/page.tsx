@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { compareAttendanceStaff } from "@/lib/attendance/staff-sort";
@@ -15,6 +15,7 @@ import {
     isLongShiftRecord,
 } from "@/lib/attendance/time";
 import { attendanceFetch } from "@/lib/auth/client-session";
+import { invalidateMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
@@ -69,10 +70,12 @@ type AttendanceRecord = {
 };
 
 function getMonthFromParam(monthParam: string | null) {
-    if (!monthParam) return new Date();
+    const today = new Date();
+    const fallback = new Date(today.getFullYear(), today.getMonth(), 1);
+    if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) return fallback;
 
     const [year, month] = monthParam.split("-").map(Number);
-    if (!year || !month) return new Date();
+    if (year < 2000 || year > 2100 || month < 1 || month > 12) return fallback;
 
     return new Date(year, month - 1, 1);
 }
@@ -225,8 +228,14 @@ export default function AttendanceUserDetailPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const savingRef = useRef(false);
+    const [loadError, setLoadError] = useState(false);
+    const [loadedScope, setLoadedScope] = useState("");
+    const loadedScopeRef = useRef("");
     const [unauthorizedAbsencePenaltyDays, setUnauthorizedAbsencePenaltyDays] = useState<number | null>(null);
     const navigationMonth = getMonthRange(currentMonth).startText.slice(0, 7);
+    const scope = `${userId}:${navigationMonth}`;
+    const scopeRef = useRef(scope);
     const [staffNavigation, setStaffNavigation] = useState<{ month: string; ids: number[] }>({ month: "", ids: [] });
     // Do not navigate using a previous month's list while the new list is loading.
     const staffIds = staffNavigation.month === navigationMonth ? staffNavigation.ids : [];
@@ -254,7 +263,8 @@ export default function AttendanceUserDetailPage() {
     const nextId = getAdjacentStaffId(staffIds, userId, "next");
     const navigateStaff = async (direction: StaffDirection) => {
         const targetId = getAdjacentStaffId(staffIds, userId, direction);
-        if (targetId === null || isLoading || isSaving || navigatingRef.current) return;
+        if (targetId === null || isLoading || savingRef.current || navigatingRef.current) return;
+        detailRequestSequenceRef.current += 1;
         navigatingRef.current = true;
         slideDirectionRef.current = direction === "next" ? 1 : -1;
         const offset = -48 * slideDirectionRef.current;
@@ -280,24 +290,22 @@ export default function AttendanceUserDetailPage() {
     const payrollSettingsResultRef = useRef<Record<string, unknown> | null>(null);
     const payrollSettingsRequestRef = useRef<Promise<Record<string, unknown> | null> | null>(null);
 
-    useEffect(() => {
-        const loginUser = getUser();
+    useLayoutEffect(() => {
+        scopeRef.current = scope;
+        detailRequestSequenceRef.current += 1;
+        return () => { scopeRef.current = ""; detailRequestSequenceRef.current += 1; };
+    }, [scope]);
 
-        if (!isAdmin(loginUser)) {
-            window.location.href = "/attendance";
-            return;
-        }
-
-        fetchDetail();
-    }, [currentMonth, userId]);
-
-    const fetchDetail = async () => {
+    const fetchDetail = useCallback(async () => {
         const requestSequence = ++detailRequestSequenceRef.current;
+        const requestScope = scope;
+        const isCurrent = () => requestSequence === detailRequestSequenceRef.current && requestScope === scopeRef.current;
         setIsLoading(true);
+        setLoadError(false);
+        if (loadedScopeRef.current !== requestScope) { setUser(null); setRecords([]); }
 
         try {
-            const { startText } = getMonthRange(currentMonth);
-            const month = startText.slice(0, 7);
+            const month = navigationMonth;
 
             const settingsRequest = payrollSettingsResultRef.current
                 ? Promise.resolve(payrollSettingsResultRef.current)
@@ -309,6 +317,7 @@ export default function AttendanceUserDetailPage() {
                             payrollSettingsResultRef.current = result;
                             return result as Record<string, unknown>;
                         })
+                        .catch(() => null)
                         .finally(() => {
                             if (payrollSettingsRequestRef.current === request) {
                                 payrollSettingsRequestRef.current = null;
@@ -330,8 +339,7 @@ export default function AttendanceUserDetailPage() {
             ]);
 
             if (!userRes.ok || !userResult.ok) {
-                console.log("fetch user detail error:", userResult);
-                return;
+                throw new Error("ATTENDANCE_USER_READ_FAILED");
             }
 
             const userData = userResult.user as UserRow | null;
@@ -344,13 +352,12 @@ export default function AttendanceUserDetailPage() {
             }
 
             if (!recordRes.ok || !recordResult.ok) {
-                console.log("fetch user attendance error:", recordResult);
-                return;
+                throw new Error("ATTENDANCE_RECORD_READ_FAILED");
             }
 
             const recordData = recordResult.records || [];
 
-            if (requestSequence !== detailRequestSequenceRef.current) return;
+            if (!isCurrent()) return false;
 
             const settings = settingsResult?.settings as Record<string, unknown> | undefined;
             if (settingsResult?.ok && settings) {
@@ -359,12 +366,27 @@ export default function AttendanceUserDetailPage() {
 
             setUser(userData || null);
             setRecords(recordData || []);
+            loadedScopeRef.current = requestScope;
+            setLoadedScope(requestScope);
+            return true;
+        } catch {
+            if (isCurrent()) setLoadError(true);
+            return false;
         } finally {
-            if (requestSequence === detailRequestSequenceRef.current) {
+            if (isCurrent()) {
                 setIsLoading(false);
             }
         }
-    };
+    }, [scope, navigationMonth, userId]);
+
+    useEffect(() => {
+        if (!isAdmin(getUser())) {
+            window.location.href = "/attendance";
+            return;
+        }
+        void fetchDetail();
+        return () => { detailRequestSequenceRef.current += 1; };
+    }, [fetchDetail]);
 
     const selectedRecord = useMemo(
         () => records.find((record) => record.work_date === selectedDate) || null,
@@ -372,234 +394,79 @@ export default function AttendanceUserDetailPage() {
     );
 
     const handleMonthChange = (nextMonth: Date) => {
-        setCurrentMonth(nextMonth);
+        if (savingRef.current || navigatingRef.current) return;
+        detailRequestSequenceRef.current += 1;
+        setCurrentMonth(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 1));
         setSelectedDate(getInitialSelectedDate(nextMonth));
         setMessage("");
     };
 
-    const handleSaveRecord = async ({
-        id,
-        note,
-        checkInDateTime,
-        checkOutDateTime,
-        clearCheckOut,
-        isNew,
-    }: {
-        id?: number;
-        note: string;
-        checkInDateTime?: string;
-        checkOutDateTime?: string;
-        clearCheckOut?: boolean;
-        isNew?: boolean;
-    }) => {
-        if (!user) return;
+    const savedRefreshWarning = lang === "vi"
+        ? "Đã lưu. Không thể tải lại dữ liệu; vui lòng thử tải lại."
+        : "저장은 완료됐지만 재조회에 실패했습니다. 다시 조회해주세요.";
 
-        setIsSaving(true);
-        setMessage("");
-
-        try {
-            const res = await attendanceFetch("/api/attendance/admin", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    action: "update_record",
-                    attendance_id: id,
-                    user_id: user.id,
-                    work_date: selectedDate,
-                    check_in_datetime: checkInDateTime || undefined,
-                    check_out_datetime: clearCheckOut ? undefined : checkOutDateTime || undefined,
-                    clear_check_out: clearCheckOut === true,
-                    note,
-                    is_new: isNew === true,
-                    lang,
-                }),
-            });
-
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                throw new Error(result.message || t.correctionFailed);
-            }
-
-            // 공란 날짜에 신규 생성한 경우 records에 해당 id가 아직 없으므로 추가하고,
-            // 기존 기록을 수정한 경우에만 교체한다.
-            setRecords((current) => {
-                const exists = current.some((record) => record.id === result.record.id);
-                return exists
-                    ? current.map((record) =>
-                        record.id === result.record.id ? result.record : record
-                    )
-                    : [...current, result.record];
-            });
-
-            // 출근일시를 바꾸면 서버가 work_date를 자동 재계산하므로,
-            // 선택된 날짜가 더 이상 이 기록과 일치하지 않으면 새 날짜로 따라간다.
-            if (result.record.work_date && result.record.work_date !== selectedDate) {
-                setSelectedDate(result.record.work_date);
-            }
-
-            await fetchDetail();
-            setMessage(t.correctionDone);
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleResolveEarlyLeave = async (recordId: number, selection: EarlyLeaveSelection) => {
+    const runMutation = async (body: Record<string, unknown>, successMessage: string = t.correctionDone) => {
+        if (!user || savingRef.current || navigatingRef.current || isLoading || loadError || loadedScope !== scope) return;
+        savingRef.current = true;
+        detailRequestSequenceRef.current += 1;
+        const mutationScope = scopeRef.current;
+        const workDate = String(body.work_date || records.find(record => record.id === Number(body.attendance_id))?.work_date || selectedDate);
+        let committed = false;
         setIsSaving(true);
         setMessage("");
         try {
             const response = await attendanceFetch("/api/attendance/admin", {
-                method: "POST", headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({action: "resolve_early_leave", attendance_id: recordId, selection, lang}),
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...body, lang }),
             });
             const result = await response.json();
             if (!response.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
-            await fetchDetail();
-            setMessage(t.correctionDone);
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
-        } finally { setIsSaving(false); }
-    };
-
-    const handleNormalizeLate = async (recordId: number) => {
-        setIsSaving(true);
-        setMessage("");
-
-        try {
-            const res = await attendanceFetch("/api/attendance/admin", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    action: "normalize_late",
-                    attendance_id: recordId,
-                    lang,
-                }),
-            });
-
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                throw new Error(result.message || t.correctionFailed);
+            committed = true;
+            invalidateMonthlyAttendanceSummary(workDate.slice(0, 7));
+            if (result.record?.work_date && result.record.work_date.slice(0, 7) !== workDate.slice(0, 7)) {
+                invalidateMonthlyAttendanceSummary(result.record.work_date.slice(0, 7));
             }
-
-            setRecords((current) =>
-                current.map((record) =>
-                    record.id === result.record.id ? result.record : record
-                )
-            );
-            await fetchDetail();
-            setMessage(t.correctionDone);
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleSaveLeave = async ({ note, isNew }: { note: string; isNew?: boolean }) => {
-        if (!user) return;
-
-        setIsSaving(true);
-        setMessage("");
-
-        try {
-            const res = await attendanceFetch("/api/attendance/admin", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    action: "set_leave",
-                    user_id: user.id,
-                    work_date: selectedDate,
-                    note: note || undefined,
-                    is_new: isNew === true,
-                    lang,
-                }),
-            });
-
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                throw new Error(result.message || t.correctionFailed);
+            if (scopeRef.current !== mutationScope) return;
+            if (result.record && Number(result.record.user_id) === userId) {
+                setRecords(current => [...current.filter(record => record.id !== result.record.id), result.record]);
             }
-
-            setRecords((current) => {
-                const exists = current.some((record) => record.id === result.record.id);
-                return exists
-                    ? current.map((record) =>
-                        record.id === result.record.id ? result.record : record
-                    )
-                    : [...current, result.record];
-            });
-
-            setMessage(t.correctionDone);
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleUnauthorizedAbsence = async (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) => {
-        if (!user) return;
-        setIsSaving(true);
-        setMessage("");
-        try {
-            const res = await attendanceFetch("/api/attendance/admin", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action, user_id: user.id, work_date: selectedDate, note: reason, lang }),
-            });
-            const result = await res.json();
-            if (!res.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
-            await fetchDetail();
-            setMessage(t.correctionDone);
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleCancelLeave = async () => {
-        if (!user || !window.confirm(t.leaveCancelConfirm)) return;
-
-        setIsSaving(true);
-        setMessage("");
-
-        try {
-            const res = await attendanceFetch("/api/attendance/admin", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    action: "cancel_leave",
-                    user_id: user.id,
-                    work_date: selectedDate,
-                    lang,
-                }),
-            });
-            const result = await res.json();
-            if (!res.ok || !result.ok) {
-                throw new Error(result.message || t.correctionFailed);
+            if (body.action === "update_record" && result.record?.work_date) {
+                const date = result.record.work_date as string;
+                setSelectedDate(date);
+                if (date.slice(0, 7) !== navigationMonth) {
+                    const [year, month] = date.split("-").map(Number);
+                    setCurrentMonth(new Date(year, month - 1, 1));
+                    setMessage(successMessage);
+                    return;
+                }
             }
-
-            await fetchDetail();
-            setMessage(t.leaveCancelDone);
+            const refreshed = await fetchDetail();
+            if (scopeRef.current === mutationScope) setMessage(refreshed ? successMessage : savedRefreshWarning);
         } catch (error) {
-            setMessage(error instanceof Error ? error.message : t.correctionFailed);
+            if (scopeRef.current === mutationScope) setMessage(committed ? savedRefreshWarning : error instanceof Error ? error.message : t.correctionFailed);
         } finally {
+            savingRef.current = false;
             setIsSaving(false);
         }
     };
 
+    const handleSaveRecord = ({ id, note, checkInDateTime, checkOutDateTime, clearCheckOut, isNew }: SaveRecordInput) =>
+        runMutation({ action: "update_record", attendance_id: id, user_id: user?.id, work_date: selectedDate,
+            check_in_datetime: checkInDateTime || undefined,
+            check_out_datetime: clearCheckOut ? undefined : checkOutDateTime || undefined,
+            clear_check_out: clearCheckOut === true, note, is_new: isNew === true });
+    const handleResolveEarlyLeave = (recordId: number, selection: EarlyLeaveSelection) =>
+        runMutation({ action: "resolve_early_leave", attendance_id: recordId, selection });
+    const handleNormalizeLate = (recordId: number) =>
+        runMutation({ action: "normalize_late", attendance_id: recordId });
+    const handleSaveLeave = ({ note, isNew }: { note: string; isNew?: boolean }) =>
+        runMutation({ action: "set_leave", user_id: user?.id, work_date: selectedDate, note: note || undefined, is_new: isNew === true });
+    const handleUnauthorizedAbsence = (action: "set_unauthorized_absence" | "cancel_unauthorized_absence", reason: string) =>
+        runMutation({ action, user_id: user?.id, work_date: selectedDate, note: reason });
+    const handleCancelLeave = () => {
+        if (savingRef.current || !window.confirm(t.leaveCancelConfirm)) return;
+        return runMutation({ action: "cancel_leave", user_id: user?.id, work_date: selectedDate }, t.leaveCancelDone);
+    };
 
     const summary = useMemo(() => {
         const workRecords = records.filter((record) =>
@@ -680,7 +547,7 @@ export default function AttendanceUserDetailPage() {
                     </div>
 
                     <button type="button" aria-label={lang === "ko" ? "다음 직원" : "Nhân viên tiếp theo"} disabled={nextId === null || isLoading || isSaving} onClick={() => void navigateStaff("next")} style={{ ...calendarMonthButtonStyle, flexShrink: 0, opacity: nextId === null ? 0.35 : 1 }}>›</button>
-                    {!isLoading && (
+                    {!isLoading && !loadError && loadedScope === scope && (
                         <div style={totalWorkSummaryStyle}>
                             <span style={totalWorkSummaryLabelStyle}>⏳ {t.summaryTotalWorkTime}</span>
                             <strong style={totalWorkSummaryValueStyle}>
@@ -690,7 +557,7 @@ export default function AttendanceUserDetailPage() {
                     )}
                 </div>
 
-                {!isLoading && (
+                {!isLoading && !loadError && loadedScope === scope && (
                     <div style={statStripStyle}>
                         <StatChip icon="📅" label={t.summaryWorkDays} value={`${summary.workDays}`} />
                         <StatChip icon="🌴" label={t.workLeave} value={`${summary.leaveDays}`} />
@@ -701,18 +568,32 @@ export default function AttendanceUserDetailPage() {
                 )}
             </div>
 
-            {isLoading ? (
+            {message && (isLoading || loadError) && <div role="status" style={emptyStyle}>{message}</div>}
+            {loadError ? (
+                <div role="alert" style={emptyStyle}>
+                    <div>{lang === "vi" ? "Không thể tải dữ liệu chấm công." : "근태 기록을 불러오지 못했습니다."}</div>
+                    <button type="button" disabled={isLoading || isSaving} onClick={() => void fetchDetail()}>
+                        {lang === "vi" ? "Thử lại" : "다시 조회"}
+                    </button>
+                </div>
+            ) : isLoading || loadedScope !== scope ? (
                 <div style={emptyStyle}>{c.loading}</div>
             ) : (
                 <>
                     <Calendar
+                        disabled={isSaving}
                         calendarDate={currentMonth}
                         setCalendarDate={handleMonthChange}
                         records={records}
                         selectedDate={selectedDate}
-                        onSelectDate={setSelectedDate}
+                        onSelectDate={(date) => {
+                            if (savingRef.current || navigatingRef.current) return;
+                            setSelectedDate(date);
+                            setMessage("");
+                        }}
                     />
 
+                    <fieldset disabled={isSaving} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
                     <RecordDetailPanel
                         key={`${userId}-${selectedDate}-${selectedRecord?.id || "none"}-${selectedRecord?.updated_at || ""}`}
                         selectedDate={selectedDate}
@@ -729,6 +610,7 @@ export default function AttendanceUserDetailPage() {
                         onUnauthorizedAbsence={handleUnauthorizedAbsence}
                         unauthorizedAbsencePenaltyDays={unauthorizedAbsencePenaltyDays}
                     />
+                    </fieldset>
 
                 </>
             )}
@@ -750,12 +632,14 @@ function StatChip({ icon, label, value }: { icon: string; label: string; value: 
 }
 
 function Calendar({
+    disabled,
     calendarDate,
     setCalendarDate,
     records,
     selectedDate,
     onSelectDate,
 }: {
+    disabled: boolean;
     calendarDate: Date;
     setCalendarDate: (date: Date) => void;
     records: AttendanceRecord[];
@@ -783,6 +667,7 @@ function Calendar({
                     <button
                         type="button"
                         style={calendarMonthButtonStyle}
+                        disabled={disabled}
                         onClick={() =>
                             setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))
                         }
@@ -795,6 +680,7 @@ function Calendar({
                     <button
                         type="button"
                         style={calendarMonthButtonStyle}
+                        disabled={disabled}
                         onClick={() =>
                             setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))
                         }
@@ -858,6 +744,7 @@ function Calendar({
                             <button
                                 key={`${cell.type}-${displayDay}-${index}`}
                                 type="button"
+                                disabled={disabled}
                                 onClick={() => {
                                     if (!isMuted) onSelectDate(dateStr);
                                 }}
@@ -961,15 +848,14 @@ function RecordDetailPanel({
     const baseWorkDate = record?.work_date || selectedDate;
     // 빈 출근/퇴근 입력의 기본값은 브라우저의 "오늘 날짜"가 아니라
     // 관리자가 보고 있는 근무일(work_date) 기준으로 만든다.
-    const defaultCheckInValue = getOptionalDefaultShiftDateTimeValue(baseWorkDate, workStartTime);
     const defaultCheckOutValue = getOptionalDefaultShiftDateTimeValue(baseWorkDate, workEndTime);
 
     const baselineCheckInValue = record?.check_in_at
         ? toDateTimeInputValue(record.check_in_at)
-        : defaultCheckInValue;
+        : "";
     const baselineCheckOutValue = record?.check_out_at
         ? toDateTimeInputValue(record.check_out_at)
-        : defaultCheckOutValue;
+        : "";
 
     const [checkInDateTime, setCheckInDateTime] = useState(baselineCheckInValue);
     const [checkOutDateTime, setCheckOutDateTime] = useState(baselineCheckOutValue);
@@ -979,11 +865,7 @@ function RecordDetailPanel({
     const isCurrentlyWorking = !!record?.check_in_at && !record?.check_out_at && !isUnresolved;
     const isLongShift = record ? isLongShiftRecord(record.check_in_at, record.check_out_at) : false;
 
-    // DB 값이 null인 필드는 화면에 기본값(예: 다음 날 01:00)이 채워져 있어도
-    // "변경 여부"를 그 기본값 자체와 비교하면 항상 false가 되어 저장되지 않는다.
-    // DB가 null이면 입력값이 비어 있지 않은 한 항상 저장 대상으로 취급한다.
-    // 휴무 기록(canEdit=false)은 입력 필드 자체가 보이지 않으므로, 남아있는 기본값이
-    // 실수로 전송되지 않도록 canEdit일 때만 변경으로 취급한다.
+    // Only edited time fields are submitted; memo-only saves preserve persisted decisions.
     const checkInChanged =
         canEdit &&
         (record?.check_in_at
@@ -1179,6 +1061,10 @@ function RecordDetailPanel({
                                     {!workEndTime ? (
                                         <span style={scheduleNoticeStyle}>{t.scheduleCheckOutMissingNotice}</span>
                                     ) : null}
+                                    {defaultCheckOutValue && <button type="button" style={secondaryActionButtonStyle} disabled={isSaving}
+                                        onClick={() => setCheckOutDateTime(defaultCheckOutValue)}>
+                                        {lang === "vi" ? "Áp dụng giờ tan ca dự kiến" : "예정 퇴근시간 적용"}
+                                    </button>}
                                 </label>
                             </>
                         ) : null}
@@ -1262,9 +1148,7 @@ function CreateWorkForm({
     const [checkInDateTime, setCheckInDateTime] = useState(
         getOptionalDefaultShiftDateTimeValue(selectedDate, workStartTime)
     );
-    const [checkOutDateTime, setCheckOutDateTime] = useState(
-        getOptionalDefaultShiftDateTimeValue(selectedDate, workEndTime)
-    );
+    const [checkOutDateTime, setCheckOutDateTime] = useState("");
     const [note, setNote] = useState("");
 
     return (
@@ -1293,6 +1177,10 @@ function CreateWorkForm({
                 {!workEndTime ? (
                     <span style={scheduleNoticeStyle}>{t.scheduleCheckOutMissingNotice}</span>
                 ) : null}
+                {workEndTime && <button type="button" style={secondaryActionButtonStyle} disabled={isSaving}
+                    onClick={() => setCheckOutDateTime(getOptionalDefaultShiftDateTimeValue(selectedDate, workEndTime))}>
+                    {lang === "vi" ? "Áp dụng giờ tan ca dự kiến" : "예정 퇴근시간 적용"}
+                </button>}
             </label>
 
             <label style={fieldStyle}>

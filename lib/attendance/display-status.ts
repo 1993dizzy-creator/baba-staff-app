@@ -68,9 +68,10 @@ export function getRecentAttendanceDateKeys(monthKey: string, now = new Date()) 
     : new Date(Date.UTC(year, month, 0)).getUTCDate();
   const endDate = new Date(Date.UTC(year, month - 1, endDay));
 
-  return Array.from({ length: 7 }, (_, index) => {
+  const count = Math.min(7, endDay);
+  return Array.from({ length: count }, (_, index) => {
     const date = new Date(endDate);
-    date.setUTCDate(endDate.getUTCDate() - (6 - index));
+    date.setUTCDate(endDate.getUTCDate() - (count - 1 - index));
     return date.toISOString().slice(0, 10);
   });
 }

@@ -152,7 +152,7 @@ test("monthly eligible inactive and terminated staff remain navigable, while adm
 
 test("date-less entry uses the currently selected date for both buttons and swipe directions", async () => {
   const source = ts.transpileModule(detail.slice(detail.indexOf("    const navigateStaff = async"), detail.indexOf("    useEffect(() => {", detail.indexOf("    const navigateStaff = async"))), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const createNavigate = new Function("context", "const { staffIds, userId, isLoading, isSaving, navigatingRef, slideDirectionRef, pageRef, window, setMessage, router, getStaffDetailUrl, getAdjacentStaffId, getMonthRange, currentMonth, selectedDate } = context;" + source + "; return navigateStaff;");
+  const createNavigate = new Function("context", "const { staffIds, userId, isLoading, savingRef, detailRequestSequenceRef, navigatingRef, slideDirectionRef, pageRef, window, setMessage, router, getStaffDetailUrl, getAdjacentStaffId, getMonthRange, currentMonth, selectedDate } = context;" + source + "; return navigateStaff;");
   const initialUrl = new URL("https://example.test/admin/payroll/attendance/10?month=2026-09");
   assert.equal(initialUrl.searchParams.has("date"), false);
   const selectedDate = "2026-09-15";
@@ -160,6 +160,7 @@ test("date-less entry uses the currently selected date for both buttons and swip
     const urls: string[] = [];
     const navigate = createNavigate({
       staffIds: [9, 10, 11], userId: 10, isLoading: false, isSaving: false,
+      savingRef: { current: false }, detailRequestSequenceRef: { current: 0 },
       navigatingRef: { current: false }, slideDirectionRef: { current: 1 }, pageRef: { current: null },
       window: { matchMedia: () => ({ matches: true }) }, setMessage: () => {},
       router: { push: (url: string) => { urls.push(url); } }, getStaffDetailUrl, getAdjacentStaffId,

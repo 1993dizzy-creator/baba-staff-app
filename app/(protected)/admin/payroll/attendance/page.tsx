@@ -15,7 +15,7 @@ import type { EmployeeLevelInfo } from "@/lib/employee-level/types";
 import { getNextLevelSchedule } from "@/lib/employee-level/next-level-schedule";
 import { employeeLevelScheduleText } from "@/lib/text/employee-level-schedule";
 import AttendanceBonusProgressBadge from "@/components/attendance/AttendanceBonusProgressBadge";
-import { useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
+import { invalidateMonthlyAttendanceSummary, useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
     ATTENDANCE_STATUS_COLORS,
     getAttendanceDisplayStatus,
@@ -204,6 +204,8 @@ export default function AttendanceOverviewPage() {
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [expandedUserId, setExpandedUserId] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const [reviewError, setReviewError] = useState(false);
     const [unresolvedOpenRecords, setUnresolvedOpenRecords] = useState<UnresolvedOpenRecord[]>([]);
     const [isUnresolvedOpen, setIsUnresolvedOpen] = useState(false);
     const [earlyLeaveReviewRecords, setEarlyLeaveReviewRecords] = useState<EarlyLeaveReviewRecord[]>([]);
@@ -212,28 +214,34 @@ export default function AttendanceOverviewPage() {
     const [processingAction, setProcessingAction] = useState<"auto" | "delete" | null>(null);
     const monthlyOverviewRequestRef = useRef(0);
     const earlyLeaveResolutionRef = useRef(false);
+    const reviewRequestRef = useRef(0);
 
     const fetchUnresolvedOpenRecords = useCallback(async () => {
+        const requestId = ++reviewRequestRef.current;
         try {
             const res = await attendanceFetch("/api/attendance/admin");
 
             const result = await res.json();
 
             if (!res.ok || !result.ok) {
-                console.log("fetch unresolved open records error:", result);
-                return;
+                throw new Error("ATTENDANCE_REVIEW_READ_FAILED");
             }
+            if (requestId !== reviewRequestRef.current) return false;
 
             setUnresolvedOpenRecords((result.unresolvedOpenRecords || []) as UnresolvedOpenRecord[]);
             setEarlyLeaveReviewRecords((result.earlyLeaveReviewRecords || []) as EarlyLeaveReviewRecord[]);
-        } catch (err) {
-            console.log("fetch unresolved open records exception:", err);
+            setReviewError(false);
+            return true;
+        } catch {
+            if (requestId === reviewRequestRef.current) setReviewError(true);
+            return false;
         }
     }, []);
 
     const fetchMonthlyOverview = useCallback(async () => {
         const requestId = ++monthlyOverviewRequestRef.current;
         setIsLoading(true);
+        setLoadError(false);
 
         try {
             const { startText } = getMonthRange(currentMonth);
@@ -248,19 +256,21 @@ export default function AttendanceOverviewPage() {
             ]);
 
             if (!userRes.ok || !userResult.ok) {
-                console.log("fetch users error:", userResult);
-                return;
+                throw new Error("ATTENDANCE_USERS_READ_FAILED");
             }
             if (!recordRes.ok || !recordResult.ok) {
-                console.log("fetch attendance records error:", recordResult);
-                return;
+                throw new Error("ATTENDANCE_RECORDS_READ_FAILED");
             }
-            if (requestId !== monthlyOverviewRequestRef.current) return;
+            if (requestId !== monthlyOverviewRequestRef.current) return false;
 
             const userData = (userResult.users || []) as UserRow[];
             const recordData = recordResult.records || [];
             setUsers(userData.filter((user) => !isAdmin(user)));
             setRecords(recordData);
+            return true;
+        } catch {
+            if (requestId === monthlyOverviewRequestRef.current) setLoadError(true);
+            return false;
         } finally {
             if (requestId === monthlyOverviewRequestRef.current) {
                 setIsLoading(false);
@@ -275,9 +285,9 @@ export default function AttendanceOverviewPage() {
             return;
         }
         void fetchUnresolvedOpenRecords();
-        const refreshReviewBanners = () => { void fetchUnresolvedOpenRecords(); };
+        const refreshReviewBanners = () => { if (!earlyLeaveResolutionRef.current) void fetchUnresolvedOpenRecords(); };
         window.addEventListener("focus", refreshReviewBanners);
-        return () => window.removeEventListener("focus", refreshReviewBanners);
+        return () => { reviewRequestRef.current += 1; window.removeEventListener("focus", refreshReviewBanners); };
     }, [fetchUnresolvedOpenRecords]);
 
     useEffect(() => {
@@ -288,9 +298,19 @@ export default function AttendanceOverviewPage() {
         };
     }, [fetchMonthlyOverview]);
 
+    const refreshAfterSave = async (workDate: string) => {
+        invalidateMonthlyAttendanceSummary(workDate.slice(0, 7));
+        const refreshed = await Promise.all([fetchUnresolvedOpenRecords(), fetchMonthlyOverview()]);
+        if (refreshed.some(value => !value)) alert(lang === "vi"
+            ? "Đã lưu. Không thể tải lại dữ liệu; vui lòng thử tải lại."
+            : "저장은 완료됐지만 재조회에 실패했습니다. 다시 조회해주세요.");
+    };
+
     const handleResolveEarlyLeave = async (recordId: number, selection: EarlyLeaveSelection) => {
-        if (earlyLeaveResolutionRef.current || processingRecordId !== null) return;
+        if (isLoading || earlyLeaveResolutionRef.current || processingRecordId !== null) return;
         earlyLeaveResolutionRef.current = true;
+        monthlyOverviewRequestRef.current += 1;
+        reviewRequestRef.current += 1;
         setProcessingRecordId(recordId);
         try {
             const response = await attendanceFetch("/api/attendance/admin", {
@@ -301,7 +321,7 @@ export default function AttendanceOverviewPage() {
             const result = await response.json();
             if (!response.ok || !result.ok) throw new Error(result.message || t.correctionFailed);
             setEarlyLeaveReviewRecords((current) => current.filter((record) => record.id !== recordId));
-            await Promise.all([fetchUnresolvedOpenRecords(), fetchMonthlyOverview()]);
+            await refreshAfterSave(earlyLeaveReviewRecords.find(record => record.id === recordId)?.work_date || `${selectedMonthKey}-01`);
         } catch (error) {
             alert(error instanceof Error ? error.message : t.correctionFailed);
         } finally {
@@ -311,9 +331,12 @@ export default function AttendanceOverviewPage() {
     };
 
     const handleAutoCorrect = async (record: UnresolvedOpenRecord) => {
-        if (processingRecordId) return;
+        if (isLoading || earlyLeaveResolutionRef.current) return;
         const autoCloseTime = formatCheckInTime(record.auto_close_at);
         if (!window.confirm(t.unresolvedOpenRecordAutoConfirm.replace("{time}", autoCloseTime))) return;
+        earlyLeaveResolutionRef.current = true;
+        monthlyOverviewRequestRef.current += 1;
+        reviewRequestRef.current += 1;
 
         setProcessingRecordId(record.id);
         setProcessingAction("auto");
@@ -341,19 +364,23 @@ export default function AttendanceOverviewPage() {
             }
 
             setUnresolvedOpenRecords((prev) => prev.filter((item) => item.id !== record.id));
-            await fetchMonthlyOverview();
+            await refreshAfterSave(record.work_date);
         } catch (err) {
             console.error(err);
             alert(t.unresolvedOpenRecordAutoFailed);
         } finally {
+            earlyLeaveResolutionRef.current = false;
             setProcessingRecordId(null);
             setProcessingAction(null);
         }
     };
 
     const handleDeleteOrphan = async (record: UnresolvedOpenRecord) => {
-        if (processingRecordId) return;
+        if (isLoading || earlyLeaveResolutionRef.current) return;
         if (!window.confirm(t.orphanRecordDeleteConfirm)) return;
+        earlyLeaveResolutionRef.current = true;
+        monthlyOverviewRequestRef.current += 1;
+        reviewRequestRef.current += 1;
 
         setProcessingRecordId(record.id);
         setProcessingAction("delete");
@@ -381,10 +408,12 @@ export default function AttendanceOverviewPage() {
             }
 
             setUnresolvedOpenRecords((prev) => prev.filter((item) => item.id !== record.id));
+            await refreshAfterSave(record.work_date);
         } catch (err) {
             console.error(err);
             alert(t.orphanRecordDeleteFailed);
         } finally {
+            earlyLeaveResolutionRef.current = false;
             setProcessingRecordId(null);
             setProcessingAction(null);
         }
@@ -475,15 +504,18 @@ export default function AttendanceOverviewPage() {
     }, [summaries]);
 
     const moveMonth = (amount: number) => {
+        if (earlyLeaveResolutionRef.current) return;
+        monthlyOverviewRequestRef.current += 1;
+        setIsLoading(true);
+        setLoadError(false);
         setCurrentMonth((prev) => {
-            const next = new Date(prev);
-            next.setMonth(next.getMonth() + amount);
-            return next;
+            return new Date(prev.getFullYear(), prev.getMonth() + amount, 1);
         });
         setExpandedUserId(null);
     };
 
     const goDetail = (userId: number) => {
+        if (earlyLeaveResolutionRef.current) return;
         const year = currentMonth.getFullYear();
         const month = String(currentMonth.getMonth() + 1).padStart(2, "0");
 
@@ -491,6 +523,7 @@ export default function AttendanceOverviewPage() {
     };
 
     const goDetailForDate = (userId: number, workDate: string) => {
+        if (earlyLeaveResolutionRef.current) return;
         const month = workDate.slice(0, 7);
 
         router.push(`/admin/payroll/attendance/${userId}?month=${month}&date=${workDate}`);
@@ -499,16 +532,21 @@ export default function AttendanceOverviewPage() {
     return (
         <Container noPaddingTop>
             <div style={monthHeaderStyle}>
-                <button type="button" style={monthButtonStyle} onClick={() => moveMonth(-1)}>
+                <button type="button" style={monthButtonStyle} disabled={processingRecordId !== null} onClick={() => moveMonth(-1)}>
                     ‹
                 </button>
 
                 <div style={monthTitleStyle}>{formatMonth(currentMonth, t.monthFormat)}</div>
 
-                <button type="button" style={monthButtonStyle} onClick={() => moveMonth(1)}>
+                <button type="button" style={monthButtonStyle} disabled={processingRecordId !== null} onClick={() => moveMonth(1)}>
                     ›
                 </button>
             </div>
+
+            {reviewError && <div role="alert" style={emptyStyle}>
+                <div>{lang === "vi" ? "Không thể tải dữ liệu cần kiểm tra." : "확인할 근태 기록을 불러오지 못했습니다."}</div>
+                <button type="button" disabled={processingRecordId !== null} onClick={() => void fetchUnresolvedOpenRecords()}>{lang === "vi" ? "Thử lại" : "다시 조회"}</button>
+            </div>}
 
             {earlyLeaveReviewRecords.length > 0 && (
                 <div style={unresolvedBannerStyle}>
@@ -677,7 +715,12 @@ export default function AttendanceOverviewPage() {
             )}
 
             <div style={sectionStyle}>
-                {isLoading ? (
+                {loadError ? (
+                    <div role="alert" style={emptyStyle}>
+                        <div>{lang === "vi" ? "Không thể tải danh sách nhân viên hoặc dữ liệu chấm công." : "직원 목록 또는 근태 기록을 불러오지 못했습니다."}</div>
+                        <button type="button" disabled={isLoading || processingRecordId !== null} onClick={() => void fetchMonthlyOverview()}>{lang === "vi" ? "Thử lại" : "다시 조회"}</button>
+                    </div>
+                ) : isLoading ? (
                     <div style={emptyStyle}>{c.loading}</div>
                 ) : groupedSummaries.length === 0 ? (
                     <div style={emptyStyle}>{c.noData}</div>

@@ -131,23 +131,32 @@ test("Vietnam first-of-month 00:00 through 02:59 belong to previous business mon
 });
 
 function hookHarness() {
-  let state = null, effect, deps, cleanup;
+  let states = [], effects = [], stateIndex = 0, effectIndex = 0;
   const requests = [];
+  const events = new EventTarget();
   const react = {
-    useState: () => [state, (next) => { state = next; }],
+    useState: (initial) => {
+      const i = stateIndex++;
+      if (!(i in states)) states[i] = initial;
+      return [states[i], next => { states[i] = typeof next === 'function' ? next(states[i]) : next; }];
+    },
     useMemo: (fn) => fn(),
     useEffect: (fn, nextDeps) => {
-      if (!deps || nextDeps.some((item, i) => item !== deps[i])) { cleanup?.(); deps = nextDeps; effect = fn; }
+      const i = effectIndex++, previous = effects[i];
+      if (!previous || nextDeps.some((item, j) => item !== previous.deps[j])) {
+        previous?.cleanup?.(); effects[i] = { deps: nextDeps, pending: fn };
+      }
     },
   };
-  const hook = loadModule("components/attendance/useMonthlyAttendanceSummary.ts", { react }, {
-    AbortController, fetch: (url, options) => new Promise((resolve) => requests.push({ url, options, resolve })),
-  }).useMonthlyAttendanceSummary;
-  return { requests, render(month, revision, live = true) {
-    const result = hook(month, revision, live);
-    if (effect) { const fn = effect; effect = null; cleanup = fn(); }
+  const summaryHook = loadModule("components/attendance/useMonthlyAttendanceSummary.ts", { react }, {
+    window: events, CustomEvent, AbortController, fetch: (url, options) => new Promise((resolve) => requests.push({ url, options, resolve })),
+  });
+  return { requests, invalidate: summaryHook.invalidateMonthlyAttendanceSummary, render(month, revision, live = true) {
+    stateIndex = 0; effectIndex = 0;
+    const result = summaryHook.useMonthlyAttendanceSummary(month, revision, live);
+    for (const effect of effects) if (effect.pending) { effect.cleanup = effect.pending(); effect.pending = null; }
     return result;
-  }, unmount() { cleanup?.(); deps = null; state = null; } };
+  }, unmount() { effects.forEach(effect => effect.cleanup?.()); effects = []; states = []; } };
 }
 async function respond(request, perfectAttendanceCurrent, ok = true) {
   request.resolve({ ok, json: async () => ({ summaries: [{ userId: 1, attendanceBonusEligible: true, perfectAttendanceCurrent }] }) });
@@ -218,6 +227,24 @@ test("non-staff consumers retain their shared monthly cache and default summary 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.requests.length, 1);
   assert.equal(h.render("2026-10", undefined, false).get(1).perfectAttendanceCurrent, true);
+});
+
+test("admin correction invalidates only its month and rejects an older pending summary", async () => {
+  const h = hookHarness();
+  h.render("2026-10", undefined, false);
+  h.invalidate("2026-09");
+  h.render("2026-10", undefined, false);
+  assert.equal(h.requests.length, 1);
+  h.invalidate("2026-10");
+  assert.equal(h.render("2026-10", undefined, false).size, 0);
+  await respond(h.requests[1], false);
+  await respond(h.requests[0], true);
+  assert.equal(h.render("2026-10", undefined, false).get(1).perfectAttendanceCurrent, false);
+  h.unmount();
+  h.render("2026-10", undefined, false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.render("2026-10", undefined, false).get(1).perfectAttendanceCurrent, false);
 });
 
 function recordsApiHarness() {
