@@ -42,10 +42,10 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-async function inventoryWrite(name: string, args: Record<string, unknown>, event?: unknown) {
+async function inventoryWrite(name: string, args: Record<string, unknown>, event?: unknown, retryTransport = true) {
   if (process.env.INVENTORY_WRITER_MODE !== "journal") return supabaseAdmin.rpc(name, args);
   const { inventoryWriterRpc } = await import("@/lib/inventory/writer-rpc");
-  return inventoryWriterRpc(supabaseAdmin, name, args, Number(args.p_actor_user_id), event);
+  return inventoryWriterRpc(supabaseAdmin, name, args, Number(args.p_actor_user_id), event, { retryTransport });
 }
 
 async function purchaseCorrectionCountIssue(itemId:number,root:{id:number;created_at:string}) {
@@ -151,13 +151,13 @@ const writerContractResponse = (error: unknown) => {
   const code = getSupabaseErrorField(error, "code");
   if (code === "40001" || code === "55P03")
     return jsonError("inventory_busy_refresh_required", "Refresh the item and retry with current quantities.", 409,
-      { retryable: true, requiresRefresh: true, retryCondition: "refresh_item_and_receipts" });
+      { retryable: true, requiresRefresh: true, retryCondition: "refresh_item_and_receipts", writeState: "not_saved" });
   if (code === "42501")
     return jsonError("inventory_writer_permission_review_required", "The inventory writer contract needs administrator review.", 403,
-      { retryable: false, requiresRefresh: false, retryCondition: "operator_contract_review" });
+      { retryable: false, requiresRefresh: false, retryCondition: "operator_contract_review", writeState: "not_saved" });
   if (code === "PGRST202" || code === "42883")
     return jsonError("inventory_writer_migration_required", "The required inventory writer is not available.", 503,
-      { retryable: false, requiresRefresh: false, retryCondition: "rpc_installed_and_schema_cache_ready" });
+      { retryable: false, requiresRefresh: false, retryCondition: "rpc_installed_and_schema_cache_ready", writeState: "not_saved" });
   if (code && ["08000", "08006", "PGRST000"].includes(code))
     return jsonError("inventory_write_outcome_unknown", "Check the saved item and audit before retrying.", 503,
       { retryable: false, requiresRefresh: true, outcomeUnknown: true, retryCondition: "reconcile_outcome_then_refresh" });
@@ -297,6 +297,22 @@ export async function GET(req: Request) {
     if (selectedId !== null) {
       const itemId = Number(selectedId);
       if (!Number.isSafeInteger(itemId) || itemId <= 0) return jsonError("invalid_item_id", "Invalid item id", 400);
+      if (searchParams.get("saveCheck") === "true" || searchParams.get("itemOnly") === "true") {
+        const check = searchParams.get("saveCheck") === "true";
+        // Bounded, read-only recovery. Never load POS/Keg enrichment, all stock,
+        // supplier masters or purchase-family expansion to check one write.
+        const [itemResult, logs] = await Promise.all([
+          supabaseAdmin.from("inventory").select("*").eq("id", itemId).maybeSingle(),
+          check ? supabaseAdmin.from("inventory_logs").select("id,item_id,source_actor_user_id,source,reason,created_at,prev_quantity,new_quantity,change_quantity,new_supplier,new_purchase_price,purchase_supplier_partner_id,new_note,correction_of_inventory_log_id,billed_amount_mode,billed_amount")
+            .eq("item_id", itemId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(20)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (itemResult.error) throw itemResult.error;
+        if (logs.error) throw logs.error;
+        if (!itemResult.data) return jsonError("inventory_item_not_found", "Item not found", 404);
+        if (itemResult.data.is_active !== true && !canToggleInventoryItemActiveStatus(actor.role)) return jsonError("inventory_item_inactive_list_forbidden", "Inactive inventory items require leader permission.", 403);
+        return NextResponse.json({ ok: true, data: [itemResult.data], ...(check ? { auditLogs: logs.data, actorId: actor.id } : {}) }, { headers: { "Cache-Control": "no-store" } });
+      }
       const [itemResult, partners, subtypes, aliases] = await Promise.all([
         supabaseAdmin.from("inventory").select("*").eq("id", itemId).maybeSingle(),
         supabaseAdmin.from("business_partners").select(PARTNER_OPTION_COLUMNS).eq("is_active", true),
@@ -473,6 +489,8 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  const requestStarted = performance.now();
+  let writeStarted = false;
   try {
     const { actor, response } = await authenticatedActorResponse();
     if (response) return response;
@@ -582,6 +600,7 @@ export async function PATCH(req: Request) {
         }
       }
 
+      writeStarted = true;
       const { data: updatedItem, error: activeUpdateError } =
         await supabaseAdmin
           .from("inventory")
@@ -663,6 +682,7 @@ export async function PATCH(req: Request) {
         payload: { supplier: payload.supplier ?? null, supplierPartnerId: partnerId },
       })) ?? { supplier: payload.supplier ?? null, supplier_partner_id: partnerId };
       const { businessDate } = await resolveInventoryBusinessDate();
+      writeStarted = true;
       const { data: edited, error } = await inventoryWrite("inventory_apply_purchase_receipt_edit_v1", {
         p_item_id: Number(id), p_purchase_log_id: purchaseLogId,
         p_expected_quantity: Number(prevItem.quantity), p_expected_item: prevItem,
@@ -944,12 +964,13 @@ export async function PATCH(req: Request) {
       // A correction reduces an existing receipt; its 실청구금액 is changed only in 입고 수정.
       if (billedRequest?.mode === "manual") return jsonError("invalid_billed_amount", "A billed amount belongs to a new receipt.", 400);
       const businessDate = autoCorrectionBusinessDate ?? (await resolveInventoryBusinessDate()).businessDate;
+      writeStarted = true;
       const { data: correction, error } = await inventoryWrite("inventory_apply_purchase_correction_v3", {
         p_item_id: Number(id), p_purchase_log_id: correctionPurchaseLogId ?? autoCorrectionRootId,
         p_expected_quantity: autoCorrectionRootId !== null ? Number(prevItem.quantity) : Number(expectedQuantity),
         p_expected_item: prevItem, p_payload: serverPayload,
         p_business_date: businessDate, p_actor_user_id: actor.id,
-      }, body.inventoryEvent);
+      }, body.inventoryEvent, mode !== "quick-save");
       if (error && isBilledAmountEditRequired(error))
         return jsonError("purchase_billed_amount_edit_required", "This receipt has a manual billed amount. Use the receipt edit.", 409,
           { blockReason: "billed_amount_manual" });
@@ -977,11 +998,14 @@ export async function PATCH(req: Request) {
     // A purchase save carries its 실청구금액; the RPC keeps it only for a new receipt and then
     // projects that receipt to the Ledger in the same transaction.
     const billedPayload = logReason === "purchase" && billedRequest ? billedAmountColumns(billedRequest) : {};
+    writeStarted = true;
+    const writeBegin = performance.now();
     const { data: saved, error: saveError } = await inventoryWrite("inventory_update_with_audit_v1", {
       p_item_id: Number(id), p_expected_item: prevItem, p_payload: { ...serverPayload, ...billedPayload },
       p_business_date: businessDate, p_actor_user_id: actor.id, p_reason: logReason, p_source: logSource,
       p_price_business_date: mode !== "quick-save" && typeof body.business_date === "string" ? body.business_date : businessDate,
-    }, body.inventoryEvent);
+    }, body.inventoryEvent, mode !== "quick-save");
+    const writeDuration = performance.now() - writeBegin;
     if (saveError) throw saveError;
     if (saved?.status !== "ok") {
       const status = ["inventory_conflict", "purchase_correction_required"].includes(saved?.status) ? 409 : saved?.status === "forbidden" ? 403 : saved?.status === "not_found" ? 404 : 400;
@@ -991,13 +1015,18 @@ export async function PATCH(req: Request) {
     const ledgerSync = saved.ledgerSync ?? (logReason === "purchase"
       ? await projectInventoryPurchaseLog(Number(saved.inventoryLogId), actor.id)
       : undefined);
-    return NextResponse.json({ ok: true, mode, ledgerSync });
+    return NextResponse.json({ ok: true, mode, ledgerSync, inventoryLogId: saved.inventoryLogId }, {
+      headers: { "Server-Timing": `inventory-write;dur=${writeDuration.toFixed(1)}, inventory-patch;dur=${(performance.now() - requestStarted).toFixed(1)}` },
+    });
   } catch (error) {
     const contractResponse = writerContractResponse(error);
     if (contractResponse) return contractResponse;
     console.error("[INVENTORY_PATCH_ERROR]", error);
+    const dbCode = getSupabaseErrorField(error, "code");
+    const timedOut = dbCode === "57014";
     return NextResponse.json(
-      { ok: false, error: "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE },
+      { ok: false, error: timedOut ? "inventory_save_timeout" : "inventory_request_failed", message: INTERNAL_ERROR_MESSAGE,
+        writeState: !writeStarted || timedOut ? "not_saved" : "unknown" },
       { status: 500 }
     );
   }

@@ -15,7 +15,7 @@ export function writerRequestId(operation: string, args: Record<string, unknown>
   const hex = createHash("sha256").update(JSON.stringify(sorted({ operation, arguments: normalized, event, actor: actorId }))).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
-export async function inventoryWriterRpc(client: SupabaseClient, operation: string, args: Record<string, unknown>, actorId: number, input?: unknown) {
+export async function inventoryWriterRpc(client: SupabaseClient, operation: string, args: Record<string, unknown>, actorId: number, input?: unknown, options: { retryTransport?: boolean } = {}) {
   const event = record(input) ? { ...input } : {};
   const supplied = event.requestId ?? args.p_request_id;
   delete event.requestId;
@@ -26,6 +26,6 @@ export async function inventoryWriterRpc(client: SupabaseClient, operation: stri
   // Missing effectiveAt/proof is deliberately preserved as missing evidence.
   const rpcArgs = { p_request_id: requestId, p_operation: operation, p_arguments: args, p_event: event, p_actor_user_id: actorId };
   let result = await client.rpc("inventory_writer_apply_v1", rpcArgs);
-  if (result.error?.code && ["08000", "08006", "PGRST000"].includes(result.error.code)) result = await client.rpc("inventory_writer_apply_v1", rpcArgs);
+  if (options.retryTransport !== false && result.error?.code && ["08000", "08006", "PGRST000"].includes(result.error.code)) result = await client.rpc("inventory_writer_apply_v1", rpcArgs);
   return result;
 }

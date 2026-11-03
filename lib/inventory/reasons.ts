@@ -250,6 +250,10 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     return vi ? "Thông tin mặt hàng đã được thay đổi bởi thao tác khác nên chưa lưu. Dữ liệu bạn nhập được giữ nguyên; hãy kiểm tra thông tin mới nhất trước khi thử lại."
       : "다른 작업으로 품목 정보가 변경되어 저장하지 않았습니다. 입력값은 유지했습니다. 최신 정보를 확인한 뒤 다시 시도해 주세요.";
   const messages: Record<string, [string, string]> = {
+    inventory_save_timeout: ["DB 처리 시간 초과로 저장되지 않은 것을 확인했습니다. 입력값은 유지했으며 직접 다시 시도할 수 있습니다.", "Đã xác nhận chưa lưu do cơ sở dữ liệu quá thời gian xử lý. Dữ liệu bạn nhập được giữ nguyên; có thể thử lại thủ công."],
+    inventory_busy_refresh_required: ["다른 재고 작업과 충돌하거나 잠금 대기 시간이 초과되어 저장하지 않았습니다. 입력값은 유지했습니다. 최신 재고와 입고로그를 확인해 주세요.", "Thao tác kho khác gây xung đột hoặc quá thời gian chờ khóa nên chưa lưu. Dữ liệu bạn nhập được giữ nguyên. Hãy kiểm tra tồn kho và nhật ký mới nhất."],
+    inventory_writer_permission_review_required: ["DB 저장 권한을 확인해야 하므로 저장하지 않았습니다. 입력값은 유지했습니다. 관리자에게 문의하세요.", "Cần kiểm tra quyền ghi cơ sở dữ liệu nên chưa lưu. Dữ liệu bạn nhập được giữ nguyên. Vui lòng liên hệ quản lý."],
+    inventory_writer_migration_required: ["필수 DB 저장 기능을 사용할 수 없어 저장하지 않았습니다. 입력값은 유지했습니다. 관리자에게 서버 설정 확인을 요청하세요.", "Chức năng ghi cơ sở dữ liệu bắt buộc chưa sẵn sàng nên chưa lưu. Dữ liệu bạn nhập được giữ nguyên. Hãy nhờ quản lý kiểm tra cấu hình máy chủ."],
     inventory_nonpositive_purchase_classification: ["감소·0 수량 기록을 신규 입고로 분류할 수 없습니다. 마이너스 입고는 수량 입력 화면에서 원입고에 연결해 정정해주세요.", "Không thể phân loại số lượng giảm hoặc bằng 0 thành nhập mới. Hãy sửa số lượng và liên kết lô nhập gốc."],
     inventory_purchase_reclassification_requires_review: ["입고 분류 변경은 지급·월마감·정정 이력 검토가 필요합니다. 이력의 분류 버튼 대신 원입고 수량 정정 절차를 사용해주세요.", "Đổi phân loại nhập cần kiểm tra thanh toán, chốt tháng và lịch sử sửa. Hãy dùng quy trình sửa lô nhập gốc thay vì đổi nhãn nhật ký."],
     inventory_purchase_correction_log_protected: ["원입고에 연결된 정정 기록의 분류는 변경할 수 없습니다. 원입고 정정 절차를 사용해주세요.", "Không thể đổi phân loại nhật ký sửa đã liên kết. Hãy dùng quy trình sửa lô nhập gốc."],

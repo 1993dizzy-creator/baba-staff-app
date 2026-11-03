@@ -1,5 +1,6 @@
 "use client";
 import { inventoryPurchaseErrorMessage, type InventoryPurchaseErrorDetails } from "@/lib/inventory/reasons";
+import { createQuickSaveRecovery, quickSaveRecoveryText, type QuickSaveIntent } from "@/lib/inventory/quick-save-recovery";
 
 import { normalizeInventoryEditText } from "@/lib/inventory/edit-validation";
 import { ledgerSyncNotice } from "@/lib/inventory/ledger-sync-contract";
@@ -401,6 +402,9 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     const [latestSnapshotDate, setLatestSnapshotDate] = useState<string>("");
     const [quickSaveItem, setQuickSaveItem] = useState<InventoryItem | null>(null);
     const quickSaveLockRef=useRef(false);
+    const quickSavePendingRef = useRef<{ intent: QuickSaveIntent; recovery: ReturnType<typeof createQuickSaveRecovery<InventoryItem>>; write: () => Promise<Response>; generation: number } | null>(null);
+    const quickSaveGenerationRef = useRef(0);
+    const [quickSaveStatus, setQuickSaveStatus] = useState("");
     const [quickSaveReason, setQuickSaveReason] = useState<
         QuickReasonValue | null
     >(null);
@@ -1895,6 +1899,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
     };
 
     const closeQuickSaveModal = () => {
+        if (quickSavePendingRef.current) return;
         setQuickSaveItem(null);
         setQuickBilledDraft(AUTO_BILLED_AMOUNT);
         setQuickSaveReason(null);
@@ -2312,17 +2317,51 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         );
     };
 
-    const refreshInventoryPreservingCardPosition = async (
-        itemId: number,
-        refresh: () => Promise<unknown>
-    ) => {
-        const cardEl = itemCardRefs.current[itemId] ?? null;
-
-        pendingCardRestoreRef.current = cardEl
-            ? { itemId, cardTop: cardEl.getBoundingClientRect().top }
-            : null;
-
-        await refresh();
+    const resolveQuickSave = async (pending: NonNullable<typeof quickSavePendingRef.current>) => {
+        const labels = quickSaveRecoveryText(lang);
+        const { intent } = pending;
+        const outcome = await pending.recovery.run(pending.write, async () => {
+            const response = await fetchInventoryApi(`/api/inventory/items?itemId=${intent.itemId}&saveCheck=true`, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
+            const result = await response.json();
+            if (!response.ok || !result.ok) throw new Error("Save status unavailable");
+            return result;
+        }, () => setQuickSaveStatus(labels.checking));
+        if (outcome.kind === "busy") return;
+        if (outcome.kind === "uncertain") {
+            setQuickSaveStatus((outcome.timedOut ? labels.timeout : labels.network) + " " + labels.unknown);
+            return;
+        }
+        quickSavePendingRef.current = null;
+        setQuickSaveStatus("");
+        if (outcome.kind === "not_saved") { alert(inventoryPurchaseErrorMessage(outcome.reply.error, lang) ?? labels.rejected); return; }
+        if (outcome.kind === "rejected") {
+            const purchaseError = inventoryPurchaseErrorMessage(outcome.reply.error ?? outcome.reply.code, lang, outcome.reply);
+            alert(purchaseError ?? (intent.reason === "purchase" && intent.payload.quantity < intent.expectedQuantity
+                ? (lang === "vi" ? "Không thể hoàn tất yêu cầu điều chỉnh. Dữ liệu bạn nhập được giữ nguyên. Vui lòng liên hệ quản lý." : "정정 요청을 완료하지 못했습니다. 입력값은 유지했습니다. 관리자에게 문의해 주세요.")
+                : c.editFail));
+            return;
+        }
+        const ledgerNotice = outcome.reply.ledgerSync?.code === "VERIFY_LEDGER_STATUS"
+            ? (lang === "vi" ? "Đã xác nhận lưu kho. Hãy kiểm tra trạng thái ghi sổ trong sổ kế toán." : "재고 저장을 확인했습니다. 장부 반영 상태는 장부에서 확인해 주세요.")
+            : ledgerSyncNotice(outcome.reply.ledgerSync, lang === "vi");
+        if (ledgerNotice) alert(ledgerNotice);
+        setInventoryList(current => current.map(item => item.id !== intent.itemId ? item : outcome.item ?? {
+            ...item, quantity: intent.payload.quantity, updated_at: null,
+            ...(intent.reason === "purchase" ? { supplier: intent.payload.supplier,
+                supplier_partner_id: intent.payload.supplierPartnerId, supplier_partner_name: intent.payload.supplier,
+                purchase_price: intent.payload.purchase_price } : {}),
+            ...(intent.reason === "other" ? { note: intent.payload.note } : {}),
+        }));
+        setQuantityDrafts(current => ({ ...current, [intent.itemId]: String(intent.payload.quantity) }));
+        closeQuickSaveModal();
+        // One-item refresh is independent of save completion. Do not await global
+        // stock, POS enrichment or recent-log panels before releasing the button.
+        void fetchInventoryApi(`/api/inventory/items?itemId=${intent.itemId}&itemOnly=true`, { cache: "no-store", signal: AbortSignal.timeout(8_000) })
+            .then(async response => {
+                const result = await response.json();
+                if (response.ok && result.ok && result.data?.[0]?.id === intent.itemId && quickSaveGenerationRef.current === pending.generation)
+                    setInventoryList(current => current.map(item => item.id === intent.itemId ? { ...item, ...result.data[0] } : item));
+            }).catch(() => { /* The write is confirmed; refresh failure cannot turn it into a failed save. */ });
     };
 
     const handleQuickSaveConfirm = async (
@@ -2333,6 +2372,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
         setIsQuickSaving(true);
 
         try {
+            if (quickSavePendingRef.current) { await resolveQuickSave(quickSavePendingRef.current); return; }
             if (!quickSaveItem) return;
 
             const draft = quantityDrafts[quickSaveItem.id];
@@ -2393,65 +2433,25 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
             };
             const savedItemId = quickSaveItem.id;
 
-            const res = await fetchInventoryApi("/api/inventory/items", {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    mode: "quick-save",
-                    id: savedItemId,
-                    payload,
-                    expectedQuantity: currentQty,
-                    reason,
-                    ...(quickBilledRequest ? { purchaseBilledAmount: quickBilledRequest } : {}),
-                }),
+            const intent: QuickSaveIntent = {
+                itemId: savedItemId, expectedQuantity: currentQty,
+                expectedUpdatedAt: quickSaveItem.updated_at ?? null,
+                payload, reason, ...(quickBilledRequest ? { purchaseBilledAmount: quickBilledRequest } : {}),
+            };
+            const body = JSON.stringify({ mode: "quick-save", id: savedItemId, payload,
+                expectedQuantity: currentQty,
+                ...(intent.expectedUpdatedAt ? { expectedUpdatedAt: intent.expectedUpdatedAt } : {}),
+                reason, ...(quickBilledRequest ? { purchaseBilledAmount: quickBilledRequest } : {}),
             });
-
-            const result = await res.json();
-
-            if (!res.ok || !result.ok) {
-                const purchaseError=inventoryPurchaseErrorMessage(result.error ?? result.code,lang,result);
-                if(purchaseError){alert(purchaseError);return;}
-                if(reason==="purchase" && nextQty<currentQty){
-                    alert(lang==="vi" ? "Không thể hoàn tất yêu cầu điều chỉnh. Dữ liệu bạn nhập được giữ nguyên. Vui lòng liên hệ quản lý." : "정정 요청을 완료하지 못했습니다. 입력값은 유지했습니다. 관리자에게 문의해 주세요.");
-                    return;
-                }
-                console.error(result);
-
-                if (res.status === 409) {
-                    alert("현재 재고가 다른 사용자에 의해 변경되었습니다. 새로고침 후 다시 저장해주세요.");
-                    await refreshInventoryPreservingCardPosition(
-                        quickSaveItem.id,
-                        fetchInventory
-                    );
-                    return;
-                }
-
-                alert(c.editFail);
-                return;
-            }
-
-            const ledgerNotice = ledgerSyncNotice(result.ledgerSync, lang === "vi");
-            if (ledgerNotice) alert(ledgerNotice);
-            setQuantityDrafts((prev) => ({
-                ...prev,
-                [savedItemId]: String(nextQty),
-            }));
-
-            closeQuickSaveModal();
-
-            await refreshInventoryPreservingCardPosition(savedItemId, () =>
-                Promise.allSettled([fetchInventory(), fetchRecentLogs()]).then(
-                    (refreshResults) => {
-                        refreshResults.forEach((result) => {
-                            if (result.status === "rejected") {
-                                console.error(result.reason);
-                            }
-                        });
-                    }
-                )
-            );
+            const pending = { intent, recovery: createQuickSaveRecovery<InventoryItem>(intent),
+                generation: ++quickSaveGenerationRef.current,
+                write: () => fetchInventoryApi("/api/inventory/items", {
+                    method: "PATCH", headers: { "Content-Type": "application/json" },
+                    body, signal: AbortSignal.timeout(20_000),
+                }),
+            };
+            quickSavePendingRef.current = pending;
+            await resolveQuickSave(pending);
         } finally {
             quickSaveLockRef.current=false;
             setIsQuickSaving(false);
@@ -5784,6 +5784,11 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             gap: 10,
                         }}
                     >
+                        {quickSaveStatus && <div role="status" data-testid="quick-save-status" style={{ fontSize: 13, color: "#92400e" }}>
+                            {quickSaveStatus}
+                            <button type="button" style={ui.subButton} disabled={isQuickSaving} onClick={() => handleQuickSaveConfirm(quickSavePendingRef.current?.intent.reason as QuickReasonValue)}>{quickSaveRecoveryText(lang).check}</button>
+                        </div>}
+                        <fieldset disabled={isQuickSaving || !!quickSaveStatus} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" }}>
                         <div style={{ fontSize: 17, fontWeight: 800, color: "#111827" }}>
                             {lang === "vi" ? "Lưu nhanh" : "빠른저장"}
                         </div>
@@ -5804,7 +5809,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("stock_check")}
-                                disabled={isQuickSaving || isKegReplacing}
+                                disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                 style={{
                                     ...ui.subButton,
                                     opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -5831,7 +5836,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             <button
                                 type="button"
                                 onClick={openQuickPurchaseConfirm}
-                                disabled={isQuickSaving || isKegReplacing}
+                                disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                 style={{
                                     ...ui.subButton,
                                     opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -5858,7 +5863,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             <button
                                 type="button"
                                 onClick={() => handleQuickSaveConfirm("service")}
-                                disabled={isQuickSaving || isKegReplacing}
+                                disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                 style={{
                                     ...ui.subButton,
                                     opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -5885,7 +5890,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                             <button
                                 type="button"
                                 onClick={() => setQuickSaveReason("other")}
-                                disabled={isQuickSaving || isKegReplacing}
+                                disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                 style={{
                                     ...ui.subButton,
                                     opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -5922,7 +5927,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("other")}
-                                    disabled={isQuickSaving || isKegReplacing}
+                                    disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                     style={{
                                         ...ui.button,
                                         opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -6076,7 +6081,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                                 <button
                                     type="button"
                                     onClick={() => handleQuickSaveConfirm("purchase")}
-                                    disabled={isQuickSaving || isKegReplacing}
+                                    disabled={isQuickSaving || isKegReplacing || !!quickSaveStatus}
                                     style={{
                                         ...ui.button,
                                         opacity: isQuickSaving || isKegReplacing ? 0.6 : 1,
@@ -6096,7 +6101,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                         <button
                             type="button"
                             onClick={closeQuickSaveModal}
-                            disabled={isKegReplacing}
+                            disabled={isKegReplacing || isQuickSaving || !!quickSaveStatus}
                             style={{
                                 ...ui.subButton,
                                 marginTop: 4,
@@ -6106,6 +6111,7 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                         >
                             {c.close}
                         </button>
+                        </fieldset>
                     </div>
                 </div>
             )}

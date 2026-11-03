@@ -14,7 +14,7 @@ try {
  for (const lang of ['ko','vi']) for (const mobile of [false,true]) {
   const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1280,height:900},isMobile:mobile,hasTouch:mobile});
   const page=await context.newPage();page.setDefaultTimeout(6000);const writes=[];const reads=[];let missing=true,fail=true;let errorCode=null,errorDetails={},codeOnly=false;let accept=false;const confirmations=[],alerts=[];
-  const gates=new Map();
+  const gates=new Map();let failureMode=null,statusUnavailable=false;const audits=[];
   const hold=path=>{let release;const promise=new Promise(resolve=>{release=resolve;});gates.set(path,promise);return ()=>{gates.delete(path);release();};};
   const releaseCalendar=hold('/api/inventory/snapshot/list');
   const releaseMovements=hold('/api/inventory/logs');
@@ -22,25 +22,34 @@ try {
   const user={id:1,name:'QA',role:'owner',part:'kitchen',language:lang};
   const item={id:1,item_name:lang==='ko'?'Oil':'',item_name_vi:lang==='ko'?'':'Dau',part:'kitchen',category:'Food',category_vi:'Food',quantity:2,unit:'bottle',purchase_price:lang==='vi'&&mobile?30000.5:30000,supplier:'QA',supplier_partner_id:10,image_path:'qa.png',code:'QA',is_active:true,updated_at:'2026-10-10T03:00:00.000Z',low_stock_threshold:1,low_stock_enabled:false,package_content_quantity:null,package_content_unit:null};
   const log={id:100,item_id:1,item_name:'Oil',item_name_vi:'Dau',part:'kitchen',category:'Food',category_vi:'Food',change_quantity:2,prev_quantity:0,new_quantity:2,unit:'bottle',code:'QA',reason:'purchase',new_purchase_price:item.purchase_price,new_supplier:'QA',created_at:'2026-10-10T03:00:00Z'};
+  const commit=body=>{Object.assign(item,body.payload);item.updated_at=new Date().toISOString();audits.unshift({...log,id:14768+audits.length,source_actor_user_id:1,source:'quick_save',reason:body.reason,prev_quantity:body.expectedQuantity,new_quantity:body.payload.quantity,change_quantity:Math.round((body.payload.quantity-body.expectedQuantity)*1000)/1000,new_supplier:body.payload.supplier,purchase_supplier_partner_id:body.payload.supplierPartnerId,new_purchase_price:body.payload.purchase_price,new_note:body.payload.note,created_at:item.updated_at,billed_amount_mode:body.purchaseBilledAmount?.mode??'auto',billed_amount:body.purchaseBilledAmount?.amount??null});};
   await page.addInitScript(user=>localStorage.setItem('baba_user',JSON.stringify(user)),user);
   await page.route('**/storage/v1/object/public/**',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9S8AAAAASUVORK5CYII=','base64')}));
   await page.route('**/api/**',async route=>{
    const req=route.request(),url=new URL(req.url());reads.push(url.pathname+url.search);
-   if(gates.has(url.pathname))await gates.get(url.pathname);
+   if(gates.has(url.pathname)&&req.method()==='GET')await gates.get(url.pathname);
    let json={ok:true,data:[],items:[]};let status=200;
    if(url.pathname.endsWith('/photo')) {item.image_path='qa-uploaded.png';item.updated_at=new Date().toISOString();json={ok:true,data:{image_path:item.image_path,updated_at:item.updated_at}};}
    else if(req.method()==='PATCH'){
     const body=req.postDataJSON();writes.push(body);
     await new Promise(resolve=>setTimeout(resolve,100));
-    if(fail){status=409;json={ok:false,error:'INVENTORY_CONFLICT',message:'Item changed. Reload before saving.'};}
+    if(failureMode){
+     if(['committed500','lost','timeout'].includes(failureMode))commit(body);
+     if(failureMode==='lost'||failureMode==='timeout'){await route.abort(failureMode==='lost'?'failed':'timedout');return;}
+     status=500;json={ok:false,error:failureMode==='rollback'?'inventory_save_timeout':'inventory_request_failed',writeState:failureMode==='rollback'?'not_saved':'unknown'};
+    }
+    else if(fail){status=409;json={ok:false,error:'INVENTORY_CONFLICT',message:'Item changed. Reload before saving.'};}
     else if(errorCode){status=409;json={ok:false,...errorDetails,...(codeOnly?{code:errorCode}:{error:errorCode})};}
-    else {Object.assign(item,body.payload);missing=!item.item_name?.trim()||!item.item_name_vi?.trim();item.updated_at=new Date().toISOString();json={ok:true,mode:body.mode,...(body.reason==='purchase'?{ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:101}}:{})};}
+    else {commit(body);missing=!item.item_name?.trim()||!item.item_name_vi?.trim();json={ok:true,mode:body.mode,...(body.reason==='purchase'?{ledgerSync:{status:'synced',code:'REBOOKED',inventoryLogId:101}}:{})};}
    }
    else if(url.pathname==='/api/session')json={authenticated:true,user};
    else if(url.pathname==='/api/inventory/snapshot/list')json={ok:true,batches:[{id:10,snapshot_date:'2026-10-03'}],currentBusinessDate:'2026-10-10',purchaseDateMap:{'2026-10-10':true}};
    else if(url.pathname==='/api/inventory/snapshot/name-sync')json={ok:true,canSync:true,dailySyncItems:[],languageMissingItems:missing?[{itemId:1,currentItemName:lang==='ko'?'Oil':null,currentItemNameVi:lang==='ko'?null:'Dau',missingLanguages:[lang==='ko'?'vi':'ko'],registeredAt:'2026-10-03T03:00:00Z',lastUpdatedAt:item.updated_at}]:[]};
    else if(url.pathname==='/api/inventory/logs')json={ok:true,data:projectDailyEffectivePurchases([log,{...log,id:12407,item_id:613,item_name:'Canceled oil',item_name_vi:'Canceled oil',is_active:false}],[{...log,id:12883,change_quantity:-2,correction_of_inventory_log_id:12407}])};
-   else if(url.pathname==='/api/inventory/items')json={ok:true,data:[item],supplierPartners:[{id:10,name:"QA"}],supplierAliases:[]};
+   else if(url.pathname==='/api/inventory/items'){
+    if(url.searchParams.get('saveCheck')==='true'){json={ok:true,data:[item],auditLogs:audits,actorId:1};if(statusUnavailable){status=500;json={ok:false};}}
+    else json={ok:true,data:[item],supplierPartners:[{id:10,name:"QA"}],supplierAliases:[]};
+   }
    else if(url.pathname==='/api/inventory/items/1/logs')json={ok:true,data:[log]};
    else if(url.pathname==='/api/inventory/bootstrap-stream') { await route.fulfill({contentType:'application/x-ndjson',body:[{type:'items',items:[item],supplierPartners:[{id:10,name:"QA"}],supplierAliases:[]},{type:'enrichment',statusMap:{},kegProgressMap:{},activeKegTrackingItemIds:[]},{type:'complete',timing:{}}].map(row=>JSON.stringify(row)).join('\n')+'\n'});return; }
    else if(url.pathname==='/api/inventory/snapshot/10')json={ok:true,items:[{...item,id:200,item_id:1,batch_id:10,change_quantity:2,total_purchase_price:2*item.purchase_price}]};
@@ -63,7 +72,7 @@ try {
   const before=writes.length;accept=false;await save().click();await page.waitForTimeout(150);assert.equal(writes.length,before);assert.equal(item.quantity,5);assert.equal(confirmations.at(-1),lang==='ko'?'오늘 입고된 수량을 정정하시겠습니까?':'Bạn có muốn điều chỉnh số lượng hàng đã nhập hôm nay không?');
   accept=true;
   const purchasePanel=delta.locator('..').locator('..');await purchasePanel.locator('select').selectOption('__custom__');
-  await purchasePanel.locator('input[type=text]').first().fill('QA draft supplier');await purchasePanel.locator('input[inputmode=numeric]').fill('123456');
+  await purchasePanel.locator('input[type=text]').first().fill('QA draft supplier');await purchasePanel.locator('input[inputmode=numeric]').first().fill('123456');
   const errors=[
     ['purchase_correction_ambiguous',{candidateCount:3,candidateCountExact:true,blockReason:'multiple_candidates'}],
     ['purchase_correction_root_not_found',{}],['purchase_correction_exceeds_purchase',{}],
@@ -78,7 +87,7 @@ try {
     errorCode=code;errorDetails=details;codeOnly=onlyCode;const priorWrites=writes.length,priorConfirm=confirmations.length,priorAlerts=alerts.length,priorReads=readCount();
     const shown=page.waitForEvent('dialog',d=>d.type()==='alert');await save().evaluate(button=>{button.click();button.click();});await shown;
     assert.equal(alerts.at(-1),inventoryPurchaseErrorMessage(code,lang,details)??fallback);assert.equal(writes.length,priorWrites+1);assert.equal(confirmations.length,priorConfirm+1);assert.equal(alerts.length,priorAlerts+1);assert.equal(readCount(),priorReads);
-    assert.equal(item.quantity,5);assert.equal(await page.locator('input[type=number]').first().inputValue(),'2');assert.equal(await purchasePanel.locator('input[type=text]').first().inputValue(),'QA draft supplier');assert.equal(await purchasePanel.locator('input[inputmode=numeric]').inputValue(),'123,456');
+    assert.equal(item.quantity,5);assert.equal(await page.locator('input[type=number]').first().inputValue(),'2');assert.equal(await purchasePanel.locator('input[type=text]').first().inputValue(),'QA draft supplier');assert.equal(await purchasePanel.locator('input[inputmode=numeric]').first().inputValue(),'123,456');
     assert.equal(await save().count(),1);assert.equal(await page.getByRole('region',{name:lang==='ko'?'원입고 수량 정정':'Sửa lô nhập gốc'}).count(),0);
   }
   errorDetails={};codeOnly=false;
@@ -94,6 +103,53 @@ try {
   errorCode=null;errorDetails={};codeOnly=false;await reason().click();await page.waitForTimeout(300);assert.equal(writes.at(-1).autoSelectPurchaseRoot,true);assert.equal(writes.at(-1).selectedPurchaseRootId,undefined);assert.equal(item.quantity,1.5);assert.equal(writes.at(-1).source,'edit_form');
   console.log('PASS 14 error cases for both forms; exact alerts; retained quantity/supplier/price; one request; no failure refetch',lang,mobile?'mobile':'desktop');
   console.log('PASS edit form simple confirmation and automatic receipt mode',lang,mobile?'mobile':'desktop');
+  // Lost responses are checked with read-only item/audit requests. No replay.
+  await page.goto(base+'/inventory?itemId=1');
+  for(const mode of ['committed500','lost','timeout']){
+   await open(String(item.quantity+1));failureMode=mode;const before=writes.length;
+   await save().evaluate(button=>{button.click();button.click();});
+   await page.getByTestId('quick-purchase-delta').waitFor({state:'hidden'});
+   assert.equal(writes.length,before+1);assert.ok(reads.some(url=>url.includes('saveCheck=true')));
+   failureMode=null;
+  }
+  // No audit proof / failed lookup: keep the supplier, amount and quantity draft,
+  // disable saves, and let subsequent clicks perform status reads only.
+  await open(String(item.quantity+1));failureMode='unknown';statusUnavailable=true;
+  const panel=page.getByTestId('quick-purchase-delta').locator('..').locator('..');
+  const priorWrites=writes.length;await save().click();await page.getByTestId('quick-save-status').waitFor();
+  const check=page.getByRole('button',{name:lang==='ko'?'저장 상태 다시 확인':'Kiểm tra trạng thái lưu',exact:true});
+  await check.waitFor({state:'visible'});await page.waitForFunction(label=>{const button=[...document.querySelectorAll('button')].find(b=>b.textContent===label);return button&&!button.disabled;},lang==='ko'?'저장 상태 다시 확인':'Kiểm tra trạng thái lưu');
+  assert.equal(await save().isDisabled(),true);assert.equal(writes.length,priorWrites+1);
+  const retained=await panel.locator('input').evaluateAll(inputs=>inputs.map(input=>input.value));
+  await check.evaluate(button=>{button.click();button.click();});await page.waitForTimeout(150);assert.equal(writes.length,priorWrites+1);assert.deepEqual(await panel.locator('input').evaluateAll(inputs=>inputs.map(input=>input.value)),retained);
+  statusUnavailable=false;commit(writes.at(-1));await check.click();await page.getByTestId('quick-purchase-delta').waitFor({state:'hidden'});assert.equal(writes.length,priorWrites+1);failureMode=null;
+  // PostgreSQL explicitly rolled back and current version is unchanged: retain
+  // the draft but release it for a separate, manual save.
+  await open(String(item.quantity+1));failureMode='rollback';const rollbackWrites=writes.length,priorAlerts=alerts.length;
+  const rollbackAlert=page.waitForEvent('dialog',d=>d.type()==='alert');await save().click();await rollbackAlert;
+  assert.equal(alerts.length,priorAlerts+1);
+  assert.equal(writes.length,rollbackWrites+1);assert.equal(await save().isDisabled(),false);failureMode=null;
+  await save().click();await page.getByTestId('quick-purchase-delta').waitFor({state:'hidden'});assert.equal(writes.length,rollbackWrites+2);
+  // A slow follow-up one-item read must not keep the successful save locked.
+  await open(String(item.quantity+1));const release=hold('/api/inventory/items');const started=Date.now();
+  await save().click();await page.getByTestId('quick-purchase-delta').waitFor({state:'hidden'});const completionMs=Date.now()-started;assert.ok(completionMs<2000,'save completion must not await refresh');release();
+  console.log('PASS recovery: HTTP 500, lost response, timeout, unresolved/readonly retry, rollback/manual retry; completionMs with blocked refresh',lang,mobile,completionMs);
+  // Category-only edits with the current language name absent preserve the
+  // other language and omit unchanged economic fields instead of copying names.
+  item[lang==='ko'?'item_name':'item_name_vi']='';item[lang==='ko'?'item_name_vi':'item_name']='Other language only';
+  const commercial={quantity:item.quantity,purchase_price:item.purchase_price,supplier:item.supplier,supplier_partner_id:item.supplier_partner_id,unit:item.unit};
+  await page.goto(base+'/inventory?itemId=1&mode=edit');const categoryForm=page.getByTestId('inventory-edit-form');await categoryForm.waitFor();
+  const category=categoryForm.locator('select').first();const option=await category.locator('option').nth(1).getAttribute('value');await category.selectOption(option);
+  await categoryForm.getByRole('button',{name:lang==='ko'?'저장':'Lưu',exact:true}).click();
+  await page.getByRole('button').filter({hasText:lang==='ko'?'기타':'Khac'}).last().click();await page.waitForTimeout(250);
+  for(const field of ['quantity','purchase_price','supplier','supplierPartnerId','unit'])assert.equal(Object.hasOwn(writes.at(-1).payload,field),false,field);
+  for(const [key,value] of Object.entries(commercial))assert.equal(item[key],value);
+  assert.equal(item[lang==='ko'?'item_name':'item_name_vi'],'');assert.equal(item[lang==='ko'?'item_name_vi':'item_name'],'Other language only');
+  console.log('PASS category-only edit with one missing translation, no commercial changes or copied names',lang,mobile);
+  await page.goto(base+'/inventory?itemId=1&mode=edit');const invalidForm=page.getByTestId('inventory-edit-form');await invalidForm.waitFor();
+  for(const name of ['ko','vi'])await invalidForm.locator(`input[data-name-language="${name}"]`).fill('');
+  const writesBeforeInvalid=writes.length,requiredAlert=page.waitForEvent('dialog',d=>d.type()==='alert');
+  await invalidForm.getByRole('button',{name:lang==='ko'?'저장':'Lưu',exact:true}).click();await requiredAlert;assert.equal(writes.length,writesBeforeInvalid,'both names absent must still be rejected');
   await context.close();
  }
 }finally{await browser.close();}

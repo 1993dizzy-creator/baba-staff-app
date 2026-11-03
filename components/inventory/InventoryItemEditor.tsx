@@ -415,7 +415,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
             const normalizedUnit = normalizeText(unit);
             const normalizedNote = normalizeText(note);
             const normalizedCode = normalizeText(code);
-            if (!isInventoryPart(part) || !normalizedItemName || !quantity || !normalizedUnit) {
+            if (!isInventoryPart(part) || (!normalizedItemName && !normalizeText(otherItemName)) || !quantity || !normalizedUnit) {
                 alert(t.requiredFields);
                 return;
             }
@@ -469,8 +469,8 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                 normalizeText(targetItem.note || "") !== normalizedNote ||
                 (targetItem.part || "") !== part ||
                 parseDecimal(targetItem.quantity ?? 0) !== nextQuantity ||
-                (targetItem.purchase_price ?? null) !== nextPurchasePrice ||
-                normalizeText(targetItem.supplier || "") !== normalizedSupplier ||
+                (targetItem.purchase_price == null ? null : Number(targetItem.purchase_price)) !== nextPurchasePrice ||
+                normalizeText(targetItem.supplier_partner_name || targetItem.supplier || "") !== normalizedSupplier ||
                 (targetItem.supplier_partner_id ?? null) !== supplierPartnerId ||
                 normalizeText(targetItem.code || "") !== normalizedCode ||
                 (targetItem.package_content_quantity === null ||
@@ -524,6 +524,16 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                     updated_at: new Date().toISOString(),
                 };
             payload[lang === "ko" ? "item_name_vi" : "item_name"] = normalizeText(otherItemName);
+            // A classification/name edit must not rewrite stock or commercial
+            // values merely because the form displays normalized text/aliases.
+            if (parseDecimal(targetItem.quantity ?? 0) === nextQuantity) delete payload.quantity;
+            if ((targetItem.purchase_price == null ? null : Number(targetItem.purchase_price)) === nextPurchasePrice) delete payload.purchase_price;
+            if (normalizeText(targetItem.unit || "") === normalizedUnit) delete payload.unit;
+            if (normalizeText(targetItem.supplier_partner_name || targetItem.supplier || "") === normalizedSupplier &&
+                (targetItem.supplier_partner_id ?? null) === supplierPartnerId) {
+                delete payload.supplier;
+                delete payload.supplierPartnerId;
+            }
             setEditBilledDraft(AUTO_BILLED_AMOUNT);
             setEditFormPendingSave({
                 id: editingId,
