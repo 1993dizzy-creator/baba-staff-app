@@ -89,6 +89,15 @@ export default function PartTimeExtraWorkSection({ employee, month, lang, refres
     finally { setBusyId(null); }
   }
 
+  const policyHelp = vi ? "Từ 01/10/2026, nhân viên theo giờ/ngày được tính thời gian trước ca sau giờ mở cửa và sau ca đến giờ đóng cửa. Tổng mỗi ngày từ 30 phút cần quản lý duyệt; chỉ cộng phụ cấp sau khi duyệt." : "2026-10-01부터 시급·일급 직원은 오픈 이후 조기근무와 마감 이내 늦은 퇴근을 합산합니다. 하루 합계 30분 이상은 관리자 검토 대상이며 승인 후에만 수당에 합산됩니다.";
+  if (rows.length === 0 && !hasUnresolved && !error && employee.amounts.partTimeExtraWorkAmount === 0) {
+    return <section style={s.section} aria-label={vi ? "Làm thêm giờ" : "추가근무"}>
+      <details style={s.help}><summary style={s.emptySummary}><span>⏱️ {vi ? "Làm thêm giờ" : "추가근무"}</span><b>0{vi ? " phút" : "분"} · {formatVnd(0)} <span aria-hidden="true">ⓘ</span></b></summary>
+        <small>{paid ? (vi ? "Đã trả lương nên không thể thay đổi quyết định." : "지급 완료 직원은 결정을 변경할 수 없습니다.") : policyHelp}</small>
+      </details>
+    </section>;
+  }
+
   return <section style={s.section} aria-label={vi ? "Làm thêm giờ" : "추가근무"}>
     <h4 style={s.title}>⏱️ {vi ? "Làm thêm giờ" : "추가근무"}</h4>
     <div style={s.summary}>
@@ -135,8 +144,10 @@ export default function PartTimeExtraWorkSection({ employee, month, lang, refres
       </div>}
     </article>})}</div>}
     </>}
-    {!paid && <small style={s.help}>{vi ? "Từ 01/10/2026, nhân viên theo giờ/ngày được tính thời gian trước ca sau giờ mở cửa và sau ca đến giờ đóng cửa. Tổng mỗi ngày từ 30 phút cần quản lý duyệt; chỉ cộng phụ cấp sau khi duyệt." : "2026-10-01부터 시급·일급 직원은 오픈 이후 조기근무와 마감 이내 늦은 퇴근을 합산합니다. 하루 합계 30분 이상은 관리자 검토 대상이며 승인 후에만 수당에 합산됩니다."}</small>}
-    {paid && <small style={s.help}>{vi ? "Đã trả lương nên không thể thay đổi quyết định." : "지급 완료 직원은 결정을 변경할 수 없습니다."}</small>}
+    <details style={s.help}><summary style={s.toggle}>{vi ? "Cách tính và lưu ý" : "산정 기준·지급 안내"}</summary>
+      {!paid && <small>{policyHelp}</small>}
+      {paid && <small>{vi ? "Đã trả lương nên không thể thay đổi quyết định." : "지급 완료 직원은 결정을 변경할 수 없습니다."}</small>}
+    </details>
     {error && <p role="alert" style={s.error}>{error}</p>}
   </section>;
 }
@@ -152,6 +163,7 @@ function Status({ status, vi }: { status: "review_required" | "stale" | "approve
 }
 
 const s = {
+  emptySummary: { display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:8, minHeight:28, fontSize:12, cursor:"pointer", color:"#475569" },
   section: { display: "grid", gap: 7, paddingTop: 11, borderTop: "1px solid #f1f5f9" },
   title: { margin: 0, fontSize: 12, color: "#475569" }, summary: { display: "grid", gap: 4, padding: 8, borderRadius: 8, background: "#eff6ff" },
   metric: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11 }, warning: { margin: 0, padding: 8, borderRadius: 8, background: "#fff7ed", color: "#9a3412", lineHeight: 1.4 },

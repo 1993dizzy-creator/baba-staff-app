@@ -48,6 +48,7 @@ export function CompensationCard({
   toggle,
   lang,
   month,
+  asOfDate,
   future,
   monthClosed,
   refresh,
@@ -59,6 +60,7 @@ export function CompensationCard({
   toggle: () => void;
   lang: "ko" | "vi";
   month: string;
+  asOfDate?: string;
   future: boolean;
   monthClosed: boolean;
   refresh: () => Promise<boolean>;
@@ -185,6 +187,7 @@ export function CompensationCard({
               </DetailSection>
 
               <DetailSection icon="📅" title={detailText.monthApplication}>
+                <small style={s.help}>{lang === "vi" ? "Ngày chốt tính" : "계산 기준일"} · {asOfDate ?? "—"}</small>
                 <Row label={detailText.recognizedWork} value={formatRecognizedWork(employee.recognizedMinutes, employee.recognizedWorkdays, lang)} wrapValue />
                 <Row
                   label={t.accruedWork}
@@ -207,35 +210,22 @@ export function CompensationCard({
                   onClick={() => setModal("penalty")}
                   disabled={employee.payment?.payment_status === "paid"}
                 />
-                <Row label={t.preInsurancePayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight={employee.insuranceEnrolled || employee.amounts.advanceAmount > 0 ? "subtotal" : "net"} />
-                {!employee.insuranceEnrolled && employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
               </DetailSection>
 
               {employee.contract.calculationBasis !== "fixed_monthly" && <PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} />}
 
-              {(employee.insuranceEnrolled || employee.amounts.advanceAmount > 0) && <DetailSection icon="🛡️" title={detailText.insuranceAndNet}>
-                {employee.insuranceEnrolled && <><Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} />
-                <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} /></>}
+              <DetailSection icon="🛡️" title={lang === "vi" ? "Tính thực nhận nhân viên" : "직원 지급 계산"}>
+                <Row label={t.preInsurancePayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight="subtotal" />
+                {(employee.insuranceEnrolled || employee.amounts.employeeInsuranceDeductionAmount > 0) && <Row label={t.employeeInsuranceDeduction} value={formatSignedVnd(employee.amounts.employeeInsuranceDeductionAmount, "-")} />}
                 {employee.amounts.advanceAmount > 0 && <Row label={t.advance} value={formatSignedVnd(employee.amounts.advanceAmount, "-")} />}
-                <Row
-                  label={t.netPayout}
-                  value={employee.amounts.currentAmount === null ? t.settingsRequired : formatVnd(employee.amounts.netPayoutAmount)}
-                  highlight="net"
-                />
-                {employee.insuranceEnrolled && <Row label={t.employerInsurance} value={formatVnd(employee.amounts.employerInsuranceAmount)} muted />}
-                {employee.amounts.employerInsuranceAmount > 0 && <small style={s.help}>{t.employerInsuranceHelp}</small>}
-                {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
-              </DetailSection>}
+                {employee.amounts.otherDeductionAmount > 0 && <details style={s.taxDetails}><summary style={s.taxDetailsSummary}>{lang === "vi" ? "Khoản trừ khác đã tính trong tổng trên" : "지급대상액에 이미 반영된 기타 공제"}</summary><Row label={t.otherDeduction} value={formatSignedVnd(employee.amounts.otherDeductionAmount, "-")} /></details>}
               {(employee.tax.status === "requires_review" || employee.tax.taxMode === "resident_progressive") && <DetailSection icon="🧾" title={taxText.title}>
                 {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}>{taxText.settings}</Link></> : <>
-                  <div style={s.taxSummary}>
-                    <span>{taxText.taxableIncome} <b>{formatVnd(employee.tax.taxableIncomeAmount)}</b></span>
-                    <span aria-hidden="true">·</span>
-                    <span>{employee.tax.taxBurdenMode === "company_bears" ? taxText.company : taxText.employee} <b>{formatVnd(employee.tax.taxBurdenMode === "company_bears" ? employee.tax.companyPitAmount : employee.tax.employeePitDeductionAmount)}</b></span>
-                  </div>
+                  <Row label={employee.tax.taxBurdenMode === "company_bears" ? (lang === "vi" ? "Công ty chịu · Nhân viên khấu trừ" : "회사 부담 적용 · 직원 공제") : (lang === "vi" ? "Áp dụng · Nhân viên khấu trừ" : "적용 · 직원 공제")} value={formatVnd(employee.tax.employeePitDeductionAmount)} />
                   <details style={s.taxDetails}>
                     <summary style={s.taxDetailsSummary}>{taxText.details}</summary>
                     <div style={s.taxDetailsRows}>
+                      <Row label={taxText.taxableIncome} value={formatVnd(employee.tax.taxableIncomeAmount)} />
                       <Row label={taxText.dependent} value={String(employee.tax.dependentCount)} />
                       <Row label={taxText.personal} value={formatVnd(employee.tax.personalDeductionAmount)} />
                       <Row label={taxText.dependentDeduction} value={formatVnd(employee.tax.dependentDeductionAmount)} />
@@ -247,7 +237,16 @@ export function CompensationCard({
                   </details>
                 </>}
               </DetailSection>}
-              {!future && <><button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Chỉ có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월이 종료된 후 지급할 수 있습니다."}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
+                <Row label={t.netPayout} value={employee.amounts.currentAmount === null ? t.settingsRequired : formatVnd(employee.amounts.netPayoutAmount)} highlight="net" />
+                {employee.insuranceEnrolled && <details style={s.taxDetails}><summary style={s.taxDetailsSummary}>{t.insuranceBase}</summary><Row label={t.insuranceBase} value={formatVnd(employee.amounts.insuranceBaseAmount)} /></details>}
+                {employee.unresolvedAttendanceCount > 0 && <Row label={t.unresolvedAttendance} value={`${employee.unresolvedAttendanceCount}${t.days}`} />}
+              </DetailSection>
+              {(employee.amounts.employerInsuranceAmount > 0 || employee.amounts.companyPitAmount > 0) && <DetailSection icon="🏢" title={lang === "vi" ? "Chi phí riêng của công ty" : "회사 별도 비용"}>
+                {employee.amounts.employerInsuranceAmount > 0 && <Row label={t.employerInsurance} value={formatVnd(employee.amounts.employerInsuranceAmount)} muted />}
+                {employee.amounts.companyPitAmount > 0 && <Row label={t.companyPit} value={formatVnd(employee.amounts.companyPitAmount)} muted />}
+                <small style={s.help}>{lang === "vi" ? "Không khấu trừ vào thực nhận nhân viên." : "직원 실수령액에서 차감하지 않습니다."}</small>
+              </DetailSection>}
+              {!future && <>{(monthClosed || employee.payment?.payment_status === "paid") && <button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>}{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월 종료 후 지급 가능"}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
             </>
           )}
         </div>
@@ -955,7 +954,7 @@ const s = {
   },
   detail: {
     display: "grid",
-    gap: 12,
+    gap: 8,
     marginTop: 6,
     paddingTop: 7,
     borderTop: "1px solid #e5e7eb",
@@ -968,37 +967,36 @@ const s = {
     alignItems: "baseline",
     minWidth: 0,
   },
-  rowLabel: { minWidth: 0, color: "#475569" },
-  rowAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
-  wrappingAmount: { minWidth: 0, whiteSpace: "normal", lineHeight: 1.35 },
-  highlightRow: { marginTop: 2, padding: "7px 8px", borderRadius: 8, background: "#fff" },
-  highlightAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontSize: 14, fontWeight: 900, fontVariantNumeric: "tabular-nums" },
-  combinedSummary: { display: "grid", gap: 5 },
+  rowLabel: { minWidth: 0, color: "#475569", fontSize:12, lineHeight:1.35, overflowWrap:"anywhere" },
+  rowAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontSize:12, fontVariantNumeric: "tabular-nums" },
+  wrappingAmount: { minWidth: 0, flexShrink:1, whiteSpace: "normal", lineHeight: 1.35 },
+  highlightRow: { marginTop: 2, padding: "5px 6px", borderRadius: 8, background: "#fff" },
+  highlightAmount: { flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontSize: 13, fontWeight: 900, fontVariantNumeric: "tabular-nums" },
+  combinedSummary: { display: "grid", gap: 3 },
   monthlyEquivalent: { display: "grid", gap: 2, paddingTop: 5, borderTop: "1px solid #e2e8f0" },
   monthlyEquivalentLabel: { minWidth: 0, color: "#64748b", fontWeight: 700 },
   monthlyEquivalentAmount: { flexShrink: 0, color: "#334155", textAlign: "right", whiteSpace: "nowrap", fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums" },
   monthlyEquivalentHelp: { color: "#94a3b8", fontSize: 10, lineHeight: 1.3 },
   subtotalRow: { marginTop: 4, background: "#fff", boxShadow: "inset 0 1px #e2e8f0" },
-  subtotalAmount: { fontSize: 13 },
+  subtotalAmount: { fontSize: 12 },
   netHighlightRow: { background: "#eff6ff", boxShadow: "inset 0 1px #bfdbfe" },
   netHighlightAmount: { color: "#1d4ed8", fontSize: 15 },
   mutedRow: { background: "#f8fafc", padding: "6px 8px", borderRadius: 7 },
   mutedLabel: { color: "#64748b" },
   mutedAmount: { color: "#475569", fontWeight: 800 },
-  detailSection: { display: "grid", gap: 6, paddingTop: 11, borderTop: "1px solid #f1f5f9" },
+  detailSection: { display: "grid", gap: 4, paddingTop: 8, borderTop: "1px solid #f1f5f9" },
   firstDetailSection: { paddingTop: 0, borderTop: 0 },
   sectionTitle: { margin: 0, display: "flex", alignItems: "center", gap: 5, fontSize: 12, lineHeight: 1.25, fontWeight: 900, color: "#475569", letterSpacing: ".01em" },
   sectionIcon: { width: 14, fontSize: 12, lineHeight: 1, textAlign: "center", opacity: .82 },
-  sectionRows: { width: "100%", boxSizing: "border-box", display: "grid", gap: 6, paddingLeft: 10 },
-  taxSummary: { display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "3px 6px", padding: "7px 8px", borderRadius: 8, background: "#fff", color: "#334155", fontSize: 11.5, lineHeight: 1.35 },
+  sectionRows: { width: "100%", minWidth:0, boxSizing: "border-box", display: "grid", gap: 4 },
   taxDetails: { fontSize: 10.5, color: "#64748b" },
   taxDetailsSummary: { cursor: "pointer", fontWeight: 700 },
   taxDetailsRows: { display: "grid", gap: 5, marginTop: 6, padding: "7px 8px", borderRadius: 8, background: "#fff" },
-  adjustmentButton: { width: "100%", minWidth: 0, minHeight: 36, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 8, textAlign: "left", cursor: "pointer" },
-  incentiveButton: { border: "1px solid #dcfce7", background: "#f7fcf8", color: "#166534" },
-  penaltyButton: { border: "1px solid #fee2e2", background: "#fff8f8", color: "#991b1b" },
+  adjustmentButton: { width: "100%", minWidth: 0, minHeight: 34, display: "grid", gridTemplateColumns: "minmax(0,1fr) auto 9px", alignItems: "center", gap: 6, padding: "4px 0", fontSize:12, textAlign: "left", cursor: "pointer" },
+  incentiveButton: { border:0, borderBottom:"1px solid #e5e7eb", background: "transparent", color: "#475569" },
+  penaltyButton: { border:0, borderBottom:"1px solid #e5e7eb", background: "transparent", color: "#475569" },
   disabledButton: { opacity:.55, cursor:"not-allowed" },
-  adjustmentCopy: { minWidth: 0, display: "grid", gap: 1 },
+  adjustmentCopy: { minWidth: 0, display: "flex", flexWrap:"wrap", alignItems:"baseline", gap: "1px 4px" },
   adjustmentHint: { fontSize: 10, fontWeight: 600, opacity: .72 },
   adjustmentValue: { fontWeight: 800, whiteSpace: "nowrap", textAlign: "right", fontVariantNumeric: "tabular-nums" },
   chevron: { fontSize: 15, lineHeight: 1, fontWeight: 900 },
