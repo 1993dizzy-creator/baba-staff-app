@@ -14,7 +14,6 @@ import dynamic from "next/dynamic";
 const InventoryEditor = dynamic(() => import("@/components/inventory/InventoryItemEditor"), { ssr: false, loading: InventoryEditorLoading });
 function InventoryEditorLoading() { const { lang } = useLanguage(); return <InventoryLoadingCard lang={lang} minHeight="min(512px, 52dvh)" testId="inventory-editor-loading" />; }
 import Container from "@/components/Container";
-import MonthlyNameSyncPanel from "@/components/inventory/MonthlyNameSyncPanel";
 import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import editorStyles from "@/components/inventory/InventoryEditorModal.module.css";
 import { ui } from "@/lib/styles/ui";
@@ -414,12 +413,7 @@ export default function InventorySnapshotsPage() {
     } | null>(null);
     const [languageMissingItems, setLanguageMissingItems] = useState<SnapshotLanguageMissingItem[]>([]);
     const [languageMissingExpanded, setLanguageMissingExpanded] = useState(false);
-    // The per-date name-sync read now only feeds the language list; sync items show in the monthly panel.
-    const [nameSyncLoading, setNameSyncLoading] = useState(false);
-    // Bumped after an item save so the monthly sync list re-reads its month.
-    const [monthlySyncReloadKey, setMonthlySyncReloadKey] = useState(0);
-    const nameSyncRequestSequenceRef = useRef(0);
-    const nameSyncBusinessDateRef = useRef("");
+    const languageRequestSequenceRef = useRef(0);
     const languageMissingT = inventoryLanguageMissingText[lang];
 
     const getLanguageMissingItemLabel = (item: SnapshotLanguageMissingItem) =>
@@ -802,14 +796,13 @@ export default function InventorySnapshotsPage() {
         }
     };
 
-    // The per-date read now only feeds the all-items language list; the monthly panel owns sync rows.
-    const fetchNameSyncIssues = useCallback(async (businessDate: string) => {
-        const requestSequence = ++nameSyncRequestSequenceRef.current;
-        setNameSyncLoading(true);
+    // Language completeness is global and independent of receipt dates.
+    const fetchLanguageMissingItems = useCallback(async () => {
+        const requestSequence = ++languageRequestSequenceRef.current;
 
         try {
             const res = await fetchInventoryApi(
-                `/api/inventory/snapshot/name-sync?businessDate=${encodeURIComponent(businessDate)}`,
+                "/api/inventory/snapshot/name-sync",
                 { cache: "no-store" }
             );
             const json = await res.json() as {
@@ -817,16 +810,12 @@ export default function InventorySnapshotsPage() {
                 languageMissingItems?: SnapshotLanguageMissingItem[];
             };
 
-            if (requestSequence !== nameSyncRequestSequenceRef.current) return;
+            if (requestSequence !== languageRequestSequenceRef.current) return;
             if (!res.ok || !json.ok) return;
 
             setLanguageMissingItems(json.languageMissingItems || []);
         } catch (error) {
-            console.error("[INVENTORY_SNAPSHOT_NAME_SYNC_LOAD_FAILED]", error);
-        } finally {
-            if (requestSequence === nameSyncRequestSequenceRef.current) {
-                setNameSyncLoading(false);
-            }
+            console.error("[INVENTORY_LANGUAGE_MISSING_LOAD_FAILED]", error);
         }
     }, []);
 
@@ -1144,51 +1133,33 @@ export default function InventorySnapshotsPage() {
         return batch?.snapshot_date ?? null;
     }, [viewMode, batchList, selectedBatchId]);
 
-    const nameSyncBusinessDate = viewMode === "snapshot"
+    const selectedContentDate = viewMode === "snapshot"
         ? selectedSnapshotDate || ""
         : activeBusinessDateKey;
-    nameSyncBusinessDateRef.current = nameSyncBusinessDate;
-    const dateRequestsLoading = loadingMovements || nameSyncLoading ||
+    const dateRequestsLoading = loadingMovements ||
         (viewMode === "snapshot" && loadingItems);
     const isDateContentLoading = dateContentTransitioning && dateRequestsLoading;
 
     const beginDateContentTransition = (nextViewMode: "current" | "snapshot") => {
         snapshotItemsRequestSequenceRef.current += 1;
         movementItemsRequestSequenceRef.current += 1;
-        nameSyncRequestSequenceRef.current += 1;
         setSnapshotItems([]);
         setMovementItems([]);
         setLogModalItem(null);
         setLoadingItems(nextViewMode === "snapshot");
         setLoadingMovements(true);
-        setNameSyncLoading(true);
         setDateContentTransitioning(true);
-    };
-
-    // After a monthly-list sync, the open date's rows and language list are re-read when it is that date.
-    const refreshSyncedBusinessDate = async (businessDate: string) => {
-        if (nameSyncBusinessDateRef.current !== businessDate) return;
-        const reloads: Promise<void>[] = [fetchMovementItems(businessDate), fetchNameSyncIssues(businessDate)];
-        if (viewMode === "snapshot" && selectedBatchId) reloads.push(fetchSnapshotItems(selectedBatchId));
-        await Promise.all(reloads);
     };
 
     useEffect(() => {
         setCompletedCancellationsExpanded(false);
         setLanguageMissingExpanded(false);
+    }, [selectedContentDate]);
 
-        if (!nameSyncBusinessDate) {
-            nameSyncRequestSequenceRef.current += 1;
-            setNameSyncLoading(false);
-            return;
-        }
-
-        fetchNameSyncIssues(nameSyncBusinessDate);
-
-        return () => {
-            nameSyncRequestSequenceRef.current += 1;
-        };
-    }, [fetchNameSyncIssues, nameSyncBusinessDate]);
+    useEffect(() => {
+        void fetchLanguageMissingItems();
+        return () => { languageRequestSequenceRef.current += 1; };
+    }, [fetchLanguageMissingItems]);
 
     useEffect(() => {
         if (dateContentTransitioning && !dateRequestsLoading) {
@@ -1197,15 +1168,13 @@ export default function InventorySnapshotsPage() {
     }, [dateContentTransitioning, dateRequestsLoading]);
 
     useEffect(() => {
-        if (!nameSyncBusinessDate) return;
-
         const handleWindowFocus = () => {
-            fetchNameSyncIssues(nameSyncBusinessDate);
+            fetchLanguageMissingItems();
         };
 
         window.addEventListener("focus", handleWindowFocus);
         return () => window.removeEventListener("focus", handleWindowFocus);
-    }, [fetchNameSyncIssues, nameSyncBusinessDate]);
+    }, [fetchLanguageMissingItems]);
 
     useEffect(() => {
         if (viewMode !== "current" || !activeBusinessDateKey) return;
@@ -1730,8 +1699,6 @@ export default function InventorySnapshotsPage() {
                     : "재고 정보는 저장되었습니다. 장부는 아직 완료되지 않아 관리자 확인이 필요합니다.");
             setReceiptEditNotice(ledgerNotice ? { rootId: purchaseEdit.rootId, message: ledgerNotice } : null);
             setPurchaseEdit(null);
-            setMonthlySyncReloadKey((key) => key + 1);
-            void fetchNameSyncIssues(activeBusinessDateKey);
             if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
             else void fetchMovementItems(activeBusinessDateKey);
             if (logModalItem) void fetchItemLogs(logModalItem);
@@ -2655,8 +2622,6 @@ export default function InventorySnapshotsPage() {
                     )}
                 </div>
             )}
-
-            <MonthlyNameSyncPanel month={calendarMonth} lang={lang} reloadKey={monthlySyncReloadKey} onSynced={refreshSyncedBusinessDate} />
 
             {isDateContentLoading ? (
                 <InventoryLoadingCard lang={lang} testId="snapshot-date-content-loading" marginBottom={16} />
@@ -4156,6 +4121,7 @@ export default function InventorySnapshotsPage() {
                             else next[savedItem.id] = { item_name: savedItem.item_name ?? null, item_name_vi: savedItem.item_name_vi ?? null, beforeUpdatedAt: change?.beforeUpdatedAt };
                             return next;
                         });
+                        languageRequestSequenceRef.current += 1;
                         setLanguageMissingItems(previous => previous.flatMap(row => {
                             if (row.itemId !== savedItem.id) return [row];
                             const missingLanguages: ("ko" | "vi")[] = [];
@@ -4167,8 +4133,7 @@ export default function InventorySnapshotsPage() {
                         // Keep the successful master names above any older in-flight
                         // response. Name-only edits need no history/ledger reload.
                         if (change?.namesOnly) return;
-                        setMonthlySyncReloadKey((key) => key + 1);
-                        void fetchNameSyncIssues(activeBusinessDateKey);
+                        void fetchLanguageMissingItems();
                         if (viewMode === "snapshot" && selectedBatchId) void fetchSnapshotItems(selectedBatchId);
                         else void fetchMovementItems(activeBusinessDateKey);
                         if (logModalItem) void fetchItemLogs(logModalItem);

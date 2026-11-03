@@ -5,8 +5,6 @@ import test from "node:test";
 import { buildLedgerEntries } from "../lib/ledger/entries.ts";
 // @ts-expect-error Node's local strip-types test runner requires the extension.
 import { findInventoryLedgerFocus, parseInventoryLedgerFocus } from "../lib/ledger/inventory-entry-focus.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
-import { inventoryLedgerEntryHref } from "../lib/inventory/daily-sync-result.ts";
 
 const snapshot = (id: number, amount: number, category: string) => ({
   inventory_log_id: id, item_id: id === 13561 ? 620 : 621, item_name: `품목${id}`, category, unit: "ea",
@@ -25,14 +23,6 @@ const transactions = [{
 }];
 const partnerDefaults = new Map([[33, { paymentMode: "unspecified" as const, defaultFundAccountId: null, defaultFundAccountName: null }]]);
 const params = (query: string) => new URLSearchParams(query);
-
-test("daily sync shortcut encodes business month, original receipt id and sourceKey", () => {
-  assert.equal(inventoryLedgerEntryHref({ purchaseLogId: 13561, ledgerMonth: "2026-10", sourceKey: "inventory-log:13561" }, "2026-10-19"),
-    "/admin/ledger/entries?month=2026-10&inventoryLogId=13561&sourceKey=inventory-log%3A13561");
-  // Older API responses without a location still resolve from the selected business date.
-  assert.equal(inventoryLedgerEntryHref({ purchaseLogId: 13563 }, "2026-09-30"),
-    "/admin/ledger/entries?month=2026-09&inventoryLogId=13563&sourceKey=inventory-log%3A13563");
-});
 
 test("ledger focus parameters must name the same receipt; malformed links are ignored", () => {
   assert.deepEqual(parseInventoryLedgerFocus(params("month=2026-10&inventoryLogId=13561&sourceKey=inventory-log%3A13561")), { logId: 13561, sourceKey: "inventory-log:13561" });
@@ -53,19 +43,13 @@ test("focus opens the exact pending candidate of 13561/13563 within the shared p
   assert.equal(findInventoryLedgerFocus(entries, { logId: 99999, sourceKey: "inventory-log:99999" }), null);
 });
 
-test("snapshots UI keeps one summary banner with real shortcut links and no separate duplicate warning card", () => {
-  const page = readFileSync("app/(protected)/inventory/snapshots/page.tsx", "utf8");
-  const component = readFileSync("components/inventory/InventoryDailySyncResults.tsx", "utf8");
-  // The 당일 banner is gone; its result links now render once, in the monthly sync panel.
-  const monthlyPanel = readFileSync("components/inventory/MonthlyNameSyncPanel.tsx", "utf8");
-  assert.equal((page.match(/<InventoryDailySyncResults /g) ?? []).length, 0);
-  assert.equal((monthlyPanel.match(/<InventoryDailySyncResults /g) ?? []).length, 1);
-  assert.doesNotMatch(monthlyPanel, /target\.status !== "synced"/);
-  assert.doesNotMatch(page, /target\.status !== "synced"/);
-  assert.doesNotMatch(component, /inventory-daily-sync-results/);
-  assert.match(component, /inventoryLedgerEntryHref\(target, businessDate\)/);
-  assert.match(component, /<Link /);
-  const ledger = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
-  assert.match(ledger, /parseInventoryLedgerFocus\(searchParams\)/);
-  assert.match(ledger, /id=\{`inventory-projection-row-\$\{issue\.inventoryLogId\}`\}/);
+test("Ledger focus and receipt status notices survive sync banner retirement", () => {
+ const page=readFileSync("app/(protected)/inventory/snapshots/page.tsx","utf8");
+ assert.doesNotMatch(page,/MonthlyNameSyncPanel|InventoryDailySyncResults/);
+ assert.match(page,/setReceiptEditNotice/);
+ assert.match(page,/ledgerSyncNotice/);
+ assert.match(page,/장부는 아직 완료되지 않아 관리자 확인이 필요합니다/);
+ const ledger=readFileSync("app/(protected)/admin/ledger/entries/page.tsx","utf8");
+ assert.match(ledger,/parseInventoryLedgerFocus\(searchParams\)/);
+ assert.match(ledger,/inventory-projection-row-/);
 });
