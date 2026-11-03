@@ -18,10 +18,9 @@ import AttendanceBonusProgressBadge from "@/components/attendance/AttendanceBonu
 import { invalidateMonthlyAttendanceSummary, useMonthlyAttendanceSummary } from "@/components/attendance/useMonthlyAttendanceSummary";
 import {
     ATTENDANCE_STATUS_COLORS,
-    getAttendanceDisplayStatus,
-    getDateKeyWeekdayIndex,
-    getRecentAttendanceDateKeys,
+    getVietnamDateKey,
 } from "@/lib/attendance/display-status";
+import { getAttendanceMonthCells, getAttendanceCalendarStatus, type AttendanceCalendarStatus } from "@/lib/attendance/month-calendar";
 
 
 import type { EarlyLeaveReviewContext } from "@/lib/attendance/early-leave-review-server";
@@ -432,10 +431,13 @@ export default function AttendanceOverviewPage() {
         return map;
     }, [records]);
 
-    const recentDateKeys = useMemo(() => {
-        const { startText } = getMonthRange(currentMonth);
-        return getRecentAttendanceDateKeys(startText.slice(0, 7));
-    }, [currentMonth]);
+    const monthCells = useMemo(() => getAttendanceMonthCells(selectedMonthKey), [selectedMonthKey]);
+    const vietnamToday = getVietnamDateKey();
+    const calendarLabels: Record<AttendanceCalendarStatus, string> = {
+        normal: t.workNormal, late: t.workLate, early_leave: t.workEarlyLeave,
+        approved_leave: t.workLeave, unauthorized_absence: t.unauthorizedAbsence,
+        working: t.working, pending: t.approvalPending, none: t.noRecord, future: t.futureDate,
+    };
 
     const summaries = useMemo(() => {
 
@@ -749,12 +751,6 @@ export default function AttendanceOverviewPage() {
                                     const recordsByDate = isExpanded
                                         ? new Map(userRecords.map((record) => [record.work_date, record]))
                                         : null;
-                                    const vietnamToday = new Intl.DateTimeFormat("en-CA", {
-                                        timeZone: "Asia/Ho_Chi_Minh",
-                                        year: "numeric",
-                                        month: "2-digit",
-                                        day: "2-digit",
-                                    }).format(new Date());
                                     const nextLevel = getNextLevelSchedule(user.levelInfo, vietnamToday);
                                     const nextLevelMessage = nextLevel?.status === "future"
                                         ? employeeLevelScheduleText[lang].future
@@ -800,15 +796,14 @@ export default function AttendanceOverviewPage() {
                                             {isExpanded && (
                                                 <div style={recentAttendanceStyle}>
                                                     <div style={recentTitleRowStyle}>
-                                                        <span style={recentTitleStyle}>{t.recent7Days}</span>
+                                                        <span style={recentTitleStyle}>{t.monthlyAttendance}</span>
                                                         <span style={recentTitleStyle}>{formatWorkHours(user)}</span>
                                                     </div>
                                                     <div style={recentWeekdayGridStyle}>
-                                                        {recentDateKeys.map((dateKey) => {
-                                                            const weekdayIndex = getDateKeyWeekdayIndex(dateKey);
+                                                        {c.calendarWeekdays.map((weekday, weekdayIndex) => {
                                                             return (
                                                                 <span
-                                                                    key={`weekday-${dateKey}`}
+                                                                    key={weekdayIndex}
                                                                     style={{
                                                                         ...recentWeekdayStyle,
                                                                         color: weekdayIndex === 0
@@ -818,46 +813,54 @@ export default function AttendanceOverviewPage() {
                                                                                 : "#6b7280",
                                                                     }}
                                                                 >
-                                                                    {c.calendarWeekdays[weekdayIndex]}
+                                                                    {weekday}
                                                                 </span>
                                                             );
                                                         })}
                                                     </div>
-                                                    <div style={recentGridStyle}>
-                                                        {recentDateKeys.map((dateKey) => {
-                                                            const status = getAttendanceDisplayStatus(recordsByDate?.get(dateKey));
-                                                             const label = status === "early_leave"
-                                                                ? t.workEarlyLeave
-                                                                : status === "late"
-                                                                    ? t.workLate
-                                                                 : status === "approved_leave"
-                                                                     ? t.workLeave
-                                                                     : status === "unauthorized_absence"
-                                                                         ? t.unauthorizedAbsence
-                                                                     : status === "normal"
-                                                                            ? t.workNormal
-                                                                            : c.noData;
+                                                    <div style={recentGridStyle} role="group" aria-label={`${user.name} ${selectedMonthKey} ${t.monthlyAttendance}`}>
+                                                        {monthCells.map((dateKey, index) => {
+                                                            if (!dateKey) return <span key={`blank-${index}`} aria-hidden="true" style={recentDayStyle} />;
+                                                            const record = recordsByDate?.get(dateKey);
+                                                            const status = getAttendanceCalendarStatus(record, dateKey, vietnamToday);
+                                                            const isWorking = !!record?.check_in_at && !record.check_out_at && record.status !== "leave" && record.status !== "unauthorized_absence";
+                                                            const isFuture = dateKey > vietnamToday;
+                                                            const label = [calendarLabels[status],
+                                                                isWorking && status !== "working" ? t.working : null,
+                                                                isFuture && status !== "future" ? t.futureDate : null,
+                                                            ].filter(Boolean).join(" · ");
 
                                                             return (
-                                                                <div key={dateKey} style={recentDayStyle} title={label}>
-                                                                    <span style={recentDateStyle}>
+                                                                <button key={dateKey} type="button" style={recentDayStyle}
+                                                                    data-date={dateKey} data-status={status} data-future={isFuture}
+                                                                    disabled={processingRecordId !== null}
+                                                                    onClick={() => goDetailForDate(user.id, dateKey)}
+                                                                    aria-label={`${dateKey} ${label}`} title={`${dateKey} ${label}`}
+                                                                    aria-current={dateKey === vietnamToday ? "date" : undefined}>
+                                                                    <span style={{ ...recentDateStyle,
+                                                                        color: isFuture ? "#9ca3af" : index % 7 === 0 ? "#dc2626" : index % 7 === 6 ? "#2563eb" : "#4b5563",
+                                                                        fontWeight: dateKey === vietnamToday ? 800 : 500 }}>
                                                                         {Number(dateKey.slice(-2))}
                                                                     </span>
                                                                     <span
-                                                                        role="img"
-                                                                        aria-label={label}
+                                                                        aria-hidden="true"
                                                                         style={{
                                                                             ...recentDotStyle,
-                                                                            ...(status === "none"
-                                                                                ? recentEmptyDotStyle
-                                                                                : { background: ATTENDANCE_STATUS_COLORS[status] }),
+                                                                            ...calendarDotStyles[status],
+                                                                            ...(isWorking && status !== "working" ? { outline: "1px solid #0ea5e9", outlineOffset: 2 } : {}),
                                                                         }}
-                                                                    >
-                                                                        {status === "none" ? "·" : ""}
-                                                                    </span>
-                                                                </div>
+                                                                    />
+                                                                </button>
                                                             );
                                                         })}
+                                                    </div>
+                                                    <div style={calendarLegendStyle}>
+                                                        {(Object.keys(calendarLabels) as AttendanceCalendarStatus[]).map(status => (
+                                                            <span key={status} style={calendarLegendItemStyle}>
+                                                                <span aria-hidden="true" style={{ ...recentDotStyle, ...calendarDotStyles[status] }} />
+                                                                {calendarLabels[status]}
+                                                            </span>
+                                                        ))}
                                                     </div>
 
                                                     <div style={detailButtonWrapStyle}>
@@ -1262,8 +1265,14 @@ const recentDayStyle: CSSProperties = {
     gap: 3,
     minWidth: 0,
     minHeight: 40,
+    boxSizing: "border-box",
     padding: "4px 1px",
+    border: 0,
     borderRight: "1px solid #f3f4f6",
+    borderBottom: "1px solid #f3f4f6",
+    background: "transparent",
+    cursor: "pointer",
+    font: "inherit",
 };
 
 const recentDateStyle: CSSProperties = {
@@ -1280,17 +1289,38 @@ const recentDotStyle: CSSProperties = {
     placeItems: "center",
     width: 8,
     height: 8,
+    boxSizing: "border-box",
+    flexShrink: 0,
     borderRadius: "50%",
     fontSize: 14,
     lineHeight: 1,
 };
 
-const recentEmptyDotStyle: CSSProperties = {
-    width: 12,
-    height: 12,
-    color: "#cbd5e1",
-    background: "transparent",
-    border: "1px solid #e5e7eb",
+const calendarDotStyles: Record<AttendanceCalendarStatus, CSSProperties> = {
+    normal: { background: ATTENDANCE_STATUS_COLORS.normal },
+    late: { background: ATTENDANCE_STATUS_COLORS.late },
+    early_leave: { background: ATTENDANCE_STATUS_COLORS.early_leave },
+    approved_leave: { background: ATTENDANCE_STATUS_COLORS.approved_leave },
+    unauthorized_absence: { background: ATTENDANCE_STATUS_COLORS.unauthorized_absence },
+    working: { border: "2px solid #0ea5e9" },
+    pending: { border: "1.5px dashed #d97706" },
+    none: { border: "1px solid #cbd5e1" },
+    future: { background: "#e2e8f0", width: 4, height: 4, margin: 2 },
+};
+
+const calendarLegendStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "5px 10px",
+    padding: "6px 0",
+    color: "#6b7280",
+    fontSize: 10,
+};
+
+const calendarLegendItemStyle: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
 };
 
 const detailButtonWrapStyle: CSSProperties = {

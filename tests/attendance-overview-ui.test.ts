@@ -44,7 +44,7 @@ test("statistics use icon-number spacing without separator dots", () => {
   assert.doesNotMatch(page, /staffStatsStyle[\s\S]*?[>}]·[<{]/);
 });
 
-test("mobile identity and seven-day rows keep shrink and overflow guards", () => {
+test("mobile identity and month calendar keep shrink and overflow guards", () => {
   assert.equal(
     page.match(/gridTemplateColumns: "repeat\(7, minmax\(0, 1fr\)\)"/g)?.length,
     2
@@ -64,8 +64,8 @@ test("next-level schedule appears only in the expanded overview footer beside de
   assert.match(page, /const detailButtonWrapStyle[\s\S]*?alignItems: "center"[\s\S]*?justifyContent: "space-between"/);
 });
 
-test("recent weekdays are separate, ordered by date, and use calendar weekend colors", () => {
-  assert.match(page, /key=\{`weekday-\$\{dateKey\}`\}/);
+test("month weekdays run Sunday through Saturday with calendar weekend colors", () => {
+  assert.match(page, /c\.calendarWeekdays\.map\(\(weekday, weekdayIndex\)/);
   assert.match(page, /weekdayIndex === 0[\s\S]*?"#dc2626"/);
   assert.match(page, /weekdayIndex === 6[\s\S]*?"#2563eb"/);
   assert.match(page, /\{Number\(dateKey\.slice\(-2\)\)\}/);
@@ -77,16 +77,16 @@ test("employee detail removes the duplicate attendance back link", () => {
   assert.match(detailPage, /const headerCardStyle[\s\S]*?marginTop: 8/);
 });
 
-test("recent attendance title is available in Korean and Vietnamese", () => {
-  assert.match(text, /recent7Days: "최근 7일"/);
-  assert.match(text, /recent7Days: "7 ngày gần đây"/);
+test("monthly attendance title is available in Korean and Vietnamese", () => {
+  assert.match(text, /monthlyAttendance: "월간 근태"/);
+  assert.match(text, /monthlyAttendance: "Chấm công tháng"/);
 });
 
-test("expanded recent attendance header keeps the title left and existing user work hours right", () => {
+test("expanded month calendar keeps the title left and existing user work hours right", () => {
   assert.match(page, /work_start_time: string \| null/);
   assert.match(page, /work_end_time: string \| null/);
   assert.match(page, /const match = value\?\.match\(\/\^\(\\d\{2\}\):\(\\d\{2\}\)\//);
-  assert.match(page, /recentTitleRowStyle[\s\S]*style=\{recentTitleStyle\}>\{t\.recent7Days\}[\s\S]*style=\{recentTitleStyle\}>\{formatWorkHours\(user\)\}/);
+  assert.match(page, /recentTitleRowStyle[\s\S]*style=\{recentTitleStyle\}>\{t\.monthlyAttendance\}[\s\S]*style=\{recentTitleStyle\}>\{formatWorkHours\(user\)\}/);
   assert.match(page, /const recentTitleRowStyle[\s\S]*display: "flex"[\s\S]*justifyContent: "space-between"[\s\S]*whiteSpace: "nowrap"/);
   assert.match(page, /return start && end \? `\$\{start\}~\$\{end\}` : "-"/);
   assert.doesNotMatch(page, /t\.workHours|recentWorkHoursStyle/);
