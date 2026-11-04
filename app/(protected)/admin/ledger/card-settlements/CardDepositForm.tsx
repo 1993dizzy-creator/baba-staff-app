@@ -23,7 +23,9 @@ export const cardDepositText = {
     insufficientOutstanding: "미정산 카드매출 잔액이 실제 입금액보다 부족합니다.", invalidAmount: "실제 입금액을 확인해주세요.",
     noEligibleSales: "입금일 이전의 미정산 카드매출이 없습니다.", reviewRequired: "카드 정산 데이터를 확인해주세요.",
     dataInvalid: "카드 정산 데이터를 확인해주세요. 입금은 저장되지 않았습니다.", createFailed: "등록 실패", readFailed: "카드 정산 정보를 불러오지 못했습니다.",
-    loading: "카드 정산 정보를 불러오는 중…", businessDate: (date: string) => `03:00 이전이라 ${date} 영업일 입금으로 정산합니다.`,
+    loading: "카드 정산 정보를 불러오는 중…",
+    created: (count: number) => count > 0 ? `카드 입금을 등록하고 카드매출 ${count}건을 자동 정산했습니다.` : "카드 입금을 등록했습니다.",
+    businessDate: (date: string) => `03:00 이전이라 ${date} 영업일 입금으로 정산합니다.`,
   },
   vi: {
     depositDate: "Thời điểm tiền về", depositAmount: "Số tiền thực nhận", memo: "Ghi chú", submitDeposit: "Ghi nhận", actualDeposit: "Tiền thực nhận", saleDate: "Ngày bán",
@@ -32,7 +34,9 @@ export const cardDepositText = {
     insufficientOutstanding: "Số dư doanh thu thẻ chưa quyết toán nhỏ hơn số tiền thực nhận.", invalidAmount: "Hãy kiểm tra số tiền thực nhận.",
     noEligibleSales: "Không có doanh thu thẻ chưa quyết toán trước ngày tiền về.", reviewRequired: "Cần kiểm tra dữ liệu quyết toán thẻ.",
     dataInvalid: "Dữ liệu quyết toán thẻ cần được kiểm tra. Khoản tiền về chưa được lưu.", createFailed: "Ghi nhận thất bại", readFailed: "Không thể tải thông tin quyết toán thẻ.",
-    loading: "Đang tải thông tin quyết toán thẻ…", businessDate: (date: string) => `Trước 03:00 nên quyết toán theo ngày kinh doanh ${date}.`,
+    loading: "Đang tải thông tin quyết toán thẻ…",
+    created: (count: number) => count > 0 ? `Đã ghi nhận tiền thẻ và tự động quyết toán ${count} doanh thu thẻ.` : "Đã ghi nhận tiền thẻ.",
+    businessDate: (date: string) => `Trước 03:00 nên quyết toán theo ngày kinh doanh ${date}.`,
   },
 } as const;
 

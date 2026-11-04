@@ -157,14 +157,27 @@ test('ledger entry sheet: income starts with a 5:5 card/general choice and card 
   const submit = sheet.slice(sheet.indexOf('async function submit('));
   assert.ok(submit.indexOf('if (cardDeposit) { void cardDraft.submit(); return; }') > -1);
   assert.ok(submit.indexOf('if (cardDeposit) { void cardDraft.submit(); return; }') < submit.indexOf('"/api/admin/ledger"'));
-  assert.match(sheet, /onCreated: \(\) => onSaved\(\)/);
+  assert.match(sheet, /onCreated: count => onSaved\(cardDepositText\[lang\]\.created\(count\)\)/);
   assert.match(sheet, /disabled=\{saving \|\| incomeChooser \|\| \(cardDeposit && !cardDraft\.canSubmit\)\}/);
-  // 저장 성공 → 모달 닫기 + load()(목록·잔액, 카드정산 요약 재조회 키 갱신)
-  assert.match(page, /onSaved=\{async \(\) => \{\s*setManualOpen\(false\);\s*await load\(\);/);
+  // 저장 성공 → 모달 닫기 + load()(목록·잔액, 카드정산 요약 재조회 키 갱신) → 갱신 성공 시 자동 정산 N건 안내
+  assert.match(page, /onSaved=\{async \(message\?: string\) => \{\s*setManualOpen\(false\);\s*const fresh = await load\(\);\s*if \(fresh && message\) setNotice\(message\);/);
+  // 일반 수기 저장은 안내 메시지 없이 기존대로
+  assert.match(sheet, /if \(!manualSheetMountedRef\.current\) return;\s*await onSaved\(\);/);
   assert.match(page, /bumpInvestmentsVersion\(\);/); assert.match(page, /const key = `\$\{requestedMonth\}:\$\{investmentsVersion\}`;\s*if \(cardSettlementLoadedKeyRef/);
   const css = readFileSync('app/(protected)/admin/ledger/entries/entries.module.css', 'utf8');
   assert.match(css, /\.incomeModeChooser\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(css, /@media[^{]*\{[^}]*\.incomeModeChooser/);
+  // 선택 전·후 같은 버튼 클래스: 최소 높이 60px, 선택 상태는 색만 바뀐다.
+  assert.match(css, /\.incomeModeButton\{[^}]*min-height:60px;box-sizing:border-box;/);
+  assert.doesNotMatch(css.match(/\.incomeModeButton\[aria-pressed="true"\]\{[^}]*\}/)[0], /height|padding|border-width|font-size/);
+});
+
+test('card deposit success notice reports the auto-settled sale count in Korean and Vietnamese', () => {
+  const { cardDepositText } = formFixture().form;
+  assert.equal(cardDepositText.ko.created(2), '카드 입금을 등록하고 카드매출 2건을 자동 정산했습니다.');
+  assert.equal(cardDepositText.ko.created(0), '카드 입금을 등록했습니다.');
+  assert.equal(cardDepositText.vi.created(3), 'Đã ghi nhận tiền thẻ và tự động quyết toán 3 doanh thu thẻ.');
+  assert.equal(cardDepositText.vi.created(0), 'Đã ghi nhận tiền thẻ.');
 });
 
 test('card settlement page keeps history, cancellation and fees but has no second registration form', () => {

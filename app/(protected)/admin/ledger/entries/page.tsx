@@ -1378,9 +1378,10 @@ function LedgerEntriesContent() {
             setSaving={setSaving}
             onClose={() => setManualOpen(false)}
             returnFocusRef={addButtonRef}
-            onSaved={async () => {
+            onSaved={async (message?: string) => {
               setManualOpen(false);
-              await load();
+              const fresh = await load();
+              if (fresh && message) setNotice(message);
             }}
           />
         ) : null}
@@ -2212,7 +2213,7 @@ function ManualEntrySheet({
   saving: boolean;
   setSaving: (value: boolean) => void;
   onClose: () => void;
-  onSaved: () => Promise<void>;
+  onSaved: (message?: string) => Promise<void>;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const initial = localTime(),
@@ -2258,7 +2259,7 @@ function ManualEntrySheet({
   const cardDeposit = type === "income" && incomeMode === "card",
     incomeChooser = type === "income" && incomeMode === null;
   const cardSources = useCardDepositSources(month, cardDeposit);
-  const cardDraft = useCardDepositDraft({ lang, sources: cardSources.sources, saving, setSaving, onCreated: () => onSaved() });
+  const cardDraft = useCardDepositDraft({ lang, sources: cardSources.sources, saving, setSaving, onCreated: count => onSaved(cardDepositText[lang].created(count)) });
   function changeType(next: EntryType) {
     setType(next);
     setCategoryId("");
