@@ -1,6 +1,8 @@
 // /admin/payroll/[runId] 지급장부 표시 전용. 기존 runs/[runId] 응답만 읽으며 급여를 재계산하거나
 // 지급 데이터를 바꾸지 않는다. 차액은 저장된 difference_amount(실제 지급액 − 계산 실수령액)를 그대로 쓴다.
 
+import { getPayrollApplicabilityBadges } from "./payroll-dashboard.ts";
+
 export type PaymentLedgerFilter = "all" | "paid" | "unpaid" | "difference";
 export const PAYMENT_LEDGER_FILTERS: readonly PaymentLedgerFilter[] = ["all", "paid", "unpaid", "difference"];
 
@@ -86,4 +88,45 @@ export function summarizePaymentSnapshot(snapshot: unknown): SnapshotSummaryItem
   if (isSafeNumber(employee.recognizedMinutes)) items.push({ key: "recognizedMinutes", value: employee.recognizedMinutes });
   if (amounts) for (const key of AMOUNT_KEYS) if (key !== "combinedSalary" && isSafeNumber(amounts[key])) items.push({ key, value: amounts[key] as number });
   return items;
+}
+
+export type PaymentApplicabilityBadge = { key: string; label: string; description: string };
+
+// 지급장부 직원 상태 배지(💯 개근 · 🍚 식대 · 🛡️ 보험 · TNCN).
+// 급여관리 카드와 같은 공통 규칙(getPayrollApplicabilityBadges)을 쓰되, 판단 근거는 지급 당시 calculation_snapshot만 쓴다.
+// 현재 직원 설정은 절대 쓰지 않으며, 스냅샷으로 확인할 수 없는 항목은 배지를 표시하지 않는다.
+// - 개근: 스냅샷의 자동 인센티브 중 해당 급여월 attendance_bonus가 실제 반영된 경우만(지급 월은 종료 월로 취급).
+// - 보험: employee.insuranceEnrolled(boolean)가 있으면 그 값. 없으면 지급 당시 확정 보험 금액(직원 공제·회사 부담)이 0보다 클 때만.
+// - TNCN: employee.tax의 taxMode/status가 있으면 공통 규칙. 없으면 확정 TNCN 금액(직원 공제·회사 부담)이 0보다 클 때만
+//   (세금 모드는 not_applicable/resident_progressive 두 가지뿐이라 양수 세액은 resident_progressive 적용 결과다).
+// - 식대: 기존 급여월 기준 eligibility 조회 결과(mealAllowanceEligible)를 그대로 쓴다.
+export function getPaymentApplicabilityBadges(input: { snapshot: unknown; month: string; mealAllowanceEligible: boolean; lang: "ko" | "vi" }): PaymentApplicabilityBadge[] {
+  const snapshot = isRecord(input.snapshot) ? input.snapshot : null;
+  const employee = snapshot && isRecord(snapshot.employee) ? snapshot.employee : null;
+  const amounts = employee && isRecord(employee.amounts) ? employee.amounts : null;
+  const tax = employee && isRecord(employee.tax) ? employee.tax : null;
+  const positive = (value: unknown) => isSafeNumber(value) && value > 0;
+
+  const insuranceEnrolled = typeof employee?.insuranceEnrolled === "boolean"
+    ? employee.insuranceEnrolled
+    : positive(amounts?.employeeInsuranceDeductionAmount) || positive(amounts?.employerInsuranceAmount) ? true : undefined;
+
+  const taxConfirmed = tax && typeof tax.taxMode === "string" && typeof tax.status === "string"
+    ? { taxMode: tax.taxMode, status: tax.status }
+    : positive(tax?.employeePitDeductionAmount) || positive(tax?.companyPitAmount) ? { taxMode: "resident_progressive", status: "calculated" } : null;
+
+  const incentivesSource = Array.isArray(employee?.automaticIncentives) ? employee.automaticIncentives : Array.isArray(snapshot?.automaticIncentivesSnapshot) ? snapshot.automaticIncentivesSnapshot : [];
+  const automaticIncentives = incentivesSource
+    .filter(isRecord)
+    .filter(item => typeof item.category === "string" && isRecord(item.sourceSnapshot))
+    .map(item => ({ category: item.category as string, sourceSnapshot: item.sourceSnapshot as Record<string, unknown> }));
+
+  return getPayrollApplicabilityBadges({
+    employee: { insuranceEnrolled, tax: taxConfirmed, attendanceStanding: null, automaticIncentives },
+    month: input.month,
+    monthClosed: true,
+    attendanceBonusEligible: false,
+    mealAllowanceEligible: input.mealAllowanceEligible,
+    lang: input.lang,
+  });
 }

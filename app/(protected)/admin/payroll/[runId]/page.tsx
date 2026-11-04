@@ -7,6 +7,7 @@ import LoadingState from "@/components/LoadingState";
 import { useLanguage } from "@/lib/language-context";
 import { formatVnd } from "@/lib/payroll/payroll-page-money";
 import { partLabel, payrollLabel } from "@/lib/payroll/ui-labels";
+import { payrollOverviewHref } from "@/lib/payroll/payroll-month-param";
 import { mealAllowanceBadgeLabel } from "@/components/payroll/CompensationCard";
 import {
   buildDifferenceReview,
@@ -14,7 +15,9 @@ import {
   matchesPaymentLedgerFilter,
   matchesPaymentLedgerQuery,
   PAYMENT_LEDGER_FILTERS,
+  getPaymentApplicabilityBadges,
   summarizePaymentSnapshot,
+  type PaymentApplicabilityBadge,
   type PaymentLedgerFilter,
   type SnapshotSummaryItem,
 } from "@/lib/payroll/payment-ledger-view";
@@ -36,13 +39,15 @@ export default function PayrollRunPage({params}:{params:Promise<{runId:string}>}
   const[expandedId,setExpandedId]=useState<number|null>(null);
   // 장부 조회: 배치 ID가 바뀌거나 다시 조회하면 이전 요청을 취소하고, 응답의 run.id가 현재 배치와 같을 때만 반영한다.
   // 조회 실패(error)와 장부 없음(notFound)을 구분하고, 실패 시에는 이전 금액·인원수를 보여주지 않는다.
-  useEffect(()=>{const controller=new AbortController();setState({status:"loading"});setExpandedId(null);void(async()=>{try{const response=await fetch(`/api/admin/payroll/runs/${runId}`,{cache:"no-store",signal:controller.signal});const data=await response.json().catch(()=>null);if(controller.signal.aborted)return;if(response.status===404||data?.code==="RUN_NOT_FOUND"||data?.code==="INVALID_RUN_ID"){setState({status:"notFound"});return}if(!response.ok||!data?.ok||!data.run||String(data.run.id)!==String(runId)||!Array.isArray(data.employees))throw new Error(data?.code??"PAYROLL_RUN_READ_FAILED");setState({status:"ready",ledger:{runId,run:data.run,employees:data.employees,mealAllowanceEligibleUserIds:data.mealAllowanceEligibleUserIds??[]}})}catch(cause){if(controller.signal.aborted||(cause as Error).name==="AbortError")return;setState({status:"error"})}})();return()=>controller.abort()},[runId,reloadKey]);
+  useEffect(()=>{const controller=new AbortController();setState({status:"loading"});setExpandedId(null);setDifferenceOpen(false);void(async()=>{try{const response=await fetch(`/api/admin/payroll/runs/${runId}`,{cache:"no-store",signal:controller.signal});const data=await response.json().catch(()=>null);if(controller.signal.aborted)return;if(response.status===404||data?.code==="RUN_NOT_FOUND"||data?.code==="INVALID_RUN_ID"){setState({status:"notFound"});return}if(!response.ok||!data?.ok||!data.run||String(data.run.id)!==String(runId)||!Array.isArray(data.employees))throw new Error(data?.code??"PAYROLL_RUN_READ_FAILED");setState({status:"ready",ledger:{runId,run:data.run,employees:data.employees,mealAllowanceEligibleUserIds:data.mealAllowanceEligibleUserIds??[]}})}catch(cause){if(controller.signal.aborted||(cause as Error).name==="AbortError")return;setState({status:"error"})}})();return()=>controller.abort()},[runId,reloadKey]);
   const ledger=state.status==="ready"&&state.ledger.runId===runId?state.ledger:null;
   const employees=useMemo(()=>ledger?.employees??[],[ledger]);
   const counts=useMemo(()=>countPaymentLedgerFilters(employees),[employees]);
   const differenceRows=useMemo(()=>buildDifferenceReview(employees),[employees]);
   const filtered=useMemo(()=>employees.filter(employee=>matchesPaymentLedgerFilter(employee,filter)&&matchesPaymentLedgerQuery(employee,query)),[employees,filter,query]);
-  const back=<Link href="/admin/payroll" style={styles.back}>← {vi?"Quản lý lương":"급여관리"}</Link>;
+  const[differenceOpen,setDifferenceOpen]=useState(false);
+  // 복귀: 장부를 읽은 경우 그 지급월의 급여관리로, 아직 모르면(로딩·실패·없음) 기본 급여관리로 돌아간다.
+  const back=<Link href={payrollOverviewHref(ledger?.run.payroll_month)} style={styles.back}>← {vi?"Quản lý lương":"급여관리"}</Link>;
   if(state.status==="loading")return <Container><main style={styles.page}>{back}<LoadingState label={vi?"Đang tải sổ chi trả lương…":"급여 지급내역을 불러오는 중입니다…"} variant="page"/></main></Container>;
   if(state.status==="notFound")return <Container><main style={styles.page}>{back}<p style={styles.stateBox}>{vi?"Không có sổ chi trả lương này.":"해당 급여 지급내역이 없습니다."}</p></main></Container>;
   if(state.status==="error"||!ledger)return <Container><main style={styles.page}>{back}<div role="alert" style={styles.errorBox}><span>{vi?"Không thể tải sổ lương. Số tiền và số người không được hiển thị cho đến khi tải lại thành công.":"급여장부를 불러오지 못했습니다. 다시 조회에 성공할 때까지 금액·인원수를 표시하지 않습니다."}</span><button type="button" style={styles.retryButton} onClick={()=>setReloadKey(key=>key+1)}>{vi?"Tải lại":"다시 조회"}</button></div></main></Container>;
@@ -63,29 +68,36 @@ export default function PayrollRunPage({params}:{params:Promise<{runId:string}>}
     </section>
     {/* 차액 검토: 차액 발생 직원만 한 줄씩 요약한다. 배치 전체 차액은 위 요약의 저장값 그대로이며 개별 값을 다시 더하지 않는다. */}
     {differenceRows.length>0&&<section style={styles.differenceCard} aria-label={vi?"Kiểm tra chênh lệch":"차액 검토"}>
-      <div style={styles.differenceHead}><h2 style={styles.differenceTitle}>{vi?"Kiểm tra chênh lệch":"차액 검토"}</h2><span>{differenceRows.length}{vi?" người":"명"}</span></div>
-      <ul style={styles.differenceList}>{differenceRows.map(row=><li key={row.employee.id} style={styles.differenceItem}>
+      {/* 기본 접힘. 제목 버튼으로 직원별 계산액·실제 지급액·차액·사유를 펼친다. */}
+      <h2 style={styles.differenceTitle}><button type="button" style={styles.differenceToggle} aria-expanded={differenceOpen} aria-controls="payroll-ledger-difference-review" onClick={()=>setDifferenceOpen(open=>!open)}><span>{vi?"Kiểm tra chênh lệch":"차액 검토"} {differenceRows.length}{vi?" người":"명"}</span><span aria-hidden="true">{differenceOpen?"▴":"▾"}</span></button></h2>
+      {differenceOpen&&<ul id="payroll-ledger-difference-review" style={styles.differenceList}>{differenceRows.map(row=><li key={row.employee.id} style={styles.differenceItem}>
         <div style={styles.differenceLine}><b style={styles.name}>{row.employee.employee_name}</b><b style={styles.differenceValue}>{signedVnd(row.differenceAmount)}</b></div>
         <div style={styles.differenceLine}><small style={styles.meta}>{row.calculatedAmount===null?"—":formatVnd(row.calculatedAmount)} → {row.actualAmount===null?"—":formatVnd(row.actualAmount)}</small><small style={row.reason===null?styles.missingReason:styles.meta}>{row.reason??(vi?"Chưa ghi lý do":"사유 미기록")}</small></div>
-      </li>)}</ul>
+      </li>)}</ul>}
     </section>}
     <section style={styles.list}><h2 style={styles.subtitle}>{vi?"Chi trả theo nhân viên":"직원별 지급 내역"}</h2>
       <input style={styles.search} value={query} onChange={event=>{setQuery(event.target.value);setExpandedId(null)}} placeholder={vi?"Tìm tên nhân viên":"직원명 검색"} aria-label={vi?"Tìm tên nhân viên":"직원명 검색"}/>
       <div style={styles.filters} role="group" aria-label={vi?"Bộ lọc chi trả":"지급 필터"}>{PAYMENT_LEDGER_FILTERS.map(value=><button key={value} type="button" aria-pressed={filter===value} style={filter===value?{...styles.filter,...styles.filterActive}:styles.filter} onClick={()=>changeFilter(value)}>{filterLabel(value)} <span style={styles.filterCount}>{counts[value]}</span></button>)}</div>
-      {employees.length===0?<p style={styles.stateBox}>{vi?"Chưa có bản ghi chi trả của nhân viên.":"직원 지급 기록이 없습니다."}</p>:filtered.length===0?<p style={styles.stateBox}>{vi?"Không có nhân viên phù hợp.":"조건에 맞는 직원이 없습니다."}</p>:<EmployeeList employees={filtered} mealAllowanceEligibleSet={mealAllowanceEligibleSet} expandedId={expandedId} onToggle={id=>setExpandedId(current=>current===id?null:id)} lang={lang}/>}
+      {employees.length===0?<p style={styles.stateBox}>{vi?"Chưa có bản ghi chi trả của nhân viên.":"직원 지급 기록이 없습니다."}</p>:filtered.length===0?<p style={styles.stateBox}>{vi?"Không có nhân viên phù hợp.":"조건에 맞는 직원이 없습니다."}</p>:<EmployeeList employees={filtered} month={month} mealAllowanceEligibleSet={mealAllowanceEligibleSet} expandedId={expandedId} onToggle={id=>setExpandedId(current=>current===id?null:id)} lang={lang}/>}
     </section>
   </main></Container>;
 }
 
 // 직원 지급내역: 한 줄 요약 행 목록. 한 번에 한 명만 펼치며, 펼친 영역에 지급 상세와 지급 당시 스냅샷을 표시한다.
-function EmployeeList({employees,mealAllowanceEligibleSet,expandedId,onToggle,lang}:{employees:Employee[];mealAllowanceEligibleSet:Set<number>;expandedId:number|null;onToggle:(id:number)=>void;lang:Lang}){
+// 직원 상태 배지: 급여관리 카드와 같은 표기(💯·🍚·🛡️·TNCN). 판단은 지급 당시 스냅샷 기준(getPaymentApplicabilityBadges).
+function StatusBadges({badges,month,lang}:{badges:PaymentApplicabilityBadge[];month:string;lang:Lang}){
+  if(badges.length===0)return null;
+  return <span style={styles.statusBadges} role="group" aria-label={lang==="vi"?"Đối tượng áp dụng khi chi trả":"지급 당시 적용 대상"}>{badges.map(badge=>{const label=badge.key==="meal"?`${month} · ${mealAllowanceBadgeLabel(lang)}`:badge.description;return <span key={badge.key} role={badge.key==="tax"?undefined:"img"} style={badge.key==="tax"?{...styles.statusBadge,...styles.taxBadge}:styles.statusBadge} title={label} aria-label={label}>{badge.key==="attendance"?"💯":badge.key==="meal"?"🍚":badge.key==="insurance"?"🛡️":badge.label}</span>})}</span>;
+}
+
+function EmployeeList({employees,month,mealAllowanceEligibleSet,expandedId,onToggle,lang}:{employees:Employee[];month:string;mealAllowanceEligibleSet:Set<number>;expandedId:number|null;onToggle:(id:number)=>void;lang:Lang}){
   const vi=lang==="vi";
   return <ul style={styles.rows}>{employees.map(employee=>{
     const paid=employee.payment_status==="paid";const open=expandedId===employee.id;const difference=Number(employee.difference_amount??0);const panelId=`payroll-ledger-employee-${employee.id}`;
     const meta=[employee.part_snapshot?partLabel(lang,employee.part_snapshot):null,employee.position_snapshot].filter(Boolean).join(" · ");
     return <li key={employee.id} style={styles.rowItem}>
       <button type="button" style={styles.rowButton} aria-expanded={open} aria-controls={panelId} onClick={()=>onToggle(employee.id)}>
-        <span style={styles.rowMain}><span style={styles.nameLine}><b style={styles.name}>{employee.employee_name}</b>{mealAllowanceEligibleSet.has(employee.user_id)?<span style={styles.mealBadge} title={mealAllowanceBadgeLabel(lang)} aria-label={mealAllowanceBadgeLabel(lang)}>🍚</span>:null}</span>{meta?<small style={styles.meta}>{meta}</small>:null}</span>
+        <span style={styles.rowMain}><b style={styles.name}>{employee.employee_name}</b><span style={styles.metaLine}>{meta?<small style={styles.meta}>{meta}</small>:null}<StatusBadges badges={getPaymentApplicabilityBadges({snapshot:employee.calculation_snapshot,month,mealAllowanceEligible:mealAllowanceEligibleSet.has(employee.user_id),lang})} month={month} lang={lang}/></span></span>
         {/* 미지급 직원은 금액 대신 상태만 표시한다(0원을 지급처럼 보이지 않도록). */}
         <span style={styles.rowSide}>{paid?<b style={styles.rowAmount}>{formatVnd(employee.actual_paid_amount??0)}</b>:null}<span style={styles.rowStatusLine}><span style={paid?styles.paid:styles.unpaid}>{paid?(vi?"Đã trả":"지급완료"):(vi?"Chưa trả":"미지급")}</span>{paid&&difference!==0?<span style={styles.rowDifference}>{vi?"Chênh lệch ":"차액 "}{signedVnd(difference)}</span>:null}</span></span>
         <span aria-hidden="true" style={styles.chevron}>{open?"⌃":"⌄"}</span>
@@ -111,7 +123,7 @@ function actorName(actor:Employee["paid_actor"]){return actor?.name||actor?.full
 function Row({label,value,strong=false,muted=false}:{label:string;value:string;strong?:boolean;muted?:boolean}){return <div style={styles.row}><span style={styles.rowLabel}>{label}</span><b style={strong?styles.strong:muted?styles.mutedValue:styles.rowValue}>{value}</b></div>}
 const styles={
   page:{display:"grid",gap:12,paddingBottom:32,minWidth:0},
-  back:{justifySelf:"start",fontSize:12,fontWeight:700,color:"#475569",textDecoration:"none"},
+  back:{justifySelf:"start",display:"inline-flex",alignItems:"center",gap:4,minHeight:32,boxSizing:"border-box",padding:"5px 11px",borderWidth:1,borderStyle:"solid",borderColor:"#d1d5db",borderRadius:9,background:"#fff",color:"#334155",fontSize:12,fontWeight:800,textDecoration:"none"},
   summaryCard:{display:"grid",gap:8,minWidth:0,padding:12,border:"1px solid #bfdbfe",borderRadius:12,background:"#eff6ff"},
   summaryHead:{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"4px 8px",minWidth:0},
   title:{margin:0,fontSize:17,lineHeight:1.3,fontWeight:900},
@@ -125,8 +137,8 @@ const styles={
   costDetails:{display:"grid",minWidth:0},
   costBody:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"5px 16px",marginTop:7,padding:9,borderRadius:9,background:"#fff",minWidth:0},
   differenceCard:{display:"grid",gap:6,minWidth:0,padding:"10px 12px",border:"1px solid #fcd34d",borderRadius:12,background:"#fffbeb"},
-  differenceHead:{display:"flex",alignItems:"baseline",gap:8,fontSize:12,color:"#92400e",fontWeight:800},
   differenceTitle:{margin:0,fontSize:14,color:"#92400e"},
+  differenceToggle:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,width:"100%",minHeight:32,padding:0,borderWidth:0,background:"transparent",color:"inherit",font:"inherit",fontWeight:900,textAlign:"left",cursor:"pointer"},
   differenceList:{listStyle:"none",margin:0,padding:0,display:"grid",minWidth:0,borderTop:"1px solid #fde68a"},
   differenceItem:{display:"grid",gap:2,padding:"6px 0",borderBottom:"1px solid #fde68a",minWidth:0},
   differenceLine:{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10,minWidth:0},
@@ -136,21 +148,24 @@ const styles={
   subtitle:{margin:0,fontSize:15},
   search:{width:"100%",minHeight:36,boxSizing:"border-box",padding:"7px 10px",border:"1px solid #d1d5db",borderRadius:10,fontSize:13},
   filters:{display:"flex",flexWrap:"wrap",gap:4,minWidth:0},
-  filter:{minHeight:32,padding:"4px 8px",border:"1px solid #d1d5db",borderRadius:999,background:"#fff",color:"#374151",fontSize:11.5,fontWeight:800,whiteSpace:"nowrap"},
+  // 기본·선택 스타일 모두 border longhand만 사용(shorthand와 borderColor 혼용 시 React 스타일 경고 발생).
+  filter:{minHeight:32,padding:"4px 8px",borderWidth:1,borderStyle:"solid",borderColor:"#d1d5db",borderRadius:999,background:"#fff",color:"#374151",fontSize:11.5,fontWeight:800,whiteSpace:"nowrap"},
   filterActive:{background:"#111827",borderColor:"#111827",color:"#fff"},
   filterCount:{marginLeft:2,opacity:.75},
   rows:{listStyle:"none",margin:0,padding:0,display:"grid",minWidth:0,border:"1px solid #e5e7eb",borderRadius:12,background:"#fff",overflow:"hidden"},
   rowItem:{borderTop:"1px solid #f1f5f9",minWidth:0},
   rowButton:{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto 14px",alignItems:"center",gap:8,width:"100%",minHeight:56,boxSizing:"border-box",padding:"8px 10px",border:0,background:"transparent",color:"inherit",textAlign:"left",cursor:"pointer",font:"inherit"},
   rowMain:{display:"grid",gap:2,minWidth:0},
-  nameLine:{display:"flex",alignItems:"center",gap:4,minWidth:0},
+  metaLine:{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2px 6px",minWidth:0},
   name:{minWidth:0,fontSize:13.5,lineHeight:1.3,overflowWrap:"anywhere"},
   rowSide:{display:"grid",justifyItems:"end",gap:3,minWidth:0},
   rowAmount:{fontSize:13.5,lineHeight:1.3,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums",color:"#111827"},
   rowStatusLine:{display:"flex",flexWrap:"wrap",justifyContent:"flex-end",alignItems:"center",gap:4},
   rowDifference:{fontSize:10.5,fontWeight:800,color:"#92400e",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"},
   chevron:{color:"#94a3b8",fontSize:12,textAlign:"center"},
-  mealBadge:{fontSize:12,lineHeight:1},
+  statusBadges:{display:"inline-flex",flexWrap:"wrap",alignItems:"center",gap:3,minWidth:0},
+  statusBadge:{display:"inline-flex",alignItems:"center",fontSize:12,lineHeight:1,color:"#475569"},
+  taxBadge:{fontSize:9.5,fontWeight:800},
   meta:{minWidth:0,color:"#64748b",fontSize:10.5,lineHeight:1.35,overflowWrap:"anywhere"},
   paid:{padding:"1px 6px",borderRadius:999,background:"#dcfce7",color:"#166534",fontSize:10,fontWeight:800,whiteSpace:"nowrap"},
   unpaid:{padding:"1px 6px",borderRadius:999,background:"#f1f5f9",color:"#475569",fontSize:10,fontWeight:800,whiteSpace:"nowrap"},

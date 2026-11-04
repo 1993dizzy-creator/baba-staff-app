@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
+import { parsePayrollMonthParam } from "@/lib/payroll/payroll-month-param";
 import LoadingState from "@/components/LoadingState";
 import { CompensationCard, CombinedPartTotal } from "@/components/payroll/CompensationCard";
 import { EmployeeLevelDisabledBadgeScope } from "@/components/employee/EmployeeNameWithLevel";
@@ -29,7 +31,10 @@ function monthText(month:string, format:string) { return format.replace("{year}"
 export default function AdminPayrollPage() {
   const { lang }=useLanguage(); const l=lang as PayrollUiLang; const vi=l==="vi";
   const attendance=attendanceText[lang]; const overviewText=payrollOverviewText[lang];
-  const [month,setMonth]=useState(currentMonth); const [overview,setOverview]=useState<OverviewResponse|null>(null);
+  // 표시 월: URL ?month=YYYY-MM(지급장부 복귀 등)이 올바르면 그 월, 없거나 잘못되면 현재 베트남 월.
+  const searchParams=useSearchParams(); const router=useRouter(); const pathname=usePathname();
+  const urlMonth=parsePayrollMonthParam(searchParams.get("month"));
+  const [month,setMonth]=useState(()=>urlMonth??currentMonth()); const [overview,setOverview]=useState<OverviewResponse|null>(null);
   const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [expandedUserId,setExpandedUserId]=useState<number|null>(null);
   // 급여 목록 조회는 요청 순번으로 보호한다. 월 이동·재조회로 더 새 요청이 시작되면 이전 응답은
   // 화면에 반영하지 않는다(이전 월 응답이 새 월 자료를 덮어쓰지 않도록). 조회에 실패하면 이전 자료는
@@ -52,7 +57,11 @@ export default function AdminPayrollPage() {
   // 필터가 걸린 채 다른 월 자료가 로드되면 그 월 기준으로 한 번만 다시 맞춘다(지급 후 같은 월 재조회 때는 사용자가 연 파트를 유지).
   const [partsSyncedMonth,setPartsSyncedMonth]=useState<string|null>(null);
   if(overview&&overview.month===month&&partsSyncedMonth!==overview.month){setPartsSyncedMonth(overview.month);if(filter!=="all")setExpandedParts(expandedPartsForPayrollFilter(groups,filter))}
-  function moveMonth(amount:number){const[y,m]=month.split("-").map(Number);const next=new Date(Date.UTC(y,m-1+amount,1));setExpandedParts(new Set(DEFAULT_EXPANDED_PAYROLL_PARTS));setMonth(`${next.getUTCFullYear()}-${String(next.getUTCMonth()+1).padStart(2,"0")}`)}
+  // 월 이동 시 URL도 같은 월로 바꿔(replace) 표시 월과 URL이 어긋나지 않게 한다. 다른 쿼리 값은 유지한다.
+  function moveMonth(amount:number){const[y,m]=month.split("-").map(Number);const date=new Date(Date.UTC(y,m-1+amount,1));const next=`${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}`;setExpandedParts(new Set(DEFAULT_EXPANDED_PAYROLL_PARTS));setMonth(next);const query=new URLSearchParams(searchParams.toString());query.set("month",next);router.replace(`${pathname}?${query.toString()}`,{scroll:false})}
+  // 뒤로가기 등으로 URL 월만 바뀐 경우 그 월로 맞춘다(같은 URL 값은 한 번만 반영해 월 이동과 충돌하지 않음).
+  const [syncedUrlMonth,setSyncedUrlMonth]=useState(urlMonth);
+  if(urlMonth!==syncedUrlMonth){setSyncedUrlMonth(urlMonth);if(urlMonth&&urlMonth!==month){setExpandedParts(new Set(DEFAULT_EXPANDED_PAYROLL_PARTS));setMonth(urlMonth)}}
 
   return <Container noPaddingTop><section style={styles.page}>
     <div style={styles.monthHeader}><button type="button" style={styles.monthButton} onClick={()=>moveMonth(-1)} aria-label={vi?"Tháng trước":"이전 달"}>‹</button><div style={styles.monthTitle}>{monthText(month,attendance.monthFormat)}</div><button type="button" style={styles.monthButton} onClick={()=>moveMonth(1)} aria-label={vi?"Tháng sau":"다음 달"}>›</button></div>
