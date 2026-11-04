@@ -133,3 +133,15 @@ export function buildPayrollPartTotals<T extends DashboardEmployee>(
   }
   return { contractMonthlyTotal, contractExcluded, netTotal, netExcluded, paidTotal, paidCount };
 }
+
+// 필터 연동 파트 펼침: "전체"는 기본 정책(owner만 펼침)을 유지하고, 그 외 필터는 해당 필터에
+// 맞는 직원이 있는 파트만 펼친다. 파트 인원 표시와 같은 matchesPayrollDashboardFilter 기준을 쓴다.
+export const DEFAULT_EXPANDED_PAYROLL_PARTS: readonly string[] = ["owner"];
+
+export function expandedPartsForPayrollFilter<T extends DashboardEmployee>(
+  groups: readonly { part: string; employees: readonly T[] }[],
+  filter: PayrollDashboardFilter,
+): Set<string> {
+  if (filter === "all") return new Set(DEFAULT_EXPANDED_PAYROLL_PARTS);
+  return new Set(groups.filter((group) => group.employees.some((employee) => matchesPayrollDashboardFilter(employee, filter))).map((group) => group.part));
+}

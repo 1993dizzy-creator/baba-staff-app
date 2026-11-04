@@ -135,7 +135,7 @@ test("common settings: history/version list is still rendered via the same <deta
 test("settings page: EmployeeMealAllowanceSettings is wired in for every selected employee, independent of the insurance mjk special-case branch", () => {
   assert.match(settingsPage, /import EmployeeMealAllowanceSettings from "@\/components\/payroll\/EmployeeMealAllowanceSettings";/);
   const afterInsuranceBranch = settingsPage.slice(settingsPage.indexOf("selected.username !== \"mjk\" ?"));
-  assert.match(afterInsuranceBranch, /<EmployeeMealAllowanceSettings key=\{`meal-allowance-\$\{selected\.id\}`\} userId=\{selected\.id\} vi=\{vi\} \/>/);
+  assert.match(afterInsuranceBranch, /<EmployeeMealAllowanceSettings key=\{`meal-allowance-\$\{selected\.id\}`\} userId=\{selected\.id\} vi=\{vi\}( onHistoryStateChange=\{[^\n]*\})? \/>/);
 });
 
 test("employee meal settings: eligibility select is disabled for attendance-tracking-disabled employees, with a visible reason", () => {

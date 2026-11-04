@@ -14,7 +14,9 @@ import {
   type AttendanceBonusMonthlyStanding,
 } from "@/lib/payroll/attendance-bonus-status";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
+import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 
+export type AttendanceBonusEligibilityHistoryVersion = EligibilityVersion;
 type EligibilityVersion = {
   id: number;
   isEligible: boolean;
@@ -56,11 +58,17 @@ function formatVnd(amount: number) {
 export default function EmployeeAttendanceBonusSettings({
   userId,
   vi,
+  onHistoryStateChange,
 }: {
   userId: number;
   vi: boolean;
+  onHistoryStateChange?: (state: SettingHistoryState<EligibilityVersion>) => void;
 }) {
   const mounted = useRef(true);
+  // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
+  const reportHistoryRef = useRef(onHistoryStateChange);
+  useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
+
   const [state, setState] = useState<AttendanceBonusState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [isEligible, setEligible] = useState(false);
@@ -77,6 +85,7 @@ export default function EmployeeAttendanceBonusSettings({
   }, []);
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    reportHistoryRef.current?.({ status: "loading", history: [] });
     try {
       const payrollMonth = currentMonth();
       const [eligibilityResponse, policyResponse, summaryResponse] = await Promise.all([
@@ -93,6 +102,8 @@ export default function EmployeeAttendanceBonusSettings({
       if (signal?.aborted || !mounted.current) return;
       if (!eligibilityResponse.ok || !policyResponse.ok || !summaryResponse.ok) {
         setError(vi ? "Không thể tải cài đặt thưởng chuyên cần." : "개근 보너스 설정을 불러오지 못했습니다.");
+        // 정책·근태 요약 조회만 실패했어도 대상 이력은 확정할 수 없으므로 요약에도 실패로 전달한다.
+        reportHistoryRef.current?.({ status: "error", history: [] });
         return;
       }
       const next: AttendanceBonusState = {
@@ -106,9 +117,11 @@ export default function EmployeeAttendanceBonusSettings({
       };
       setState(next);
       resetForm(next.current);
+      reportHistoryRef.current?.({ status: "ready", history: next.history });
     } catch (loadError: unknown) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
       setError(vi ? "Không thể tải cài đặt thưởng chuyên cần." : "개근 보너스 설정을 불러오지 못했습니다.");
+      reportHistoryRef.current?.({ status: "error", history: [] });
     }
   }, [resetForm, userId, vi]);
 

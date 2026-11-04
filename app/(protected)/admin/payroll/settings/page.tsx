@@ -20,6 +20,12 @@ import EmployeeMealAllowanceSettings from "@/components/payroll/EmployeeMealAllo
 import EmployeeAttendanceBonusSettings from "@/components/payroll/EmployeeAttendanceBonusSettings";
 import EmployeeTaxSettings from "@/components/payroll/EmployeeTaxSettings";
 import PayrollModal from "@/components/payroll/PayrollModal";
+import EmployeeSettingsSummary, { EMPLOYEE_SETTING_ANCHORS } from "@/components/payroll/EmployeeSettingsSummary";
+import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
+import type { PayrollInsuranceSettingVersion } from "@/lib/payroll/insurance";
+import type { PayrollTaxSettingVersion } from "@/lib/payroll/tax";
+import type { MealAllowanceVersion } from "@/components/payroll/EmployeeMealAllowanceSettings";
+import type { AttendanceBonusEligibilityHistoryVersion } from "@/components/payroll/EmployeeAttendanceBonusSettings";
 import { useLanguage } from "@/lib/language-context";
 import {
   money,
@@ -57,6 +63,7 @@ type InsuranceCurrent = {
 type SelectedInsuranceState = {
   userId: number;
   current: InsuranceCurrent | null;
+  history: PayrollInsuranceSettingVersion[];
   error: boolean;
   loading: boolean;
 };
@@ -178,6 +185,10 @@ export default function PayrollSettingsPage() {
   const [selectedInsuranceState, setSelectedInsuranceState] =
     useState<SelectedInsuranceState | null>(null);
   const employeeSettingsRef = useRef<HTMLDivElement>(null);
+  // 급여설정 요약: 각 설정 카드가 조회한 이력을 직원 ID와 함께 받아 둔다(다른 직원 자료가 섞이지 않게).
+  const [taxHistoryState, setTaxHistoryState] = useState<{ userId: number; state: SettingHistoryState<PayrollTaxSettingVersion> } | null>(null);
+  const [mealHistoryState, setMealHistoryState] = useState<{ userId: number; state: SettingHistoryState<MealAllowanceVersion> } | null>(null);
+  const [bonusHistoryState, setBonusHistoryState] = useState<{ userId: number; state: SettingHistoryState<AttendanceBonusEligibilityHistoryVersion> } | null>(null);
   const pendingScrollUserIdRef = useRef<number | null>(null);
   // 계약 이력 조회. 성공하면 화면 상태에 반영하고 이력을 돌려준다. 실패하면 null을 돌려주고
   // 오류 문구를 표시한다(재조회 버튼 제공). 저장 직후 재조회 실패를 저장 실패와 구분하는 데 쓴다.
@@ -292,6 +303,7 @@ export default function PayrollSettingsPage() {
         userId: loadedUserId,
         current:
           state.loading && previous?.userId === loadedUserId ? previous.current : state.current,
+        history: state.history,
         error: state.error,
         loading: state.loading,
       }));
@@ -336,6 +348,16 @@ export default function PayrollSettingsPage() {
   const effectiveSchedule = effectiveSchedules.length === 1 ? effectiveSchedules[0] : null;
   const automaticStandardMinutes = effectiveSchedule ? scheduledMinutesPerDay(effectiveSchedule.startTime, effectiveSchedule.endTime, effectiveSchedule.unpaidBreakMinutes) : null;
   const vietnamToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // 급여관리에서 월(month=YYYY-MM)을 전달받으면 그 월 기준으로 요약한다. 없으면 현재 기준.
+  const summaryReference = resolveSettingsSummaryReference(params.get("month"), vietnamToday);
+  const loadingHistory = { status: "loading" as const, history: [] };
+  const summaryContracts: SettingHistoryState<Contract> = contractsLoading ? loadingHistory : contractsLoadFailed ? { status: "error", history: [] } : { status: "ready", history: contracts };
+  const summaryInsurance: SettingHistoryState<PayrollInsuranceSettingVersion> = !selectedInsuranceStateForUser || selectedInsuranceStateForUser.loading
+    ? loadingHistory
+    : selectedInsuranceStateForUser.error ? { status: "error", history: [] } : { status: "ready", history: selectedInsuranceStateForUser.history };
+  const summaryTax = selectedId && taxHistoryState?.userId === selectedId ? taxHistoryState.state : loadingHistory;
+  const summaryMeal = selectedId && mealHistoryState?.userId === selectedId ? mealHistoryState.state : loadingHistory;
+  const summaryBonus = selectedId && bonusHistoryState?.userId === selectedId ? bonusHistoryState.state : loadingHistory;
   const currentScheduleMatches = schedulesActiveOn(workSchedules, vietnamToday);
   const currentSchedule = currentScheduleMatches.length === 1 ? currentScheduleMatches[0] : null;
   const effectiveMonthStart = `${form.effectiveFrom.slice(0, 7)}-01`;
@@ -671,9 +693,21 @@ export default function PayrollSettingsPage() {
                     }
                   />
                 </div>
+                <EmployeeSettingsSummary
+                  lang={l}
+                  reference={summaryReference}
+                  contracts={summaryContracts}
+                  workSchedules={workSchedules}
+                  requiresFixedMonthly={selectedRequiresFixedMonthly}
+                  directorManagedInsurance={selected.username === "mjk"}
+                  insurance={summaryInsurance}
+                  tax={summaryTax}
+                  meal={summaryMeal}
+                  bonus={summaryBonus}
+                />
               </section>
 
-              <section style={s.card}>
+              <section id={EMPLOYEE_SETTING_ANCHORS.contract} style={{ ...s.card, ...s.anchorTarget }}>
                 <div style={s.head}>
                   <div>
                     <h2 style={s.cardTitle}>{vi ? "Hợp đồng lương" : "급여계약"}</h2>
@@ -699,6 +733,7 @@ export default function PayrollSettingsPage() {
                 </details>
               </section>
 
+              <div id={EMPLOYEE_SETTING_ANCHORS.insurance} style={s.anchorTarget}>
               {selected.username !== "mjk" ? (
                 <EmployeeInsuranceSettings
                   key={`insurance-${selected.id}`}
@@ -714,10 +749,18 @@ export default function PayrollSettingsPage() {
                 </aside>
               )}
 
-              <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} />
+              </div>
 
-              <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} />
-              <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} />
+              <div id={EMPLOYEE_SETTING_ANCHORS.tax} style={s.anchorTarget}>
+                <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} onHistoryStateChange={(state) => setTaxHistoryState({ userId: selected.id, state })} />
+              </div>
+
+              <div id={EMPLOYEE_SETTING_ANCHORS.meal} style={s.anchorTarget}>
+                <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => setMealHistoryState({ userId: selected.id, state })} />
+              </div>
+              <div id={EMPLOYEE_SETTING_ANCHORS.bonus} style={s.anchorTarget}>
+                <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => setBonusHistoryState({ userId: selected.id, state })} />
+              </div>
             </div>
           )}
           </section>
@@ -1028,6 +1071,7 @@ const s = {
     minWidth: 0,
   },
   error: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#fef2f2", color: "#b91c1c", fontSize: 12 },
+  anchorTarget: { scrollMarginTop: 72, minWidth: 0 },
   notice: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#f0fdf4", color: "#166534", fontSize: 12 },
   retryButton: { display: "block", minHeight: 30, marginTop: 6, padding: "4px 10px", border: "1px solid #fca5a5", borderRadius: 8, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800 },
   emptyState: { margin: 0, padding: "10px 11px", border: "1px dashed #d1d5db", borderRadius: 10, color: "#6b7280", fontSize: 12, textAlign: "center" },

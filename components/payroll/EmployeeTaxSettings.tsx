@@ -3,13 +3,18 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import type { PayrollTaxBurdenMode, PayrollTaxInsuranceDeductionMode, PayrollTaxMode, PayrollTaxSettingVersion } from "@/lib/payroll/tax";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
+import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 }
 
-export default function EmployeeTaxSettings({ userId, employeeName, vi }: { userId: number; employeeName: string; vi: boolean }) {
+export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistoryStateChange }: { userId: number; employeeName: string; vi: boolean; onHistoryStateChange?: (state: SettingHistoryState<PayrollTaxSettingVersion>) => void }) {
   const mounted = useRef(true);
+  // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
+  const reportHistoryRef = useRef(onHistoryStateChange);
+  useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
+
   const [history, setHistory] = useState<PayrollTaxSettingVersion[]>([]);
   const [current, setCurrent] = useState<PayrollTaxSettingVersion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -38,6 +43,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
   }, [employeeName]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    reportHistoryRef.current?.({ status: "loading", history: [] });
     try {
       const response = await fetch(`/api/admin/payroll/tax-settings?userId=${userId}`, { cache: "no-store", signal });
       if (signal?.aborted || !mounted.current) return;
@@ -48,10 +54,12 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi }: { user
       setCurrent(nextCurrent);
       setLoaded(true);
       resetForm(nextCurrent);
+      reportHistoryRef.current?.({ status: "ready", history: data.history ?? [] });
     } catch (loadError) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
       setError(vi ? "Không thể tải cài đặt thuế TNCN." : "TNCN 설정을 불러오지 못했습니다.");
       setLoaded(true);
+      reportHistoryRef.current?.({ status: "error", history: [] });
     }
   }, [resetForm, userId, vi]);
 

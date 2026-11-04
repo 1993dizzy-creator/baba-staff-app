@@ -118,7 +118,7 @@ test("extra-work review calculation covers attendance-based contracts while fixe
   assert.match(monthly, /hourlyRateAmount:vnd\(rate\.minuteRate\*60\)/);
   assert.doesNotMatch(monthly, /hourlyRateAmount:compensation\.combinedSalary/);
   assert.match(monthly, /calculationBasis:"fixed_monthly"[\s\S]*?partTimeExtraWork:\[\]/);
-  assert.match(card, /employee\.contract\.calculationBasis !== "fixed_monthly" && <PartTimeExtraWorkSection/);
+  assert.match(card, /employee\.contract\.calculationBasis !== "fixed_monthly" && (<div id=\{extraWorkAnchorId\}[^>]*>)?<PartTimeExtraWorkSection/);
   assert.doesNotMatch(monthly, /reviews\.push\(review\("OVERTIME_APPROVAL_UNAVAILABLE"/);
   assert.doesNotMatch(read("lib/payroll/attendance-facts.ts"), /warnings\.push\("OVERTIME_APPROVAL_UNAVAILABLE"\)/);
 });

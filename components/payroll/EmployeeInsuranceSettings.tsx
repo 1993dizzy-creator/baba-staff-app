@@ -26,6 +26,8 @@ function currentMonth() {
 
 export type EmployeeInsuranceLoadState = {
   current: PayrollInsuranceSettingVersion | null;
+  /** 전체 버전 이력(급여설정 요약의 월 기준 판정용). 조회 중·실패면 빈 배열 */
+  history: PayrollInsuranceSettingVersion[];
   error: boolean;
   loading: boolean;
 };
@@ -65,7 +67,7 @@ export default function EmployeeInsuranceSettings({
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      onLoadStateChange?.(userId, { current: null, error: false, loading: true });
+      onLoadStateChange?.(userId, { current: null, history: [], error: false, loading: true });
       try {
         const response = await fetch(
           `/api/admin/payroll/insurance?userId=${userId}`,
@@ -80,7 +82,7 @@ export default function EmployeeInsuranceSettings({
               ? "Không thể tải cài đặt bảo hiểm."
               : "보험 설정을 불러오지 못했습니다.",
           );
-          onLoadStateChange?.(userId, { current: null, error: true, loading: false });
+          onLoadStateChange?.(userId, { current: null, history: [], error: true, loading: false });
           setLoaded(true);
           return;
         }
@@ -88,7 +90,7 @@ export default function EmployeeInsuranceSettings({
         setHistory(data.history ?? []);
         setCurrent(nextCurrent);
         resetForm(nextCurrent);
-        onLoadStateChange?.(userId, { current: nextCurrent, error: false, loading: false });
+        onLoadStateChange?.(userId, { current: nextCurrent, history: data.history ?? [], error: false, loading: false });
         setLoaded(true);
       } catch (loadError: unknown) {
         if (
@@ -101,7 +103,7 @@ export default function EmployeeInsuranceSettings({
             ? "Không thể tải cài đặt bảo hiểm."
             : "보험 설정을 불러오지 못했습니다.",
         );
-        onLoadStateChange?.(userId, { current: null, error: true, loading: false });
+        onLoadStateChange?.(userId, { current: null, history: [], error: true, loading: false });
         setLoaded(true);
       }
     },

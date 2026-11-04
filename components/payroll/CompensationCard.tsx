@@ -26,6 +26,7 @@ import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
 import { lookupEmployeePaymentStatus } from "@/lib/payroll/payment-result-check";
+import { getPayrollReviewReasons, payrollReviewCategoryHref, payrollReviewCategoryLabel, type PayrollReviewReasons } from "@/lib/payroll/review-reasons";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
 export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
@@ -108,6 +109,10 @@ export function CompensationCard({
         return labels.length > 0 ? labels : [lang === "vi" ? "Chưa thể xác định kết quả tính lương." : "급여 계산 결과를 확정할 수 없습니다."];
       })()
     : [];
+  // 확인 필요 사유: overview 판정(calculationStatus·warningCodes)을 분류만 한다. 미래 월은 전원 "계산 전"이라 생략.
+  const reviewReasons = future ? null : getPayrollReviewReasons(employee, false, lang);
+  const extraWorkAnchorId = `payroll-extra-work-${employee.userId}`;
+  const focusExtraWork = () => document.getElementById(extraWorkAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
   return (
     <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
       <button style={s.head} onClick={toggle} aria-expanded={expanded}>
@@ -138,6 +143,12 @@ export function CompensationCard({
           {expanded ? "⌃" : "⌄"}
         </span>
       </button>
+      {reviewReasons && reviewReasons.categories.length > 0 && (
+        <div style={s.reviewReasonRow} role="note" aria-label={lang === "vi" ? "Lý do cần kiểm tra" : "확인 필요 사유"}>
+          {reviewReasons.categories.slice(0, 2).map(category => <span key={category} style={s.reviewReasonChip}>{payrollReviewCategoryLabel(category, lang)}</span>)}
+          {reviewReasons.categories.length > 2 && <span style={s.reviewReasonMore} title={reviewReasons.categories.slice(2).map(category => payrollReviewCategoryLabel(category, lang)).join(", ")}>+{reviewReasons.categories.length - 2}</span>}
+        </div>
+      )}
       {(!future || mealAllowanceEligible || (attendanceBonusEligible && employee.attendanceStanding?.perfectAttendanceCurrent === true)) && (
         <div style={s.amountStrip}>
           <span style={s.applicabilityBadges} role="group" aria-label={lang === "vi" ? "Đối tượng áp dụng trong tháng" : "조회 월 적용 대상"}>
@@ -164,7 +175,7 @@ export function CompensationCard({
             <>
               <p>{t.noContract}</p>
               <Link
-                href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}
+                href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}&month=${month}`}
               >
                 {t.payrollSettingsLink}
               </Link>
@@ -176,6 +187,7 @@ export function CompensationCard({
             </>
           ) : (
             <>
+              {reviewReasons && reviewReasons.details.length > 0 && !paymentBlocked && <ReviewReasonPanel reasons={reviewReasons} userId={employee.userId} month={month} lang={lang} onExtraWork={focusExtraWork} />}
               <DetailSection icon="💰" title={detailText.salaryComposition} first>
                 <Row label={t.contractSalary} value={formatContractRate(employee.amounts.contractSalary, employee.contract.payType, lang)} />
                 <Row label={t.fixedRaise} value={formatContractRate(employee.amounts.fixedRaiseAmount, employee.contract.payType, lang, "+")} />
@@ -215,7 +227,7 @@ export function CompensationCard({
                 />
               </DetailSection>
 
-              {employee.contract.calculationBasis !== "fixed_monthly" && <PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} />}
+              {employee.contract.calculationBasis !== "fixed_monthly" && <div id={extraWorkAnchorId} style={s.extraWorkAnchor}><PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} /></div>}
 
               <DetailSection icon="🛡️" title={lang === "vi" ? "Tính thực nhận nhân viên" : "직원 지급 계산"}>
                 <Row label={t.preInsurancePayout} value={formatVnd(employee.amounts.preInsurancePayoutAmount)} highlight="subtotal" />
@@ -223,7 +235,7 @@ export function CompensationCard({
                 {employee.amounts.advanceAmount > 0 && <Row label={t.advance} value={formatSignedVnd(employee.amounts.advanceAmount, "-")} />}
                 {employee.amounts.otherDeductionAmount > 0 && <details style={s.taxDetails}><summary style={s.taxDetailsSummary}>{lang === "vi" ? "Khoản trừ khác đã tính trong tổng trên" : "지급대상액에 이미 반영된 기타 공제"}</summary><Row label={t.otherDeduction} value={formatSignedVnd(employee.amounts.otherDeductionAmount, "-")} /></details>}
               {(employee.tax.status === "requires_review" || employee.tax.taxMode === "resident_progressive") && <DetailSection icon="🧾" title={taxText.title}>
-                {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}`}>{taxText.settings}</Link></> : <>
+                {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}&month=${month}`}>{taxText.settings}</Link></> : <>
                   <Row label={employee.tax.taxBurdenMode === "company_bears" ? (lang === "vi" ? "Công ty chịu · Nhân viên khấu trừ" : "회사 부담 적용 · 직원 공제") : (lang === "vi" ? "Áp dụng · Nhân viên khấu trừ" : "적용 · 직원 공제")} value={formatVnd(employee.tax.employeePitDeductionAmount)} />
                   <details style={s.taxDetails}>
                     <summary style={s.taxDetailsSummary}>{taxText.details}</summary>
@@ -249,7 +261,7 @@ export function CompensationCard({
                 {employee.amounts.companyPitAmount > 0 && <Row label={t.companyPit} value={formatVnd(employee.amounts.companyPitAmount)} muted />}
                 <small style={s.help}>{lang === "vi" ? "Không khấu trừ vào thực nhận nhân viên." : "직원 실수령액에서 차감하지 않습니다."}</small>
               </DetailSection>}
-              {!future && <>{(monthClosed || employee.payment?.payment_status === "paid") && <button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (paymentLocked || !monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : paymentLocked && monthClosed ? (lang === "vi" ? "Chi trả sau khi tải danh sách" : "목록 조회 후 지급 가능") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>}{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월 종료 후 지급 가능"}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
+              {!future && <>{(monthClosed || employee.payment?.payment_status === "paid") && <button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (paymentLocked || !monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : paymentLocked && monthClosed ? (lang === "vi" ? "Chi trả sau khi tải danh sách" : "목록 조회 후 지급 가능") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>}{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월 종료 후 지급 가능"}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul>{reviewReasons&&<ReviewReasonActions reasons={reviewReasons} userId={employee.userId} month={month} lang={lang} onExtraWork={focusExtraWork}/>}</div>}</>}
             </>
           )}
         </div>
@@ -268,6 +280,32 @@ export function CompensationCard({
     </article>
   );
 }
+// 상세의 확인 필요 사유 전체 목록 + 해결 화면 바로가기. 기존 화면(근태 상세·급여설정·카드 내 추가근무)만 연결한다.
+function ReviewReasonPanel({ reasons, userId, month, lang, onExtraWork }: { reasons: PayrollReviewReasons; userId: number; month: string; lang: "ko" | "vi"; onExtraWork: () => void }) {
+  return (
+    <section role="alert" style={s.blockingReasons}>
+      <b style={s.blockingReasonsTitle}>{lang === "vi" ? "Lý do cần kiểm tra" : "확인 필요 사유"}</b>
+      <ul style={s.blockingReasonList}>{reasons.details.map(item => <li key={item.code}>{item.label}</li>)}</ul>
+      <ReviewReasonActions reasons={reasons} userId={userId} month={month} lang={lang} onExtraWork={onExtraWork} />
+    </section>
+  );
+}
+function ReviewReasonActions({ reasons, userId, month, lang, onExtraWork }: { reasons: PayrollReviewReasons; userId: number; month: string; lang: "ko" | "vi"; onExtraWork: () => void }) {
+  const vi = lang === "vi";
+  const actions: { key: string; href: string | null; text: string }[] = [];
+  for (const category of reasons.categories) {
+    if (category === "extraWork") { actions.push({ key: category, href: null, text: vi ? "Xem làm thêm giờ" : "추가근무 검토" }); continue; }
+    const href = payrollReviewCategoryHref(category, userId, month);
+    // 계약·보험/TNCN은 같은 급여설정 화면이라 한 번만 보여준다.
+    if (!href || actions.some(action => action.href === href)) continue;
+    actions.push({ key: category, href, text: category === "attendance" ? (vi ? "Xem chấm công" : "근태 상세") : category === "level" ? (vi ? "Quản lý nhân viên" : "직원관리") : (vi ? "Cài đặt lương" : "급여설정") });
+  }
+  if (actions.length === 0) return null;
+  return <div style={s.reviewReasonActions}>{actions.map(action => action.href
+    ? <Link key={action.key} href={action.href} style={s.reviewReasonAction}>{action.text} ›</Link>
+    : <button key={action.key} type="button" style={s.reviewReasonAction} onClick={onExtraWork}>{action.text} ›</button>)}</div>;
+}
+
 export function CombinedPartTotal({
   employees,
   lang,
@@ -1056,6 +1094,12 @@ const s = {
   paymentNotice: { margin: 0, padding: 10, borderRadius: 9, background: "#f0fdf4", color: "#166534", fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere" },
   modalAction: { minWidth: 148, maxWidth: "100%" },
   paymentButton: { minHeight:42, border:0, borderRadius:10, background:"#111827", color:"#fff", fontWeight:800 },
+  reviewReasonRow: { display:"flex", flexWrap:"wrap", alignItems:"center", gap:4, marginTop:4, minWidth:0 },
+  reviewReasonChip: { padding:"2px 7px", borderRadius:999, background:"#fef3c7", color:"#92400e", fontSize:10.5, lineHeight:1.35, fontWeight:800, overflowWrap:"anywhere" },
+  reviewReasonMore: { padding:"2px 6px", borderRadius:999, background:"#f3f4f6", color:"#4b5563", fontSize:10.5, lineHeight:1.35, fontWeight:800 },
+  reviewReasonActions: { display:"flex", flexWrap:"wrap", gap:6, marginTop:4 },
+  reviewReasonAction: { display:"inline-flex", alignItems:"center", minHeight:30, padding:"4px 10px", border:"1px solid #fca5a5", borderRadius:8, background:"#fff", color:"#991b1b", fontSize:11.5, fontWeight:800, textDecoration:"none", cursor:"pointer" },
+  extraWorkAnchor: { scrollMarginTop:72, minWidth:0 },
   blockingReasons: { display:"grid", gap:4, marginTop:2, padding:"8px 10px", borderRadius:9, background:"#fef2f2", border:"1px solid #fecaca", color:"#991b1b" },
   blockingReasonsTitle: { fontSize:11.5, fontWeight:900 },
   blockingReasonList: { margin:0, paddingLeft:16, display:"grid", gap:2, fontSize:11, lineHeight:1.4 },

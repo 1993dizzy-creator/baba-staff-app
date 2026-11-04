@@ -11,8 +11,9 @@ import {
 } from "react";
 import { money } from "@/lib/payroll/ui-labels";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
+import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 
-type MealAllowanceVersion = {
+export type MealAllowanceVersion = {
   id: number;
   userId: number;
   isEligible: boolean;
@@ -37,11 +38,17 @@ function vietnamToday() {
 export default function EmployeeMealAllowanceSettings({
   userId,
   vi,
+  onHistoryStateChange,
 }: {
   userId: number;
   vi: boolean;
+  onHistoryStateChange?: (state: SettingHistoryState<MealAllowanceVersion>) => void;
 }) {
   const mounted = useRef(true);
+  // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
+  const reportHistoryRef = useRef(onHistoryStateChange);
+  useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
+
   const [state, setState] = useState<MealAllowanceState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [isEligible, setIsEligible] = useState(false);
@@ -61,6 +68,7 @@ export default function EmployeeMealAllowanceSettings({
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      reportHistoryRef.current?.({ status: "loading", history: [] });
       try {
         const response = await fetch(`/api/admin/payroll/meal-allowance/eligibility?userId=${userId}`, {
           cache: "no-store",
@@ -71,6 +79,7 @@ export default function EmployeeMealAllowanceSettings({
         if (signal?.aborted || !mounted.current) return;
         if (!response.ok) {
           setError(vi ? "Không thể tải cài đặt trợ cấp ăn." : "식대 대상 설정을 불러오지 못했습니다.");
+          reportHistoryRef.current?.({ status: "error", history: [] });
           return;
         }
         const next: MealAllowanceState = {
@@ -83,9 +92,11 @@ export default function EmployeeMealAllowanceSettings({
         };
         setState(next);
         resetForm(next.current);
+        reportHistoryRef.current?.({ status: "ready", history: next.history });
       } catch (loadError: unknown) {
         if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
         setError(vi ? "Không thể tải cài đặt trợ cấp ăn." : "식대 대상 설정을 불러오지 못했습니다.");
+        reportHistoryRef.current?.({ status: "error", history: [] });
       }
     },
     [resetForm, userId, vi],
