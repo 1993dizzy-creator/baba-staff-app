@@ -91,10 +91,49 @@ test("shortcuts keep the employee ID and month and only use existing screens", (
   assert.equal(payrollReviewCategoryHref("extraWork", 7, "2026-10"), null);
   assert.match(card, /<div id=\{extraWorkAnchorId\} style=\{s\.extraWorkAnchor\}><PartTimeExtraWorkSection/);
   assert.match(card, /document\.getElementById\(extraWorkAnchorId\)\?\.scrollIntoView/);
-  assert.match(card, /reviewReasons\.categories\.slice\(0, 2\)/);
-  // 지급 불가 블록(마감 월)은 기존 문구를 유지하고 바로가기만 덧붙인다 — 같은 사유 목록을 두 번 표시하지 않는다.
-  assert.match(card, /reviewReasons && reviewReasons\.details\.length > 0 && !paymentBlocked && <ReviewReasonPanel/);
+  // 지급 불가 블록(마감 월)은 기존 문구를 유지하고 바로가기만 덧붙인다.
+  assert.match(card, /<ul style=\{s\.blockingReasonList\}>[^\n]*<ReviewReasonActions/);
   assert.match(card, /settings\?tab=employee&userId=\$\{employee\.userId\}&month=\$\{month\}/);
+});
+
+// ---------------------------------------------------------------------------
+// 2차-B 후속: 확인 필요 배지 위치 · 상세 접힘
+// ---------------------------------------------------------------------------
+
+test("non-calculable employees show the top-priority problem badge in the net-amount slot", () => {
+  const strip = card.slice(card.indexOf("{!future && <span style={s.amountStripCell}>"), card.indexOf("{expanded && ("));
+  assert.match(strip, /reviewReasons && reviewReasons\.categories\.length > 0 \? <>\n\s*<ReviewProblemBadge category=\{reviewReasons\.categories\[0\]\}/);
+  assert.match(strip, /\+\{reviewReasons\.categories\.length - 1\}<\/button>/);
+  assert.match(strip, /aria-expanded=\{moreReasonsOpen\}/);
+  // 정상 계산 직원은 기존 계산 실수령 표시 유지
+  assert.match(strip, /: <>\n\s*<span style=\{s\.amountStripLabel\}>\{lang === "vi" \? "Thực nhận đã tính" : "계산 실수령"\}<\/span>/);
+  // 배지는 헤더 버튼 밖(형제)에 있어 버튼 중첩이 없다
+  const headStart = card.indexOf("<button style={s.head} onClick={toggle}") + 1;
+  const head = card.slice(headStart, card.indexOf("</button>", headStart));
+  assert.doesNotMatch(head, /ReviewProblemBadge|<button|<a |<Link/);
+  // 헤더 사유 칩 · 상세 상단 빨간 배너 · 추가근무 경고 강조 제거
+  assert.doesNotMatch(card, /reviewReasonRow|reviewReasonChip|ReviewReasonPanel|extraWorkBadgeAlert|extraWorkNeedsReview/);
+});
+
+test("problem badge routes to the existing resolution place without closing the card", () => {
+  const badge = card.slice(card.indexOf("function ReviewProblemBadge("), card.indexOf("function CollapsibleDetailSection("));
+  assert.match(badge, /if \(category === "extraWork"\) return <button type="button"[^>]*onClick=\{onExtraWork\}>/);
+  assert.match(badge, /const href = payrollReviewCategoryHref\(category, userId, month\);/);
+  assert.match(badge, /href \? <Link href=\{href\}/);
+  // 접혀 있을 때만 펼치고(닫지 않음), 렌더 후 추가근무 섹션으로 스크롤
+  assert.match(card, /const focusExtraWork = \(\) => \{ if \(!expanded\) toggle\(\); setExtraWorkScrollRequested\(true\); \};/);
+  assert.match(card, /if \(!extraWorkScrollRequested \|\| !expanded\) return;[\s\S]*document\.getElementById\(extraWorkAnchorId\)\?\.scrollIntoView/);
+});
+
+test("salary composition and month application are independent collapsed banners with existing values", () => {
+  const section = card.slice(card.indexOf("function CollapsibleDetailSection("), card.indexOf("function ReviewReasonActions("));
+  assert.match(section, /const \[open, setOpen\] = useState\(false\);/);
+  assert.match(section, /aria-expanded=\{open\}/);
+  assert.match(section, /\{open && <div id=\{bodyId\} style=\{s\.sectionRows\}>\{children\}<\/div>\}/);
+  assert.match(card, /<CollapsibleDetailSection icon="💰" title=\{detailText\.salaryComposition\} summary=\{formatContractRate\(combined, employee\.contract\.payType, lang\)\} first>/);
+  assert.match(card, /<CollapsibleDetailSection icon="📅" title=\{detailText\.monthApplication\} summary=\{employee\.amounts\.workAppliedAmount === null \? \(lang === "vi" \? "Cần kiểm tra" : "확인 필요"\) : formatVnd\(employee\.amounts\.workAppliedAmount\)\}/);
+  // 다른 섹션은 기존 DetailSection 유지
+  assert.match(card, /<DetailSection icon="🛡️" title=\{lang === "vi" \? "Tính thực nhận nhân viên" : "직원 지급 계산"\}>/);
 });
 
 // ---------------------------------------------------------------------------

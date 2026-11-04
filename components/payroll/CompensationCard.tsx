@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollModal from "@/components/payroll/PayrollModal";
 import type {
@@ -26,7 +26,7 @@ import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
 import { lookupEmployeePaymentStatus } from "@/lib/payroll/payment-result-check";
-import { getPayrollReviewReasons, payrollReviewCategoryHref, payrollReviewCategoryLabel, type PayrollReviewReasons } from "@/lib/payroll/review-reasons";
+import { getPayrollReviewReasons, payrollReviewCategoryHref, payrollReviewCategoryLabel, type PayrollReviewCategory, type PayrollReviewReasons } from "@/lib/payroll/review-reasons";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
 export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
@@ -97,7 +97,6 @@ export function CompensationCard({
     ? getEmployeeRoleLabel(employee.role, lang)
     : employee.username;
   const extraWorkCount = employee.partTimeExtraWork.length;
-  const extraWorkNeedsReview = employee.partTimeExtraWork.some(row => row.status === "review_required" || row.status === "stale");
   const extraWorkBadgeLabel = lang === "vi" ? `Làm thêm giờ: ${extraWorkCount} mục` : `추가근무 내역 ${extraWorkCount}건`;
   const paymentBadge = getPaymentBadgePresentation(lang, employee.payment?.difference_amount);
   // 지급 불가 상태일 때, 급여카드를 만드는 과정에서 이미 확보한 지급 차단 원인(review/tax
@@ -112,7 +111,18 @@ export function CompensationCard({
   // 확인 필요 사유: overview 판정(calculationStatus·warningCodes)을 분류만 한다. 미래 월은 전원 "계산 전"이라 생략.
   const reviewReasons = future ? null : getPayrollReviewReasons(employee, false, lang);
   const extraWorkAnchorId = `payroll-extra-work-${employee.userId}`;
-  const focusExtraWork = () => document.getElementById(extraWorkAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const [extraWorkScrollRequested, setExtraWorkScrollRequested] = useState(false);
+  const [moreReasonsOpen, setMoreReasonsOpen] = useState(false);
+  // 배지 클릭은 카드를 닫지 않는다: 접혀 있으면 펼친 뒤, 렌더된 추가근무 검토 섹션으로 스크롤한다.
+  const focusExtraWork = () => { if (!expanded) toggle(); setExtraWorkScrollRequested(true); };
+  useEffect(() => {
+    if (!extraWorkScrollRequested || !expanded) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(extraWorkAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setExtraWorkScrollRequested(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [expanded, extraWorkAnchorId, extraWorkScrollRequested]);
   return (
     <article style={{ ...s.card, ...(expanded ? s.expandedCard : {}) }}>
       <button style={s.head} onClick={toggle} aria-expanded={expanded}>
@@ -124,7 +134,7 @@ export function CompensationCard({
             nameStyle={s.name}
           />
           {extraWorkCount > 0 ? (
-            <span style={{ ...s.extraWorkBadge, ...(extraWorkNeedsReview ? s.extraWorkBadgeAlert : {}) }} title={extraWorkBadgeLabel} aria-label={extraWorkBadgeLabel}>⏱️</span>
+            <span style={s.extraWorkBadge} title={extraWorkBadgeLabel} aria-label={extraWorkBadgeLabel}>⏱️</span>
           ) : null}
           <span style={s.separator}>·</span>
           <span style={s.position}>{positionLabel}</span>
@@ -143,12 +153,6 @@ export function CompensationCard({
           {expanded ? "⌃" : "⌄"}
         </span>
       </button>
-      {reviewReasons && reviewReasons.categories.length > 0 && (
-        <div style={s.reviewReasonRow} role="note" aria-label={lang === "vi" ? "Lý do cần kiểm tra" : "확인 필요 사유"}>
-          {reviewReasons.categories.slice(0, 2).map(category => <span key={category} style={s.reviewReasonChip}>{payrollReviewCategoryLabel(category, lang)}</span>)}
-          {reviewReasons.categories.length > 2 && <span style={s.reviewReasonMore} title={reviewReasons.categories.slice(2).map(category => payrollReviewCategoryLabel(category, lang)).join(", ")}>+{reviewReasons.categories.length - 2}</span>}
-        </div>
-      )}
       {(!future || mealAllowanceEligible || (attendanceBonusEligible && employee.attendanceStanding?.perfectAttendanceCurrent === true)) && (
         <div style={s.amountStrip}>
           <span style={s.applicabilityBadges} role="group" aria-label={lang === "vi" ? "Đối tượng áp dụng trong tháng" : "조회 월 적용 대상"}>
@@ -162,11 +166,19 @@ export function CompensationCard({
               : applicabilityBadges.filter(badge => badge.key !== "attendance").map(badge => <span key={badge.key} role={badge.key === "tax" ? undefined : "img"} style={{...s.applicabilityBadge,...(badge.key === "tax" ? s.taxApplicabilityBadge : {})}} aria-label={badge.description} title={badge.description}>{badge.key === "meal" ? "🍚" : badge.key === "insurance" ? "🛡️" : badge.label}</span>)}
           </span>
           {!future && <span style={s.amountStripCell}>
-            <span style={s.amountStripLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
-            {calculatedNetAmount === null
-              ? <b style={{ ...s.amountStripValue, ...s.amountStripReview }}>{lang === "vi" ? "Cần kiểm tra" : "확인 필요"}</b>
-              : <b style={s.amountStripValue}>{formatVnd(calculatedNetAmount)}</b>}
+            {reviewReasons && reviewReasons.categories.length > 0 ? <>
+              <ReviewProblemBadge category={reviewReasons.categories[0]} userId={employee.userId} month={month} lang={lang} onExtraWork={focusExtraWork} />
+              {reviewReasons.categories.length > 1 && <button type="button" style={s.reviewMoreButton} aria-expanded={moreReasonsOpen} aria-controls={`payroll-review-more-${employee.userId}`} title={reviewReasons.categories.slice(1).map(category => payrollReviewCategoryLabel(category, lang)).join(", ")} onClick={() => setMoreReasonsOpen(open => !open)}>+{reviewReasons.categories.length - 1}</button>}
+            </> : <>
+              <span style={s.amountStripLabel}>{lang === "vi" ? "Thực nhận đã tính" : "계산 실수령"}</span>
+              {calculatedNetAmount === null
+                ? <b style={{ ...s.amountStripValue, ...s.amountStripReview }}>{lang === "vi" ? "Cần kiểm tra" : "확인 필요"}</b>
+                : <b style={s.amountStripValue}>{formatVnd(calculatedNetAmount)}</b>}
+            </>}
           </span>}
+          {!future && moreReasonsOpen && reviewReasons && reviewReasons.categories.length > 1 && <div id={`payroll-review-more-${employee.userId}`} style={s.reviewMoreList}>
+            {reviewReasons.categories.slice(1).map(category => <ReviewProblemBadge key={category} category={category} userId={employee.userId} month={month} lang={lang} onExtraWork={focusExtraWork} />)}
+          </div>}
         </div>
       )}
       {expanded && (
@@ -187,8 +199,7 @@ export function CompensationCard({
             </>
           ) : (
             <>
-              {reviewReasons && reviewReasons.details.length > 0 && !paymentBlocked && <ReviewReasonPanel reasons={reviewReasons} userId={employee.userId} month={month} lang={lang} onExtraWork={focusExtraWork} />}
-              <DetailSection icon="💰" title={detailText.salaryComposition} first>
+              <CollapsibleDetailSection icon="💰" title={detailText.salaryComposition} summary={formatContractRate(combined, employee.contract.payType, lang)} first>
                 <Row label={t.contractSalary} value={formatContractRate(employee.amounts.contractSalary, employee.contract.payType, lang)} />
                 <Row label={t.fixedRaise} value={formatContractRate(employee.amounts.fixedRaiseAmount, employee.contract.payType, lang, "+")} />
                 <Row label={t.levelRaise} value={formatContractRate(employee.amounts.levelRaiseAmount, employee.contract.payType, lang, "+")} />
@@ -199,9 +210,9 @@ export function CompensationCard({
                   monthlyEquivalentLabel={detailText.monthlyEquivalent}
                   monthlyEquivalentHelp={detailText.monthlyEquivalentHelp}
                 />
-              </DetailSection>
+              </CollapsibleDetailSection>
 
-              <DetailSection icon="📅" title={detailText.monthApplication}>
+              <CollapsibleDetailSection icon="📅" title={detailText.monthApplication} summary={employee.amounts.workAppliedAmount === null ? (lang === "vi" ? "Cần kiểm tra" : "확인 필요") : formatVnd(employee.amounts.workAppliedAmount)} summaryReview={employee.amounts.workAppliedAmount === null}>
                 <small style={s.help}>{lang === "vi" ? "Ngày chốt tính" : "계산 기준일"} · {asOfDate ?? "—"}</small>
                 <Row label={detailText.recognizedWork} value={formatRecognizedWork(employee.recognizedMinutes, employee.recognizedWorkdays, lang)} wrapValue />
                 <Row
@@ -225,7 +236,7 @@ export function CompensationCard({
                   onClick={() => setModal("penalty")}
                   disabled={employee.payment?.payment_status === "paid"}
                 />
-              </DetailSection>
+              </CollapsibleDetailSection>
 
               {employee.contract.calculationBasis !== "fixed_monthly" && <div id={extraWorkAnchorId} style={s.extraWorkAnchor}><PartTimeExtraWorkSection employee={employee} month={month} lang={lang} refresh={refresh} /></div>}
 
@@ -280,13 +291,28 @@ export function CompensationCard({
     </article>
   );
 }
-// 상세의 확인 필요 사유 전체 목록 + 해결 화면 바로가기. 기존 화면(근태 상세·급여설정·카드 내 추가근무)만 연결한다.
-function ReviewReasonPanel({ reasons, userId, month, lang, onExtraWork }: { reasons: PayrollReviewReasons; userId: number; month: string; lang: "ko" | "vi"; onExtraWork: () => void }) {
+// 확인 필요 배지: 2차-B 사유 분류의 해결 위치로 바로 이동한다(근태 상세·급여설정·카드 내 추가근무).
+// 카드 헤더 버튼 밖에 있으므로 버튼 중첩이 없고, 클릭해도 카드를 닫지 않는다.
+function ReviewProblemBadge({ category, userId, month, lang, onExtraWork }: { category: PayrollReviewCategory; userId: number; month: string; lang: "ko" | "vi"; onExtraWork: () => void }) {
+  const label = payrollReviewCategoryLabel(category, lang);
+  if (category === "extraWork") return <button type="button" style={s.reviewProblemBadge} onClick={onExtraWork}>{label} ›</button>;
+  const href = payrollReviewCategoryHref(category, userId, month);
+  return href ? <Link href={href} style={s.reviewProblemBadge}>{label} ›</Link> : <span style={{ ...s.reviewProblemBadge, ...s.reviewProblemBadgeStatic }}>{label}</span>;
+}
+// 상세 섹션 접힘형 배너: 제목 오른쪽에 요약 금액, 클릭하면 기존 내역을 그대로 보여준다(섹션별 독립 상태, 기본 접힘).
+function CollapsibleDetailSection({ icon, title, summary, summaryReview = false, children, first = false }: { icon: string; title: string; summary: string; summaryReview?: boolean; children: ReactNode; first?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
   return (
-    <section role="alert" style={s.blockingReasons}>
-      <b style={s.blockingReasonsTitle}>{lang === "vi" ? "Lý do cần kiểm tra" : "확인 필요 사유"}</b>
-      <ul style={s.blockingReasonList}>{reasons.details.map(item => <li key={item.code}>{item.label}</li>)}</ul>
-      <ReviewReasonActions reasons={reasons} userId={userId} month={month} lang={lang} onExtraWork={onExtraWork} />
+    <section style={{ ...s.detailSection, ...(first ? s.firstDetailSection : {}) }}>
+      <button type="button" style={s.collapsibleHeader} aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(value => !value)}>
+        <span style={s.sectionTitle}><span aria-hidden="true" style={s.sectionIcon}>{icon}</span>{title}</span>
+        <span style={s.collapsibleSummary}>
+          <b style={{ ...s.collapsibleSummaryValue, ...(summaryReview ? s.amountStripReview : {}) }}>{summary}</b>
+          <span aria-hidden="true" style={s.collapsibleChevron}>{open ? "⌃" : "⌄"}</span>
+        </span>
+      </button>
+      {open && <div id={bodyId} style={s.sectionRows}>{children}</div>}
     </section>
   );
 }
@@ -977,7 +1003,6 @@ const s = {
     minWidth: 0,
   },
   extraWorkBadge: { padding: "1px 4px", borderRadius: 999, background: "#f1f5f9", fontSize: 11, lineHeight: 1.2, flexShrink: 0 },
-  extraWorkBadgeAlert: { background: "#ffedd5", boxShadow: "inset 0 0 0 1px #fed7aa" },
   separator: { color: "#9ca3af", flexShrink: 0 },
   position: {
     fontSize: 11,
@@ -1094,9 +1119,14 @@ const s = {
   paymentNotice: { margin: 0, padding: 10, borderRadius: 9, background: "#f0fdf4", color: "#166534", fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere" },
   modalAction: { minWidth: 148, maxWidth: "100%" },
   paymentButton: { minHeight:42, border:0, borderRadius:10, background:"#111827", color:"#fff", fontWeight:800 },
-  reviewReasonRow: { display:"flex", flexWrap:"wrap", alignItems:"center", gap:4, marginTop:4, minWidth:0 },
-  reviewReasonChip: { padding:"2px 7px", borderRadius:999, background:"#fef3c7", color:"#92400e", fontSize:10.5, lineHeight:1.35, fontWeight:800, overflowWrap:"anywhere" },
-  reviewReasonMore: { padding:"2px 6px", borderRadius:999, background:"#f3f4f6", color:"#4b5563", fontSize:10.5, lineHeight:1.35, fontWeight:800 },
+  reviewProblemBadge: { display:"inline-flex", alignItems:"center", maxWidth:"100%", minHeight:24, padding:"2px 8px", border:"1px solid #fcd34d", borderRadius:999, background:"#fef3c7", color:"#92400e", fontSize:10.5, lineHeight:1.3, fontWeight:800, textDecoration:"none", cursor:"pointer", overflowWrap:"anywhere", textAlign:"left", boxSizing:"border-box" },
+  reviewProblemBadgeStatic: { cursor:"default" },
+  reviewMoreButton: { minHeight:24, padding:"2px 7px", border:"1px solid #e5e7eb", borderRadius:999, background:"#f3f4f6", color:"#4b5563", fontSize:10.5, fontWeight:800, cursor:"pointer" },
+  reviewMoreList: { gridColumn:"1 / -1", display:"flex", flexWrap:"wrap", justifyContent:"flex-end", gap:4, minWidth:0 },
+  collapsibleHeader: { width:"100%", display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:8, minHeight:34, padding:"2px 0", border:0, background:"transparent", textAlign:"left", cursor:"pointer", minWidth:0 },
+  collapsibleSummary: { display:"inline-flex", alignItems:"center", gap:6, minWidth:0 },
+  collapsibleSummaryValue: { color:"#111827", fontSize:12.5, fontWeight:900, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" },
+  collapsibleChevron: { color:"#94a3b8", fontSize:12 },
   reviewReasonActions: { display:"flex", flexWrap:"wrap", gap:6, marginTop:4 },
   reviewReasonAction: { display:"inline-flex", alignItems:"center", minHeight:30, padding:"4px 10px", border:"1px solid #fca5a5", borderRadius:8, background:"#fff", color:"#991b1b", fontSize:11.5, fontWeight:800, textDecoration:"none", cursor:"pointer" },
   extraWorkAnchor: { scrollMarginTop:72, minWidth:0 },

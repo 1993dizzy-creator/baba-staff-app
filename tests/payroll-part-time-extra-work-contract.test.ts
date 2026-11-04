@@ -126,7 +126,8 @@ test("extra-work review calculation covers attendance-based contracts while fixe
 test("employee card keeps a stable user key and shows the extra-work badge only for non-empty rows", () => {
   assert.match(payrollPage, /<CompensationCard key=\{employee\.userId\}/);
   assert.match(card, /const extraWorkCount = employee\.partTimeExtraWork\.length/);
-  assert.match(card, /employee\.partTimeExtraWork\.some\(row => row\.status === "review_required" \|\| row\.status === "stale"\)/);
+  // 미검토·재검토 경고는 확인 필요 배지(추가근무 승인 대기)가 담당하므로 헤더 ⏱️는 중립 표시만 한다.
+  assert.doesNotMatch(card, /extraWorkBadgeAlert/);
   assert.match(card, /extraWorkCount > 0 \? \(/);
   assert.doesNotMatch(card, /contract\.payType[^\n]*extraWorkBadge/);
 });
