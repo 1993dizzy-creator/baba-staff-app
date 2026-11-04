@@ -59,7 +59,9 @@ test("snapshot summary only reads verified fields and never invents values", () 
 
 test("ledger page: stored totals, review only when differences exist, raw snapshot preserved", () => {
   assert.match(detail, /\{differenceRows\.length>0&&<section style=\{styles\.differenceCard\}/);
-  assert.match(detail, /저장된 전체 차액 합계"\} value=\{formatVnd\(run\.difference_total\)\}/);
+  // 배치 전체 차액은 상단 요약에서 저장값 그대로 한 번만 표시한다(차액 검토에서 중복 표시하지 않음).
+  assert.equal((detail.match(/formatVnd\(run\.difference_total\)/g) ?? []).length, 1);
+  assert.match(detail, /"차액 합계"\} value=\{formatVnd\(run\.difference_total\)\}/);
   assert.match(detail, /사유 미기록/);
   assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(employee\.calculation_snapshot,null,2\)\}<\/pre>/);
   assert.match(detail, /PAYMENT_LEDGER_FILTERS\.map\(value=><button key=\{value\} type="button" aria-pressed=\{filter===value\}/);
@@ -79,6 +81,23 @@ test("ledger page: load failure vs not found, retry, and stale-batch protection"
   // 실패 화면은 금액·인원수 없이 렌더링된다(run 사용 전 반환)
   const errorReturn = detail.indexOf('if(state.status==="error"||!ledger)return');
   assert.ok(errorReturn > -1 && errorReturn < detail.indexOf("const run=ledger.run;"));
+});
+
+test("compact ledger: spinner loading, stored totals, cost details folded, one expanded row, unpaid shows no amount", () => {
+  assert.match(detail, /import LoadingState from "@\/components\/LoadingState";/);
+  assert.match(detail, /if\(state\.status==="loading"\)return <Container><main style=\{styles\.page\}>\{back\}<LoadingState label=\{vi\?"[^"]+":"급여 지급내역을 불러오는 중입니다…"\} variant="page"\/>/);
+  assert.match(payrollPage, /loading&&!overview\?<LoadingState label=\{overviewText\.loading\} variant="page"\/>/);
+  assert.match(detail, /"실제 지급 합계"\}<\/span><b style=\{styles\.mainMetricValue\}>\{formatVnd\(run\.actual_paid_total\)\}/);
+  assert.match(detail, /"계산 실수령 합계"\} value=\{formatVnd\(run\.calculated_net_total\)\}/);
+  const cost = detail.slice(detail.indexOf("<details style={styles.costDetails}>"), detail.indexOf("</details>", detail.indexOf("<details style={styles.costDetails}>")));
+  for (const field of ["employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "actual_company_cost_total", "started_at", "completed_at"]) assert.match(cost, new RegExp(`run\\.${field}`), field);
+  assert.match(detail, /const open=expandedId===employee\.id;/);
+  assert.match(detail, /onToggle=\{id=>setExpandedId\(current=>current===id\?null:id\)\}/);
+  assert.match(detail, /aria-expanded=\{open\} aria-controls=\{panelId\}/);
+  assert.match(detail, /\{paid\?<b style=\{styles\.rowAmount\}>\{formatVnd\(employee\.actual_paid_amount\?\?0\)\}<\/b>:null\}/);
+  assert.match(detail, /\{paid&&difference!==0\?<span style=\{styles\.rowDifference\}>/);
+  // 원본 JSON은 스냅샷 영역 안의 별도 접힘 영역에 그대로 보존
+  assert.match(detail, /<details><summary style=\{styles\.summary\}>\{vi\?"Dữ liệu gốc \(JSON\)":"원본 JSON"\}<\/summary><pre style=\{styles\.snapshot\}>/);
 });
 
 test("top payment status links to the batch ledger only when the batch is completed", () => {

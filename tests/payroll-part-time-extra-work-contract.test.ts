@@ -92,7 +92,8 @@ test("extra-work action clicks do not toggle row details", () => {
 });
 
 test("extra-work actions preserve open UI and scroll through background refresh", () => {
-  assert.match(payrollPage, /loading&&!overview\?<div style=\{styles\.state\}/);
+  // 초기 로딩(자료 없음)에만 공통 스피너를 쓰고, 기존 자료가 있는 재조회 중에는 목록을 유지한다.
+  assert.match(payrollPage, /loading&&!overview\?<LoadingState label=\{overviewText\.loading\} variant="page"\/>/);
   assert.match(payrollPage, /error&&!overview\?<div role="alert"/);
   assert.match(payrollPage, /<CompensationCard key=\{employee\.userId\}/);
   assert.match(ui, /captureScrollPosition\(\);[\s\S]*?setBusyId\(attendanceRecordId\)/);
