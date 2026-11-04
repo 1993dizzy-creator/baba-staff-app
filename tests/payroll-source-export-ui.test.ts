@@ -16,7 +16,7 @@ test("admin payroll main screen no longer eager-loads the monthly source-readine
   assert.doesNotMatch(page,/sourceExport/);
   assert.doesNotMatch(page,/기존 급여 계산·지급/);
   // 기존 지급 UI는 그대로 유지된다.
-  assert.match(page,/PaymentBatchCard/);
+  assert.match(page,/PayrollDashboardSummary summary=\{dashboardSummary\} paymentBatch=\{overview\.paymentBatch\}/);
   assert.match(page,/CompensationCard/);
 });
 

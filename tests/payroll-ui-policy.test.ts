@@ -20,7 +20,7 @@ test("payroll pages use forms and mobile cards without prompt or wide tables", (
   for (const source of [list, detail, settings])
     assert.doesNotMatch(source, /prompt\s*\(/);
   assert.doesNotMatch(list, /<table/);
-  assert.match(list, /PaymentBatchCard/);
+  assert.match(list, /paymentBatch=\{overview\.paymentBatch\}/);
   assert.match(detail, /Chi trả theo nhân viên|직원별 지급 내역/);
   assert.match(settings, /PayrollModal/);
 });

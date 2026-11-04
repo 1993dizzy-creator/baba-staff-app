@@ -65,7 +65,8 @@ test("UI keeps grouped compact cards, non-owner part totals, details, and paymen
   assert.match(page, /group\.part!=="owner"/);
   assert.match(page, /<CombinedPartTotal employees=\{group\.employees\}/);
   assert.match(page, /<CompensationCard/);
-  assert.ok(page.indexOf("<PaymentBatchCard") > page.indexOf("<CombinedPartTotal"));
+  // 하단 지급 현황 카드는 제거되고 상단 급여지급현황만 남는다.
+  assert.doesNotMatch(page, /PaymentBatchCard/);
 });
 
 test("employee detail groups salary, month application, insurance, and adjustment controls", () => {

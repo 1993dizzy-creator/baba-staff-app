@@ -7,6 +7,7 @@ import { buildDifferenceReview, countPaymentLedgerFilters, matchesPaymentLedgerF
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
 const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
+const dashboardSummary = read("components/payroll/PayrollDashboardSummary.tsx");
 
 const row = (name: string, status: "paid" | "unpaid", calculated: number | null, actual: number | null, difference: number | null, reason: string | null = null): PaymentLedgerEmployee =>
   ({ employee_name: name, payment_status: status, calculated_net_amount: calculated, actual_paid_amount: actual, difference_amount: difference, difference_reason: reason });
@@ -80,6 +81,12 @@ test("ledger page: load failure vs not found, retry, and stale-batch protection"
   assert.ok(errorReturn > -1 && errorReturn < detail.indexOf("const run=ledger.run;"));
 });
 
-test("payroll page links to the batch ledger only when a batch exists", () => {
-  assert.match(payrollPage, /\{run\?\.id\?<Link href=\{`\/admin\/payroll\/\$\{run\.id\}`\} style=\{styles\.ledgerLink\}>\{vi\?"Xem lịch sử chi trả":"지급내역 보기"\} ›<\/Link>:null\}/);
+test("top payment status links to the batch ledger only when the batch is completed", () => {
+  assert.doesNotMatch(payrollPage, /PaymentBatchCard|ledgerLink|지급내역 보기/);
+  assert.match(payrollPage, /<PayrollDashboardSummary summary=\{dashboardSummary\} paymentBatch=\{overview\.paymentBatch\}/);
+  assert.match(dashboardSummary, /if \(paymentBatch\?\.status === "completed" && paymentBatch\.id\) \{/);
+  assert.match(dashboardSummary, /<Link href=\{`\/admin\/payroll\/\$\{paymentBatch\.id\}`\}[^>]*>\s*\{count\}\s*<span>\{t\.completed\}<\/span>\s*<span aria-hidden="true">›<\/span>/);
+  // 지급 중·배치 없음: 기존 인원 + 급여지급현황 표기 유지
+  assert.match(dashboardSummary, /\{count\}\s*<span>\{t\.title\}<\/span>/);
+  for (const phrase of ['completed: "지급완료"', 'completed: "Đã trả xong"']) assert.ok(dashboardSummary.includes(phrase), phrase);
 });
