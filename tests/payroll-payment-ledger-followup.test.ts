@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { getPaymentApplicabilityBadges } from "../lib/payroll/payment-ledger-view.ts";
+// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { parsePayrollMonthParam, payrollOverviewHref } from "../lib/payroll/payroll-month-param.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
