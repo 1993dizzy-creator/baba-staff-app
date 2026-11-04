@@ -78,6 +78,7 @@ import MonthCloseSheet from "./MonthCloseSheet";
 import PartnerSelect from "./PartnerSelect";
 import ManualDisplayEditor, { LedgerEditShell } from "./ManualDisplayEditor";
 import { AccountField, ManualTransactionDelete, ManualTransactionEditor, manualCategoryOptions } from "./ManualTransactionForm";
+import { CardDepositFields, cardDepositText, useCardDepositDraft, useCardDepositSources } from "../card-settlements/CardDepositForm";
 import CancelledManualTransactions from "./CancelledManualTransactions";
 import ManualDisplayHistory from "./ManualDisplayHistory";
 import PaymentVerificationSection, { type Verification } from "./PaymentVerificationSection";
@@ -1150,7 +1151,7 @@ function LedgerEntriesContent() {
                 </dl>
                 <p className={styles.statusHint}>{vi?"Tiền thực nhận tính theo tháng nhập tiền; phí/chênh lệch tính theo tháng bán.":"실제 입금은 입금월 기준, 수수료/차액은 매출월 귀속 기준입니다."}</p>
                 {cardSettlementError?.month===month?<p role="alert" className={styles.error}>{cardSettlementError.message}</p>:cardSettlement?.month!==month?<InventoryLoadingCard lang={lang} inline minHeight={56} label={vi?"Đang tải tình hình thẻ…":"카드 정산 현황을 불러오는 중입니다…"} />:null}
-                <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Đăng ký tiền vào và kết nối doanh thu tại trang chi tiết.":"입금 등록과 매출 연결은 상세 페이지에서 진행합니다."}</p><Link href={ledgerMonthHref("/admin/ledger/card-settlements", "", month)} className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
+                <div className={styles.statusActions}><p className={styles.statusHint}>{vi?"Ghi nhận tiền thẻ về tại Thêm giao dịch › Thu › Tiền thẻ về.":"카드 입금 등록은 장부 내역 추가 › 수입 › 카드입금에서 진행합니다."}</p><Link href={ledgerMonthHref("/admin/ledger/card-settlements", "", month)} className={styles.statusDetailLink}>{vi?"Xem chi tiết":"상세 보기"} ›</Link></div>
               </div>:null}
             </section>
             <section className={styles.statusCard} aria-labelledby="investment-title">
@@ -2251,9 +2252,17 @@ function ManualEntrySheet({
   // 👥 가불 looks like an expense category but is saved as a payroll advance
   // (payroll_payment + payroll adjustment), never as a P&L expense.
   const payrollAdvance = type === "expense" && isPayrollAdvanceManualAction(categoryId);
+  // 수입은 먼저 💳 카드입금 / 💵 일반수입을 고른다. 카드입금은 일반 수입으로 기표하지 않고
+  // 기존 카드정산 등록(미정산 카드매출 자동 배분 RPC)으로만 저장한다.
+  const [incomeMode, setIncomeMode] = useState<"card" | "general" | null>(null);
+  const cardDeposit = type === "income" && incomeMode === "card",
+    incomeChooser = type === "income" && incomeMode === null;
+  const cardSources = useCardDepositSources(month, cardDeposit);
+  const cardDraft = useCardDepositDraft({ lang, sources: cardSources.sources, saving, setSaving, onCreated: () => onSaved() });
   function changeType(next: EntryType) {
     setType(next);
     setCategoryId("");
+    if (next === "income") setIncomeMode(null);
   }
   async function changeExpenseCategory(next: string) {
     setCategoryId(next);
@@ -2286,7 +2295,8 @@ function ManualEntrySheet({
   }, [setSaving]);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (submitInFlightRef.current || saving || !manualSheetMountedRef.current) return;
+    if (submitInFlightRef.current || saving || !manualSheetMountedRef.current || incomeChooser) return;
+    if (cardDeposit) { void cardDraft.submit(); return; }
     submitInFlightRef.current = true;
     setSaving(true);
     setError("");
@@ -2387,16 +2397,18 @@ function ManualEntrySheet({
       footer={
         <button
           form="manual-ledger-entry"
-          disabled={saving}
+          disabled={saving || incomeChooser || (cardDeposit && !cardDraft.canSubmit)}
           style={{ ...primaryButtonStyle, width: "100%" }}
         >
           {saving
             ? vi
               ? "Đang lưu..."
               : "저장 중…"
-            : vi
-              ? "Lưu vào sổ"
-              : "장부에 저장"}
+            : cardDeposit
+              ? `💳 ${cardDepositText[lang].submitDeposit}`
+              : vi
+                ? "Lưu vào sổ"
+                : "장부에 저장"}
         </button>
       }
     >
@@ -2421,6 +2433,17 @@ function ManualEntrySheet({
             },
           ]}
         />
+        {type === "income" ? (
+          <div className={styles.incomeModeChooser} role="group" aria-label={vi ? "Loại thu" : "수입 유형"} data-manual-field="income-mode">
+            {([["card", `💳 ${vi ? "Tiền thẻ về" : "카드입금"}`], ["general", `💵 ${vi ? "Thu thông thường" : "일반수입"}`]] as const).map(([mode, label]) => (
+              <button key={mode} type="button" className={styles.incomeModeButton} aria-pressed={incomeMode === mode} disabled={saving}
+                onClick={() => { setIncomeMode(mode); setError(""); }}>{label}</button>
+            ))}
+          </div>
+        ) : null}
+        {cardDeposit ? (
+          <CardDepositFields lang={lang} draft={cardDraft} sources={cardSources.sources} sourcesError={cardSources.error} disabled={saving} />
+        ) : incomeChooser ? null : (
         <div className={styles.manualGrid}>
           <div className={`${styles.manualRow} ${type === "transfer" ? styles.manualSingle : ""}`}>
             <BarField label={`💵 ${vi ? "Số tiền" : "금액"}`} required compact>
@@ -2677,6 +2700,7 @@ function ManualEntrySheet({
             </BarField>
           </div>
         </div>
+        )}
         {error ? (
           <p className={styles.error} role="alert">
             {error}
