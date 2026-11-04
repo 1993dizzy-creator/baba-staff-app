@@ -33,6 +33,7 @@ import { currencyAmount, formatIntegerInput, integerInputDigits, isMonthFirstDat
 import { comparePayrollEmployees } from "@/lib/payroll/employee-sort";
 import { ui } from "@/lib/styles/ui";
 import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
+import { contractSaveApplied, type SubmittedContractSave } from "@/lib/payroll/contract-save-verification";
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
@@ -152,6 +153,12 @@ export default function PayrollSettingsPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState("");
+  const [usersReloadKey, setUsersReloadKey] = useState(0);
+  const [contractsLoadFailed, setContractsLoadFailed] = useState(false);
+  const [contractsReloading, setContractsReloading] = useState(false);
+  const [notice, setNotice] = useState("");
+  // 결과가 불확실한 계약 저장 요청. 반영 여부를 확인하기 전에는 같은 요청을 다시 보내지 않는다.
+  const [pendingContractSave, setPendingContractSave] = useState<SubmittedContractSave | null>(null);
   const [employeeListOpen, setEmployeeListOpen] = useState(true);
   const [scrollRequestVersion, setScrollRequestVersion] = useState(0);
   const [userId, setUserId] = useState<number | null>(null);
@@ -172,37 +179,40 @@ export default function PayrollSettingsPage() {
     useState<SelectedInsuranceState | null>(null);
   const employeeSettingsRef = useRef<HTMLDivElement>(null);
   const pendingScrollUserIdRef = useRef<number | null>(null);
+  // 계약 이력 조회. 성공하면 화면 상태에 반영하고 이력을 돌려준다. 실패하면 null을 돌려주고
+  // 오류 문구를 표시한다(재조회 버튼 제공). 저장 직후 재조회 실패를 저장 실패와 구분하는 데 쓴다.
   const load = useCallback(
-    async (id: number, signal?: AbortSignal) => {
+    async (id: number, signal?: AbortSignal): Promise<Contract[] | null> => {
+      const loadFailed = vi
+        ? "Không thể tải hợp đồng lương."
+        : "급여계약을 불러오지 못했습니다.";
       try {
         const response = await fetch(
           `/api/admin/payroll/contracts?userId=${id}`,
           { cache: "no-store", signal },
         );
-        if (signal?.aborted) return;
-        const data = await response.json();
-        if (signal?.aborted) return;
-        if (response.ok) {
-          setContracts(data.history ?? []);
+        if (signal?.aborted) return null;
+        const data = await response.json().catch(() => null);
+        if (signal?.aborted) return null;
+        if (response.ok && data?.ok !== false && data) {
+          const history: Contract[] = data.history ?? [];
+          setContracts(history);
           setCurrentContract(data.current ?? null);
           setWorkSchedules(data.workSchedules ?? []);
+          setContractsLoadFailed(false);
+          return history;
         }
-        else
-          setError(
-            vi
-              ? "Không thể tải hợp đồng lương."
-              : "급여계약을 불러오지 못했습니다.",
-          );
+        setError(loadFailed);
+        setContractsLoadFailed(true);
+        return null;
       } catch (loadError: unknown) {
         if (
           signal?.aborted ||
           (loadError instanceof Error && loadError.name === "AbortError")
-        ) return;
-        setError(
-          vi
-            ? "Không thể tải hợp đồng lương."
-            : "급여계약을 불러오지 못했습니다.",
-        );
+        ) return null;
+        setError(loadFailed);
+        setContractsLoadFailed(true);
+        return null;
       }
     },
     [vi],
@@ -224,22 +234,34 @@ export default function PayrollSettingsPage() {
   }
   useEffect(() => {
     if (activeTab !== "employee") return;
+    let active = true;
     setUsersLoading(true);
     setUsersError("");
+    // HTTP 오류·잘못된 응답은 "직원 0명"이 아니라 조회 실패로 표시한다.
     void fetch("/api/admin/payroll/users", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
-        setUsers((data.users ?? []).sort(comparePayrollEmployees));
+      .then(async (response) => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data || data.ok === false || !Array.isArray(data.users)) throw new Error("PAYROLL_USERS_READ_FAILED");
+        return data.users as User[];
       })
-      .catch(() =>
-        setUsersError(
-          vi
-            ? "Không thể tải danh sách nhân viên."
-            : "직원 목록을 불러오지 못했습니다.",
-        ),
-      )
-      .finally(() => setUsersLoading(false));
-  }, [activeTab, vi]);
+      .then((loadedUsers) => {
+        if (active) setUsers(loadedUsers.sort(comparePayrollEmployees));
+      })
+      .catch(() => {
+        if (active)
+          setUsersError(
+            vi
+              ? "Không thể tải danh sách nhân viên."
+              : "직원 목록을 불러오지 못했습니다.",
+          );
+      })
+      .finally(() => {
+        if (active) setUsersLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTab, vi, usersReloadKey]);
   useEffect(() => {
     if (activeTab !== "employee" || usersLoading) return;
     const requested = Number(requestedUserIdParam);
@@ -256,6 +278,9 @@ export default function PayrollSettingsPage() {
     setContracts([]);
     setCurrentContract(null);
     setError("");
+    setNotice("");
+    setContractsLoadFailed(false);
+    setPendingContractSave(null);
     void load(userId, controller.signal).finally(() => {
       if (!controller.signal.aborted) setContractsLoading(false);
     });
@@ -344,6 +369,7 @@ export default function PayrollSettingsPage() {
   const nextFixedRaise = Number(form.fixedRaiseAmount || 0);
   const fixedRaiseChanged = nextFixedRaise !== currentFixedRaise;
   function openForm() {
+    if (pendingContractSave) return;
     const next = fromContract(current);
     setForm(selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
     setFormMode("create");
@@ -354,6 +380,7 @@ export default function PayrollSettingsPage() {
     setOpen(true);
   }
   function openCorrectionForm() {
+    if (pendingContractSave) return;
     const latest = contracts[0] ?? null;
     if (!latest) return;
     const next = { ...fromContract(latest), effectiveFrom: latest.effectiveFrom };
@@ -392,45 +419,109 @@ export default function PayrollSettingsPage() {
       setModalError(payrollContractErrorMessage(l, "CONTRACT_CORRECTION_REASON_REQUIRED"));
       return;
     }
+    if (pendingContractSave) return;
+    const correcting = formMode === "correct" ? correctionTarget : null;
+    const submitted: SubmittedContractSave = correcting
+      ? { mode: "correct", contractId: correcting.id, expectedAuditVersion: correcting.auditVersion, effectiveFrom: form.effectiveFrom, payType: form.payType, baseSalary: Number(form.baseSalary), fixedRaiseAmount: Number(form.fixedRaiseAmount) }
+      : { mode: "create", knownContractIds: contracts.map((contract) => contract.id), effectiveFrom: form.effectiveFrom, payType: form.payType, baseSalary: Number(form.baseSalary), fixedRaiseAmount: Number(form.fixedRaiseAmount) };
+    const failureCode = formMode === "correct" ? "PAYROLL_CONTRACT_CORRECTION_FAILED" : "PAYROLL_CONTRACT_CREATE_FAILED";
     setSaving(true);
+    setNotice("");
     try {
-      const correcting = formMode === "correct" ? correctionTarget : null;
-      const response = await fetch(correcting ? "/api/admin/payroll/contracts/correct" : "/api/admin/payroll/contracts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          calculationBasis: selectedRequiresFixedMonthly ? "fixed_monthly" : "minute",
-          timeBlockMinutes: 60,
-          roundingMode: "none",
-          lateAdjustmentMode: "separate",
-          overtimeMode: "ignore",
-          earlyLeaveAdjustmentMode: "deduct_minutes",
-          paidLeaveMode: "unpaid",
-          note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : correcting?.note ?? null,
-          userId,
-          contractId: correcting?.id,
-          expectedRevision: correcting?.revision,
-          expectedAuditVersion: correcting?.auditVersion,
-          expectedEffectiveFrom: correcting?.effectiveFrom,
-          correctionReason: correcting ? correctionReason.trim() : undefined,
-          baseSalary: Number(form.baseSalary),
-          fixedRaiseAmount: Number(form.fixedRaiseAmount),
-          standardWorkdays: selectedRequiresFixedMonthly ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
-          standardMinutesPerDay,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setModalError(payrollContractErrorMessage(l, data.code, formMode === "correct" ? "PAYROLL_CONTRACT_CORRECTION_FAILED" : "PAYROLL_CONTRACT_CREATE_FAILED"));
+      let response: Response;
+      try {
+        response = await fetch(correcting ? "/api/admin/payroll/contracts/correct" : "/api/admin/payroll/contracts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...form,
+            calculationBasis: selectedRequiresFixedMonthly ? "fixed_monthly" : "minute",
+            timeBlockMinutes: 60,
+            roundingMode: "none",
+            lateAdjustmentMode: "separate",
+            overtimeMode: "ignore",
+            earlyLeaveAdjustmentMode: "deduct_minutes",
+            paidLeaveMode: "unpaid",
+            note: fixedRaiseChanged ? form.fixedRaiseReason.trim() : correcting?.note ?? null,
+            userId,
+            contractId: correcting?.id,
+            expectedRevision: correcting?.revision,
+            expectedAuditVersion: correcting?.auditVersion,
+            expectedEffectiveFrom: correcting?.effectiveFrom,
+            correctionReason: correcting ? correctionReason.trim() : undefined,
+            baseSalary: Number(form.baseSalary),
+            fixedRaiseAmount: Number(form.fixedRaiseAmount),
+            standardWorkdays: selectedRequiresFixedMonthly ? 26 : form.payType === "monthly" ? Number(form.standardWorkdays) : null,
+            standardMinutesPerDay,
+          }),
+        });
+      } catch {
+        // 네트워크 오류·응답 유실 — 기존 계약을 조회해 실제 반영 여부를 확인한다(자동 재저장 없음).
+        await verifyContractSave(userId, submitted);
         return;
       }
-      await load(userId);
+      const data = await response.json().catch(() => null) as { ok?: boolean; code?: string } | null;
+      if (!response.ok) {
+        if (!data) {
+          // 게이트웨이 오류 등 응답 본문 유실 — 결과가 불확실하므로 반영 여부를 먼저 확인한다.
+          await verifyContractSave(userId, submitted);
+          return;
+        }
+        // 서버가 실패를 응답했다 — 계약은 바뀌지 않았다. 입력값은 그대로 유지한다.
+        setModalError(payrollContractErrorMessage(l, data.code, failureCode));
+        return;
+      }
+      if (!data || data.ok !== true) {
+        await verifyContractSave(userId, submitted);
+        return;
+      }
+      // 저장 성공. 저장 후 재조회 실패는 저장 실패와 구분해 안내한다.
+      const history = await load(userId);
       setOpen(false);
+      setNotice(history
+        ? (vi ? "Đã lưu hợp đồng lương." : "급여계약을 저장했습니다.")
+        : (vi ? "Đã lưu hợp đồng lương nhưng chưa tải lại được danh sách hợp đồng. Vui lòng tải lại." : "급여계약은 저장되었지만 계약 목록을 다시 불러오지 못했습니다. 다시 조회해주세요."));
     } catch {
-      setModalError(payrollContractErrorMessage(l, formMode === "correct" ? "PAYROLL_CONTRACT_CORRECTION_FAILED" : "PAYROLL_CONTRACT_CREATE_FAILED"));
+      setModalError(payrollContractErrorMessage(l, failureCode));
     } finally {
       setSaving(false);
+    }
+  }
+  async function verifyContractSave(id: number, submitted: SubmittedContractSave) {
+    const history = await load(id);
+    if (!history) {
+      setPendingContractSave(submitted);
+      setModalError(vi
+        ? "Chưa xác nhận được kết quả lưu. Giá trị đã nhập vẫn được giữ. Để tránh lưu trùng, hãy kiểm tra lại kết quả trước khi lưu."
+        : "저장 결과를 확인하지 못했습니다. 입력값은 유지됩니다. 중복 저장을 막기 위해 결과를 다시 확인한 뒤 진행해주세요.");
+      return;
+    }
+    setPendingContractSave(null);
+    setError("");
+    if (contractSaveApplied(history, submitted)) {
+      setModalError("");
+      setOpen(false);
+      setNotice(vi ? "Đã xác nhận hợp đồng lương được lưu." : "급여계약 저장 반영을 확인했습니다.");
+      return;
+    }
+    setModalError(vi
+      ? "Đã kiểm tra: hợp đồng chưa được lưu. Giá trị đã nhập vẫn được giữ — hãy kiểm tra rồi lưu lại."
+      : "확인 결과 저장이 반영되지 않았습니다. 입력값은 유지되니 확인 후 다시 저장해주세요.");
+  }
+  async function recheckContracts() {
+    if (!userId || contractsReloading || saving) return;
+    setContractsReloading(true);
+    try {
+      if (pendingContractSave) {
+        setModalError("");
+        await verifyContractSave(userId, pendingContractSave);
+        return;
+      }
+      setError("");
+      const history = await load(userId);
+      if (history) setNotice("");
+    } finally {
+      setContractsReloading(false);
     }
   }
   return (
@@ -468,7 +559,7 @@ export default function PayrollSettingsPage() {
           <section style={s.card}>
             <div style={s.listHeader}>
               <b style={s.listTitle}>
-                {vi ? `Danh sách nhân viên ${users.length} người` : `직원 목록 ${users.length}명`}
+                {usersError ? (vi ? "Danh sách nhân viên" : "직원 목록") : vi ? `Danh sách nhân viên ${users.length} người` : `직원 목록 ${users.length}명`}
                 {!employeeListOpen && selected ? <span style={s.selectedSummary}> · {vi ? "Đã chọn" : "선택"}: {selected.name ?? selected.username} · {employeeMetaLabel(selected)}</span> : null}
               </b>
               <button
@@ -490,7 +581,10 @@ export default function PayrollSettingsPage() {
                 aria-label={vi ? "Tìm nhân viên" : "직원 검색"}
               />
               {usersError ? (
-              <p role="alert" style={s.error}>{usersError}</p>
+              <div role="alert" style={s.error}>
+                {usersError}
+                <button type="button" style={s.retryButton} disabled={usersLoading} onClick={() => setUsersReloadKey((key) => key + 1)}>{vi ? "Tải lại" : "다시 조회"}</button>
+              </div>
             ) : usersLoading ? (
               <p style={s.emptyState}>{vi ? "Đang tải danh sách nhân viên…" : "직원 목록을 불러오는 중입니다…"}</p>
             ) : visible.length === 0 ? (
@@ -527,7 +621,18 @@ export default function PayrollSettingsPage() {
             )}</div> : null}
           </section>
 
-          {error ? <p role="alert" style={s.error}>{error}</p> : null}
+          {notice ? <p role="status" style={s.notice}>{notice}</p> : null}
+          {pendingContractSave && !open ? (
+            <div role="alert" style={s.error}>
+              {vi ? "Chưa xác nhận được kết quả lưu hợp đồng lương. Vui lòng kiểm tra lại trước khi lưu tiếp." : "급여계약 저장 결과를 아직 확인하지 못했습니다. 다시 저장하기 전에 결과를 확인해주세요."}
+              <button type="button" style={s.retryButton} disabled={contractsReloading || saving} onClick={() => void recheckContracts()}>{vi ? "Kiểm tra lại kết quả lưu" : "저장 결과 다시 확인"}</button>
+            </div>
+          ) : error ? (
+            <div role="alert" style={s.error}>
+              {error}
+              {contractsLoadFailed && selected ? <button type="button" style={s.retryButton} disabled={contractsReloading} onClick={() => void recheckContracts()}>{contractsReloading ? (vi ? "Đang tải" : "조회 중") : vi ? "Tải lại" : "다시 조회"}</button> : null}
+            </div>
+          ) : null}
           {!selected ? (
             <p style={s.emptyState}>
               {vi
@@ -624,9 +729,15 @@ export default function PayrollSettingsPage() {
             closeLabel={vi ? "Đóng" : "닫기"}
             onClose={closeForm}
             footer={
+              pendingContractSave ? (
+                <button type="button" style={s.modalSave} disabled={contractsReloading || saving} onClick={() => void recheckContracts()}>
+                  {contractsReloading ? (vi ? "Đang kiểm tra" : "확인 중") : vi ? "Kiểm tra lại kết quả lưu" : "저장 결과 다시 확인"}
+                </button>
+              ) : (
               <button form="contract" style={s.modalSave} disabled={saving || (selectedRequiresWorkSchedule && automaticStandardMinutes === null)}>
                 {saving ? (vi ? "Đang lưu" : "저장 중") : vi ? "Lưu" : "저장"}
               </button>
+              )
             }
           >
             <form id="contract" style={s.form} onSubmit={submit}>
@@ -917,6 +1028,8 @@ const s = {
     minWidth: 0,
   },
   error: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#fef2f2", color: "#b91c1c", fontSize: 12 },
+  notice: { margin: 0, padding: "8px 9px", borderRadius: 9, background: "#f0fdf4", color: "#166534", fontSize: 12 },
+  retryButton: { display: "block", minHeight: 30, marginTop: 6, padding: "4px 10px", border: "1px solid #fca5a5", borderRadius: 8, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800 },
   emptyState: { margin: 0, padding: "10px 11px", border: "1px dashed #d1d5db", borderRadius: 10, color: "#6b7280", fontSize: 12, textAlign: "center" },
   input: {
     width: "100%",

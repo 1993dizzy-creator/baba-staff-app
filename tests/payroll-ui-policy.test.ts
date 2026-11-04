@@ -271,7 +271,7 @@ test("common payroll settings has one read and one unified save flow", () => {
     "directorInsuranceRateBp",
   ]) assert.match(commonSettings, new RegExp(`${field}:`));
   assert.match(commonSettings, /JSON\.stringify\(payload\) !== JSON\.stringify\(snapshotPayload\)/);
-  assert.match(commonSettings, /disabled=\{!dirty \|\| !valid \|\| saving\}/);
+  assert.ok(commonSettings.includes('disabled={!dirty || !valid || saving || rechecking || error === "unverified"}'));
   assert.match(commonSettings, /setDraft\(next\);[\s\S]*setSnapshot\(next\)/);
   assert.match(commonSettings, /percentToBasisPoints/);
   assert.equal((commonSettings.match(/공통 설정 저장/g) ?? []).length, 1);

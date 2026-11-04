@@ -25,6 +25,7 @@ import {
 import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
+import { lookupEmployeePaymentStatus } from "@/lib/payroll/payment-result-check";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
 export function mealAllowanceBadgeLabel(lang: "ko" | "vi") {
@@ -52,6 +53,7 @@ export function CompensationCard({
   future,
   monthClosed,
   refresh,
+  paymentLocked = false,
   mealAllowanceEligible = false,
   attendanceBonusEligible = false,
 }: {
@@ -64,6 +66,7 @@ export function CompensationCard({
   future: boolean;
   monthClosed: boolean;
   refresh: () => Promise<boolean>;
+  paymentLocked?: boolean;
   mealAllowanceEligible?: boolean;
   attendanceBonusEligible?: boolean;
 }) {
@@ -246,7 +249,7 @@ export function CompensationCard({
                 {employee.amounts.companyPitAmount > 0 && <Row label={t.companyPit} value={formatVnd(employee.amounts.companyPitAmount)} muted />}
                 <small style={s.help}>{lang === "vi" ? "Không khấu trừ vào thực nhận nhân viên." : "직원 실수령액에서 차감하지 않습니다."}</small>
               </DetailSection>}
-              {!future && <>{(monthClosed || employee.payment?.payment_status === "paid") && <button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (!monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>}{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월 종료 후 지급 가능"}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
+              {!future && <>{(monthClosed || employee.payment?.payment_status === "paid") && <button type="button" style={s.paymentButton} disabled={employee.payment?.payment_status !== "paid" && (paymentLocked || !monthClosed || employee.calculationStatus !== "calculable" || !employee.calculationHash)} onClick={()=>setPaymentOpen(true)}>{employee.payment?.payment_status === "paid" ? (lang === "vi" ? "Xem chi tiết chi trả" : "지급 내역 확인") : paymentLocked && monthClosed ? (lang === "vi" ? "Chi trả sau khi tải danh sách" : "목록 조회 후 지급 가능") : !monthClosed ? (lang === "vi" ? "Tháng lương chưa kết thúc" : "급여 월 미종료") : employee.calculationStatus !== "calculable" || !employee.calculationHash ? (lang === "vi" ? "Không thể chi trả" : "지급 불가") : (lang === "vi" ? "Chi trả lương" : "급여 지급")}</button>}{!monthClosed&&employee.payment?.payment_status!=="paid"&&<small style={s.help}>{lang==="vi"?"Có thể chi trả sau khi tháng lương kết thúc.":"급여 대상 월 종료 후 지급 가능"}</small>}{blockingReasonLabels.length>0&&<div role="alert" style={s.blockingReasons}><b style={s.blockingReasonsTitle}>{lang==="vi"?"Lý do chưa thể chi trả":"지급 불가 사유"}</b><ul style={s.blockingReasonList}>{blockingReasonLabels.map(label=><li key={label}>{label}</li>)}</ul></div>}</>}
             </>
           )}
         </div>
@@ -261,7 +264,7 @@ export function CompensationCard({
           refresh={refresh}
         />
       )}
-      {paymentOpen && <PaymentModal employee={employee} month={month} lang={lang} close={()=>setPaymentOpen(false)} refresh={refresh}/>}
+      {paymentOpen && <PaymentModal employee={employee} month={month} lang={lang} close={()=>setPaymentOpen(false)} refresh={refresh} paymentLocked={paymentLocked}/>}
     </article>
   );
 }
@@ -588,7 +591,14 @@ function AdjustmentModal({
     </PayrollModal>
   );
 }
-function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverviewEmployee;month:string;lang:"ko"|"vi";close:()=>void;refresh:()=>Promise<boolean>}){
+type PaymentOutcome={kind:"checking"}|{kind:"unknown"}|{kind:"paid";confirmed:boolean;refreshed:boolean}|{kind:"alreadyPaid";refreshed:boolean};
+function paymentOutcomeMessage(outcome:PaymentOutcome,vi:boolean){
+  if(outcome.kind==="checking")return vi?"Không nhận được phản hồi của yêu cầu chi trả. Đang kiểm tra bản ghi chi trả hiện có để xác nhận đã xử lý hay chưa.":"지급 요청의 응답을 받지 못했습니다. 기존 지급 기록을 조회해 처리 여부를 확인하고 있습니다.";
+  if(outcome.kind==="unknown")return vi?"Chưa xác nhận được kết quả chi trả. Để tránh chi trả trùng, đừng chi trả lại — hãy bấm \"Kiểm tra lại kết quả chi trả\".":"지급 처리 여부를 확인하지 못했습니다. 중복 지급을 막기 위해 다시 지급하지 말고 '지급 결과 다시 확인'을 눌러주세요.";
+  const head=outcome.kind==="alreadyPaid"?(vi?"Đã có bản ghi chi trả cho nhân viên này nên không chi trả trùng.":"이미 지급된 기록이 있어 중복 지급하지 않았습니다."):outcome.confirmed?(vi?"Đã xác nhận bản ghi chi trả. Chi trả lương đã hoàn tất.":"지급 기록이 확인되었습니다. 급여 지급이 완료되었습니다."):(vi?"Chi trả lương đã hoàn tất.":"급여 지급이 완료되었습니다.");
+  return outcome.refreshed?head:`${head} ${vi?"Tuy nhiên chưa tải lại được danh sách lương. Đừng chi trả lại — hãy tải lại danh sách.":"다만 급여 목록을 다시 불러오지 못했습니다. 다시 지급하지 말고 목록을 다시 조회해주세요."}`;
+}
+function PaymentModal({employee,month,lang,close,refresh,paymentLocked}:{employee:PayrollOverviewEmployee;month:string;lang:"ko"|"vi";close:()=>void;refresh:()=>Promise<boolean>;paymentLocked:boolean}){
   const vi=lang==="vi";const payment=employee.payment;const calculated=employee.amounts.netPayoutAmount;
   const [actual,setActual]=useState(String(payment?.actual_paid_amount??calculated));const [date,setDate]=useState(payment?.payment_date??new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Ho_Chi_Minh",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()));const [reason,setReason]=useState(payment?.difference_reason??"");const[cancelMode,setCancelMode]=useState(false);const[cancelReason,setCancelReason]=useState("");const[busy,setBusy]=useState(false);const[error,setError]=useState("");
   const [fundAccounts,setFundAccounts]=useState<Array<{id:number;code:string;display_name:string}>>([]);
@@ -608,9 +618,15 @@ function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverv
     return()=>{active=false};
   },[payment?.fund_account_id,vi]);
   const actualNumber=Number(actual||0);const difference=actualNumber-calculated;const actor=payment?.paid_actor;const actorLabel=actor?.name||actor?.full_name||actor?.username||"—";
-  async function submit(){if(busy||!accountsLoaded||!fundAccountId||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date,fundAccountId})});const data=await response.json();if(!response.ok){if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:["PAYROLL_MONTH_NOT_CLOSED","PAYROLL_CALCULATION_STALE","PAYROLL_FUND_ACCOUNT_INVALID","PAYROLL_LEDGER_PROJECTION_FAILED"].includes(data.code)?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
+  // 지급 결과(outcome)가 정해지면 같은 지급 요청을 다시 보내지 않는다. 응답 유실 등으로 결과가 불확실하면
+  // 기존 지급 기록을 조회해 처리 여부를 먼저 확인하고, 확인 전에는 지급 버튼 대신 "결과 다시 확인"만 제공한다.
+  const [outcome,setOutcome]=useState<PaymentOutcome|null>(null);
+  async function confirmPaymentResult(){setOutcome({kind:"checking"});const status=await lookupEmployeePaymentStatus(month,employee.userId);if(status==="paid"){setOutcome({kind:"paid",confirmed:true,refreshed:await refresh()});return}if(status==="unpaid"){setOutcome(null);setError(vi?"Đã kiểm tra: chưa có bản ghi chi trả. Lương chưa được chi trả — hãy kiểm tra nội dung rồi chi trả lại.":"지급 기록을 확인한 결과 지급되지 않았습니다. 입력값을 확인한 뒤 다시 지급할 수 있습니다.");return}setOutcome({kind:"unknown"})}
+  async function recheckPaymentResult(){if(busy)return;setBusy(true);setError("");try{await confirmPaymentResult()}finally{setBusy(false)}}
+  async function reloadAfterPayment(){if(busy||!outcome||(outcome.kind!=="paid"&&outcome.kind!=="alreadyPaid"))return;setBusy(true);try{const refreshed=await refresh();setOutcome({...outcome,refreshed})}finally{setBusy(false)}}
+  async function submit(){if(busy||outcome||paymentLocked||!accountsLoaded||!fundAccountId||actualNumber<1||(difference!==0&&!reason.trim())||!employee.calculationHash)return;setBusy(true);setError("");try{let response:Response;try{response=await fetch("/api/admin/payroll/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month,userId:employee.userId,calculationHash:employee.calculationHash,actualPaidAmount:actualNumber,differenceReason:reason,paymentDate:date,fundAccountId})})}catch{await confirmPaymentResult();return}const data=await response.json().catch(()=>null);if(!data||typeof data!=="object"){await confirmPaymentResult();return}if(!response.ok){if(data.code==="PAYROLL_EMPLOYEE_ALREADY_PAID"){setOutcome({kind:"alreadyPaid",refreshed:await refresh()});return}if(data.code==="PAYROLL_CALCULATION_STALE")await refresh();const preflight=data.code==="PAYROLL_BATCH_PREFLIGHT_FAILED"&&Array.isArray(data.employees)?data.employees.map((item:{employeeName:string;reasonCodes:string[]})=>`${item.employeeName}: ${item.reasonCodes.join(", ")}`).join("\n"):null;throw new Error(preflight?`${vi?data.messageVi:data.message}\n${preflight}`:["PAYROLL_MONTH_NOT_CLOSED","PAYROLL_CALCULATION_STALE","PAYROLL_FUND_ACCOUNT_INVALID","PAYROLL_LEDGER_PROJECTION_FAILED"].includes(data.code)?(vi?data.messageVi:data.message):(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}const refreshed=await refresh();if(refreshed){close();return}setOutcome({kind:"paid",confirmed:false,refreshed:false})}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể xử lý chi trả.":"급여를 지급하지 못했습니다."))}finally{setBusy(false)}}
   async function cancelPayment(){if(busy||!cancelReason.trim()||!employee.batchId)return;setBusy(true);setError("");try{const response=await fetch("/api/admin/payroll/payments",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:employee.batchId,userId:employee.userId,reason:cancelReason})});if(!response.ok)throw new Error(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다.");await refresh();close()}catch(cause){setError(cause instanceof Error?cause.message:(vi?"Không thể hủy chi trả.":"지급을 취소하지 못했습니다."))}finally{setBusy(false)}}
-  return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||!accountsLoaded||!fundAccountId||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
+  return <PayrollModal placement="top" title={payment?.payment_status==="paid"?(vi?"Chi tiết chi trả":"지급 내역"):(vi?"Chi trả lương":"급여 지급")} closeLabel={vi?"Đóng":"닫기"} onClose={()=>{if(!busy)close()}} footer={<div style={s.modalFooter}>{outcome?.kind==="checking"?<button type="button" style={{...s.primary,...s.modalAction}} disabled>{vi?"Đang kiểm tra kết quả…":"지급 결과 확인 중…"}</button>:outcome?.kind==="unknown"?<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy} onClick={()=>void recheckPaymentResult()}>{vi?"Kiểm tra lại kết quả chi trả":"지급 결과 다시 확인"}</button>:outcome&&!outcome.refreshed?<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy} onClick={()=>void reloadAfterPayment()}>{vi?"Tải lại danh sách lương":"급여 목록 다시 조회"}</button>:payment?.payment_status==="paid"?(employee.batchStatus==="paying"?<button type="button" style={{...s.danger,...s.modalAction}} disabled={busy||paymentLocked||cancelMode&&!cancelReason.trim()} onClick={()=>cancelMode?void cancelPayment():setCancelMode(true)}>{cancelMode?(vi?"Xác nhận hủy":"지급 취소 실행"):(vi?"Hủy chi trả":"지급 취소")}</button>:null):outcome?null:<button type="button" style={{...s.primary,...s.modalAction}} disabled={busy||!accountsLoaded||!fundAccountId||paymentLocked||actualNumber<1||(difference!==0&&!reason.trim())} onClick={()=>void submit()}>{vi?"Chi trả":"지급"}</button>}</div>}>
     <div style={s.paymentLayout}>
       <PaymentSalarySummary
         employeeName={employee.name}
@@ -656,6 +672,7 @@ function PaymentModal({employee,month,lang,close,refresh}:{employee:PayrollOverv
           </PaymentCard>
         </PaymentSection>
       ) : null}
+      {outcome?<p role={outcome.kind==="unknown"||(outcome.kind!=="checking"&&!outcome.refreshed)?"alert":"status"} style={outcome.kind==="paid"||outcome.kind==="alreadyPaid"?s.paymentNotice:s.error}>{paymentOutcomeMessage(outcome,vi)}</p>:paymentLocked&&payment?.payment_status!=="paid"?<p role="status" style={s.error}>{vi?"Danh sách lương đang được tải hoặc chưa được cập nhật. Vui lòng chi trả sau khi tải lại danh sách.":"급여 목록을 조회 중이거나 최신 자료가 아닙니다. 목록 조회가 완료된 뒤 지급해주세요."}</p>:null}
       {error&&<p role="alert" style={s.error}>{error}</p>}
     </div>
   </PayrollModal>;
@@ -1036,6 +1053,7 @@ const s = {
     font: "inherit",
   },
   modalFooter: { display: "flex", justifyContent: "center", alignItems: "center", width: "100%" },
+  paymentNotice: { margin: 0, padding: 10, borderRadius: 9, background: "#f0fdf4", color: "#166534", fontSize: 13, lineHeight: 1.45, overflowWrap: "anywhere" },
   modalAction: { minWidth: 148, maxWidth: "100%" },
   paymentButton: { minHeight:42, border:0, borderRadius:10, background:"#111827", color:"#fff", fontWeight:800 },
   blockingReasons: { display:"grid", gap:4, marginTop:2, padding:"8px 10px", borderRadius:9, background:"#fef2f2", border:"1px solid #fecaca", color:"#991b1b" },

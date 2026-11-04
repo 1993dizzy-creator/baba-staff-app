@@ -71,7 +71,7 @@ test("common settings: there is no separate MealAllowancePolicySettings componen
 test("common settings: the 🍚 식대 group is inside the exported component's own JSX (not a child component), positioned after 패널티", () => {
   const penaltyGroupIndex = commonSettings.indexOf('title={`⚠️ ${vi ? "Phạt" : "패널티"}`}');
   const mealGroupIndex = commonSettings.indexOf('title={`🍚 ${vi ? "Trợ cấp ăn" : "식대"}`}');
-  const buttonIndex = commonSettings.indexOf('disabled={!dirty || !valid || saving}');
+  const buttonIndex = commonSettings.indexOf('disabled={!dirty || !valid || saving || rechecking || error === "unverified"}');
   assert.ok(penaltyGroupIndex > -1 && mealGroupIndex > -1 && buttonIndex > -1);
   assert.ok(penaltyGroupIndex < mealGroupIndex, "식대 group must come after 패널티");
   assert.ok(mealGroupIndex < buttonIndex, "식대 group must come before the single save button");
@@ -98,7 +98,7 @@ test("common settings: one PUT request saves payroll_settings and meal policy to
 });
 
 test("common settings: save button is disabled while saving (duplicate-save prevention) and reloads (재조회) both settings and meal policy after a successful save", () => {
-  assert.match(commonSettings, /disabled=\{!dirty \|\| !valid \|\| saving\}/);
+  assert.ok(commonSettings.includes('disabled={!dirty || !valid || saving || rechecking || error === "unverified"}'));
   const saveFn = commonSettings.slice(commonSettings.indexOf("async function save()"), commonSettings.indexOf("return (\n    <section style={s.card}>"));
   assert.match(saveFn, /await load\(\);/);
 });

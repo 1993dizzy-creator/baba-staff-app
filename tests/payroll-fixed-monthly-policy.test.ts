@@ -33,7 +33,7 @@ test("fixed monthly formula pays contract, fixed raise, and current level raise 
 
 test("employee list loads active users once per tab/language and restores URL selection separately", () => {
   assert.match(usersRoute, /\.eq\("is_active",true\)/);
-  assert.match(settings, /\}, \[activeTab, vi\]\);/);
+  assert.ok(settings.includes("}, [activeTab, vi, usersReloadKey]);"));
   assert.match(settings, /users\.some\(\(user\) => user\.id === requested\)/);
   assert.match(settings, /useState\(true\).*employeeListOpen|employeeListOpen, setEmployeeListOpen/);
   assert.match(settings, /aria-expanded=\{employeeListOpen\}/);

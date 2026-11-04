@@ -1,11 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   calculateInsuranceAmount,
   percentToBasisPoints,
 } from "@/lib/payroll/insurance";
 import { formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
+import {
+  commonSettingsSaveApplied,
+  latestAttendanceBonusPolicy,
+  type LatestCommonSettingsState,
+  type SubmittedCommonSettingsState,
+} from "@/lib/payroll/common-settings-save";
 
 type ApiSettings = {
   payment_day: number;
@@ -114,6 +120,9 @@ type AttendanceBonusDraft = {
   note: string;
 };
 
+type LatestCommonSettings = LatestCommonSettingsState<ApiSettings, MealAllowancePolicy, AttendanceBonusPolicy>;
+type SubmittedCommonSettings = SubmittedCommonSettingsState;
+
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
@@ -160,9 +169,14 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState<"" | "load" | "save">("");
+  // save: 저장 실패 확정 / reload: 저장 성공 후 재조회 실패 / unverified: 저장 결과 불확실 + 확인 조회 실패
+  // notApplied: 결과가 불확실했지만 확인 조회 결과 반영되지 않음
+  const [error, setError] = useState<"" | "load" | "save" | "reload" | "unverified" | "notApplied">("");
+  const [rechecking, setRechecking] = useState(false);
+  // 결과가 불확실한 저장 요청의 제출값. 확인되기 전에는 다시 저장하지 않는다(중복 revision 방지).
+  const pendingSaveRef = useRef<SubmittedCommonSettings | null>(null);
 
-  const load = useCallback((signal?: AbortSignal) => {
+  const fetchLatest = useCallback((signal?: AbortSignal) => {
     return Promise.all([
       fetch("/api/admin/payroll/settings", { cache: "no-store", signal }).then(async (response) => ({
         ok: response.ok,
@@ -180,28 +194,37 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
       if (!settingsResult.ok || !settingsResult.data.settings) throw new Error("PAYROLL_SETTINGS_READ_FAILED");
       if (!mealResult.ok) throw new Error("MEAL_ALLOWANCE_POLICY_READ_FAILED");
       if (!bonusResult.ok) throw new Error("ATTENDANCE_BONUS_POLICY_READ_FAILED");
-      const next = toDraft(settingsResult.data.settings);
-      setDraft(next);
-      setSnapshot(next);
-      const current: MealAllowancePolicy | null = mealResult.data.current ?? null;
-      setMealCurrent(current);
-      setMealHistory(mealResult.data.history ?? []);
-      const amount = current ? String(current.dailyAmount) : "";
-      const effectiveFrom = current ? current.effectiveFrom : "";
-      setMealAmountDraft(amount);
-      setMealEffectiveFromDraft(effectiveFrom);
-      setMealAmountSnapshot(amount);
-      setMealEffectiveFromSnapshot(effectiveFrom);
-      const bonusCurrentPolicy: AttendanceBonusPolicy | null = bonusResult.data.current ?? null;
-      const bonusPolicyHistory: AttendanceBonusPolicy[] = bonusResult.data.history ?? [];
-      const bonusLatest = bonusPolicyHistory[0] ?? bonusCurrentPolicy;
-      const nextBonusDraft = toAttendanceBonusDraft(bonusLatest);
-      setBonusCurrent(bonusCurrentPolicy);
-      setBonusHistory(bonusPolicyHistory);
-      setBonusDraft(nextBonusDraft);
-      setBonusSnapshot(nextBonusDraft);
+      return {
+        settings: settingsResult.data.settings as ApiSettings,
+        mealCurrent: (mealResult.data.current ?? null) as MealAllowancePolicy | null,
+        mealHistory: (mealResult.data.history ?? []) as MealAllowancePolicy[],
+        bonusCurrent: (bonusResult.data.current ?? null) as AttendanceBonusPolicy | null,
+        bonusHistory: (bonusResult.data.history ?? []) as AttendanceBonusPolicy[],
+      } satisfies LatestCommonSettings;
     });
   }, []);
+
+  const apply = useCallback((latest: LatestCommonSettings) => {
+    const next = toDraft(latest.settings);
+    setDraft(next);
+    setSnapshot(next);
+    const current = latest.mealCurrent;
+    setMealCurrent(current);
+    setMealHistory(latest.mealHistory);
+    const amount = current ? String(current.dailyAmount) : "";
+    const effectiveFrom = current ? current.effectiveFrom : "";
+    setMealAmountDraft(amount);
+    setMealEffectiveFromDraft(effectiveFrom);
+    setMealAmountSnapshot(amount);
+    setMealEffectiveFromSnapshot(effectiveFrom);
+    const nextBonusDraft = toAttendanceBonusDraft(latestAttendanceBonusPolicy(latest));
+    setBonusCurrent(latest.bonusCurrent);
+    setBonusHistory(latest.bonusHistory);
+    setBonusDraft(nextBonusDraft);
+    setBonusSnapshot(nextBonusDraft);
+  }, []);
+
+  const load = useCallback((signal?: AbortSignal) => fetchLatest(signal).then(apply), [fetchLatest, apply]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -222,15 +245,35 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
         : "공통 설정을 불러오지 못했습니다."
       : error === "save"
         ? vi
-          ? "Không thể lưu cài đặt chung."
-          : "공통 설정을 저장하지 못했습니다."
-        : "";
+          ? "Không thể lưu cài đặt chung. Giá trị đã nhập vẫn được giữ nguyên."
+          : "공통 설정을 저장하지 못했습니다. 입력값은 그대로 유지됩니다."
+        : error === "reload"
+          ? vi
+            ? "Đã lưu cài đặt chung nhưng chưa tải lại được cài đặt mới nhất. Vui lòng tải lại."
+            : "공통 설정은 저장되었지만 최신 설정을 다시 불러오지 못했습니다. 다시 조회해주세요."
+          : error === "unverified"
+            ? vi
+              ? "Chưa xác nhận được kết quả lưu. Giá trị đã nhập vẫn được giữ. Để tránh lưu trùng, hãy tải lại để kiểm tra đã được áp dụng hay chưa."
+              : "저장 결과를 확인하지 못했습니다. 입력값은 유지됩니다. 중복 저장을 막기 위해 다시 조회해 반영 여부를 먼저 확인해주세요."
+            : error === "notApplied"
+              ? vi
+                ? "Đã kiểm tra: cài đặt chưa được lưu. Giá trị đã nhập vẫn được giữ — hãy kiểm tra rồi lưu lại."
+                : "확인 결과 저장이 반영되지 않았습니다. 입력값은 유지되니 확인 후 다시 저장해주세요."
+              : "";
+
+  function retryInitialLoad() {
+    setLoading(true);
+    setError("");
+    load()
+      .catch(() => setError("load"))
+      .finally(() => setLoading(false));
+  }
 
   if (loading) {
     return <section style={s.card}>{vi ? "Đang tải cài đặt chung…" : "공통 설정을 불러오는 중입니다…"}</section>;
   }
   if (!draft || !snapshot || !bonusDraft || !bonusSnapshot) {
-    return <section role="alert" style={{ ...s.card, ...s.error }}>{errorText}</section>;
+    return <section role="alert" style={{ ...s.card, ...s.error }}>{errorText}<button type="button" style={s.retryButton} onClick={retryInitialLoad}>{vi ? "Tải lại" : "다시 조회"}</button></section>;
   }
 
   const payload = toPayload(draft);
@@ -276,39 +319,116 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
   const valid = payload !== null && mealValid && bonusValid;
   const dirty = settingsDirty || mealDirty || bonusDirty;
 
+  // 결과가 불확실한 저장 요청을 최신 설정 조회로 확인한다. 반영됐으면 최신값을 적용하고, 반영되지
+  // 않았으면 입력값을 유지한 채 다시 저장할 수 있게 한다. 조회도 실패하면 확인 전까지 저장을 막는다.
+  async function verifyPendingSave(submitted: SubmittedCommonSettings) {
+    let latest: LatestCommonSettings;
+    try {
+      latest = await fetchLatest();
+    } catch {
+      pendingSaveRef.current = submitted;
+      setError("unverified");
+      return;
+    }
+    pendingSaveRef.current = null;
+    if (commonSettingsSaveApplied(latest, submitted)) {
+      apply(latest);
+      setMessage(vi ? "Đã xác nhận cài đặt chung được lưu." : "공통 설정이 저장된 것을 확인했습니다.");
+      return;
+    }
+    setError("notApplied");
+  }
+
   async function save() {
-    if (!draft || !bonusDraft) return;
+    if (!draft || !bonusDraft || pendingSaveRef.current) return;
     const nextPayload = toPayload(draft);
     if (!nextPayload || !mealValid || !bonusValid) return;
+    const submitted: SubmittedCommonSettings = {
+      payload: nextPayload,
+      meal: mealBothFilled ? { dailyAmount: mealAmountNumber!, effectiveFrom: mealEffectiveFromDraft } : null,
+      bonus: bonusDirty ? { ...bonusDraft, note: bonusDraft.note.trim() } : null,
+    };
+    const submittedDraft = draft;
+    const submittedMeal = { amount: mealAmountDraft, effectiveFrom: mealEffectiveFromDraft };
+    const submittedBonusDraft = bonusDraft;
     setSaving(true);
     setMessage("");
     setError("");
-    const response = await fetch("/api/admin/payroll/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...nextPayload,
-        mealDailyAmount: mealBothFilled ? mealAmountNumber : null,
-        mealEffectiveFrom: mealBothFilled ? mealEffectiveFromDraft : null,
-        attendanceBonusMinimumActualWorkdays: bonusDirty ? bonusMinimumActualWorkdays : null,
-        attendanceBonusAllowedLateCount: bonusDirty ? bonusAllowedLateCount : null,
-        attendanceBonusAllowedEarlyLeaveCount: bonusDirty ? bonusAllowedEarlyLeaveCount : null,
-        attendanceBonusAmount: bonusDirty ? bonusAmount : null,
-        attendanceBonusEffectiveMonth: bonusDirty ? bonusDraft.effectiveMonth : null,
-        attendanceBonusNote: bonusDirty ? bonusDraft.note : null,
-      }),
-    });
-    if (!response.ok) {
-      // transaction 전체가 실패하면 payroll_settings도 식대 정책도 전혀 바뀌지 않는다
-      // (RPC가 하나의 transaction) — 입력 draft는 그대로 유지하고 오류 메시지 하나만 표시한다.
+    try {
+      let response: Response;
+      try {
+        response = await fetch("/api/admin/payroll/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...nextPayload,
+            mealDailyAmount: mealBothFilled ? mealAmountNumber : null,
+            mealEffectiveFrom: mealBothFilled ? mealEffectiveFromDraft : null,
+            attendanceBonusMinimumActualWorkdays: bonusDirty ? bonusMinimumActualWorkdays : null,
+            attendanceBonusAllowedLateCount: bonusDirty ? bonusAllowedLateCount : null,
+            attendanceBonusAllowedEarlyLeaveCount: bonusDirty ? bonusAllowedEarlyLeaveCount : null,
+            attendanceBonusAmount: bonusDirty ? bonusAmount : null,
+            attendanceBonusEffectiveMonth: bonusDirty ? bonusDraft.effectiveMonth : null,
+            attendanceBonusNote: bonusDirty ? bonusDraft.note : null,
+          }),
+        });
+      } catch {
+        // 네트워크 오류·응답 유실 — 실제 반영 여부를 최신 설정 조회로 확인한다(자동 재저장 없음).
+        await verifyPendingSave(submitted);
+        return;
+      }
+      const data = await response.json().catch(() => null) as { ok?: boolean; code?: string } | null;
+      if (!response.ok) {
+        if (!data) {
+          // 게이트웨이 오류 등 응답 본문 유실 — 결과가 불확실하므로 반영 여부를 먼저 확인한다.
+          await verifyPendingSave(submitted);
+          return;
+        }
+        // 서버가 실패를 응답했다 — RPC가 하나의 transaction이므로 payroll_settings도 식대·개근
+        // 정책도 전혀 바뀌지 않는다. 입력 draft는 그대로 유지하고 오류 메시지 하나만 표시한다.
+        setError("save");
+        return;
+      }
+      if (!data || data.ok !== true) {
+        await verifyPendingSave(submitted);
+        return;
+      }
+      // 성공 → 공통 설정과 식대·개근 정책을 모두 재조회한다.
+      try {
+        await load();
+        setMessage(vi ? "Đã lưu cài đặt chung." : "공통 설정을 저장했습니다.");
+      } catch {
+        // 저장은 성공했다. 제출값을 저장된 값으로 표시해 같은 값을 재저장(중복 revision)하지 않게 한다.
+        setSnapshot(submittedDraft);
+        setMealAmountSnapshot(submittedMeal.amount);
+        setMealEffectiveFromSnapshot(submittedMeal.effectiveFrom);
+        setBonusSnapshot(submittedBonusDraft);
+        setMessage(vi ? "Đã lưu cài đặt chung." : "공통 설정을 저장했습니다.");
+        setError("reload");
+      }
+    } finally {
       setSaving(false);
-      setError("save");
-      return;
     }
-    // 성공 → 공통 설정과 식대 정책을 모두 재조회한다.
-    await load();
-    setSaving(false);
-    setMessage(vi ? "Đã lưu cài đặt chung." : "공통 설정을 저장했습니다.");
+  }
+
+  async function recheck() {
+    if (rechecking || saving) return;
+    setRechecking(true);
+    setMessage("");
+    try {
+      const pending = pendingSaveRef.current;
+      if (pending) {
+        setError("");
+        await verifyPendingSave(pending);
+        return;
+      }
+      await load();
+      setError("");
+    } catch {
+      setError("reload");
+    } finally {
+      setRechecking(false);
+    }
   }
 
   return (
@@ -558,12 +678,21 @@ export default function PayrollCommonSettings({ vi }: { vi: boolean }) {
         </details>
       </SettingsGroup>
 
-      {error ? <p role="alert" style={s.error}>{errorText}</p> : null}
       {message ? <p role="status" style={s.success}>{message}</p> : null}
+      {error ? (
+        <div role="alert" style={s.error}>
+          {errorText}
+          {error === "reload" || error === "unverified" ? (
+            <button type="button" style={s.retryButton} disabled={rechecking || saving} onClick={() => void recheck()}>
+              {rechecking ? (vi ? "Đang tải…" : "조회 중…") : vi ? "Tải lại" : "다시 조회"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <button
         type="button"
         style={s.button}
-        disabled={!dirty || !valid || saving}
+        disabled={!dirty || !valid || saving || rechecking || error === "unverified"}
         onClick={save}
       >
         {saving
@@ -662,6 +791,7 @@ const s = {
   total: { fontSize: 15, fontWeight: 900 },
   button: { minHeight: 44, marginTop: 14, padding: "10px 14px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontWeight: 900 },
   error: { margin: "10px 0 0", padding: 9, borderRadius: 9, background: "#fef2f2", color: "#b91c1c" },
+  retryButton: { display: "block", minHeight: 32, marginTop: 8, padding: "5px 12px", border: "1px solid #fca5a5", borderRadius: 8, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800 },
   success: { margin: "10px 0 0", padding: 9, borderRadius: 9, background: "#f0fdf4", color: "#166534" },
   details: { marginTop: 8, paddingTop: 8, borderTop: "1px solid #f1f5f9", fontSize: 12 },
   mealHistory: { display: "grid", gap: 2, padding: "6px 8px", marginTop: 4, borderRadius: 8, background: "#f9fafb", fontSize: 12 },
