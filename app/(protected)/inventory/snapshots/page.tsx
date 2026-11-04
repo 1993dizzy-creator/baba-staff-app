@@ -338,6 +338,8 @@ export default function InventorySnapshotsPage() {
     
     
     const editorDialogRef = useRef<HTMLDivElement>(null);
+    // Server-resolved current business date (store-settings cutoff); gates receipt edits to its month.
+    const currentBusinessDateRef = useRef("");
     const [editorBusy, setEditorBusy] = useState(false);
     
     const [editingItemId, setEditingItemId] = useState<number | null>(null);
@@ -688,6 +690,7 @@ export default function InventorySnapshotsPage() {
             setPurchaseDateMap(json.purchaseDateMap || {});
 
             if (json.currentBusinessDate) {
+                currentBusinessDateRef.current = json.currentBusinessDate;
                 setActiveBusinessDateKey((current) => current || json.currentBusinessDate || "");
             }
 
@@ -1712,7 +1715,10 @@ export default function InventorySnapshotsPage() {
         const vi = lang === "vi";
         const expanded = expandedLogEntryKey === entry.key;
         const editing = purchaseEdit?.rootId === entry.root.id ? purchaseEdit : null;
-        const editable = !entry.cancelled && !entry.invalid && !entry.ledgerReviewPending && Number(entry.root.item_id) > 0;
+        // 입고 수정은 현재 영업월(서버가 판정한 03:00 영업일 기준) 입고만. 월마감·지급 보호는 RPC가 판정한다.
+        const currentBusinessMonth = currentBusinessDateRef.current.slice(0, 7);
+        const editable = !entry.cancelled && !entry.invalid && !entry.ledgerReviewPending && Number(entry.root.item_id) > 0
+            && !!currentBusinessMonth && (entry.root.business_date ?? "").slice(0, 7) === currentBusinessMonth;
         const notice = receiptEditNotice?.rootId === entry.root.id ? receiptEditNotice.message : null;
         const billed = entryBilledAmount(entry);
         const chipStyle = {
