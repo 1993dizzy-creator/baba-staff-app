@@ -106,5 +106,6 @@ test("payment status card keeps only progress and three payment totals",()=>{
   assert.match(page,/gridTemplateColumns:"minmax\(0,1fr\) minmax\(0,auto\)"/);
   assert.match(page,/width:"100%",minWidth:0,boxSizing:"border-box",overflow:"hidden"/);
   assert.doesNotMatch(page,/fontFamily/);
-  assert.doesNotMatch(page,/href=\{`\/admin\/payroll\/\$\{run\.id\}`\}/);
+  // 2차-C: 지급 배치가 있을 때만 지급장부 링크를 표시한다.
+  assert.match(page,/\{run\?\.id\?<Link href=\{`\/admin\/payroll\/\$\{run\.id\}`\}/);
 });
