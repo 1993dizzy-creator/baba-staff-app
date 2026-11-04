@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { getVietnamDateParts, BUSINESS_TIME_ZONE } from "../lib/common/business-time.ts";
 
 // ---------------------------------------------------------------------------

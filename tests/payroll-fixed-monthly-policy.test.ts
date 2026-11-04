@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculateFixedMonthlyPayroll } from "../lib/payroll/fixed-monthly.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");

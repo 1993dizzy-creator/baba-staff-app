@@ -1,4 +1,3 @@
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { isEmployeeLevelDate } from "./calculate.ts";
 import type { EmployeeLevelValidationCode, EmployeeLevelValidationResult } from "./types";
 

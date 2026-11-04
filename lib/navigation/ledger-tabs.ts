@@ -1,4 +1,3 @@
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { selectedLedgerMonth } from "../ledger/month-query.ts";
 
 // month: the current URL's `month`. 대시보드 and 장부작성 share it, so switching tabs keeps

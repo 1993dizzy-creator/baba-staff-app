@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { calculateCombinedSalary } from "../lib/payroll/compensation.ts";
 import type { EmployeeLevelInfo } from "../lib/employee-level/types.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";

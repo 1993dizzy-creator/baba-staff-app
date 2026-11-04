@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { getPaymentBadgePresentation, shouldShowPaymentDifferenceReason } from "../lib/payroll/ui-labels.ts";
 
 const card = readFileSync(join(process.cwd(), "components/payroll/CompensationCard.tsx"), "utf8");

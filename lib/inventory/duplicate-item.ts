@@ -2,7 +2,6 @@
 // Vietnamese name equals ours (accent/case/space-insensitive) and its code is the same.
 // The caller excludes the item being edited. matchedFields says which name collided so the
 // UI can name the other item instead of a bare "already registered".
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { normalizeInventoryCode, normalizeInventoryName } from "./normalize.ts";
 
 export type DuplicateInventoryItem = {

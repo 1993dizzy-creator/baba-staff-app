@@ -1,4 +1,3 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { calculatePurchaseSettlement, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
 
 export type VerificationSource = {

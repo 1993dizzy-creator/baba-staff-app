@@ -1,17 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { buildLedgerEntries, entryDisplaySubtotal } from "../lib/ledger/entries.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { computeActualCashOutflow } from "../lib/ledger/cash-outflow.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { computePaidExpenseTotal } from "../lib/ledger/payables.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { calculateManualAdjustmentTotals, calculatePayrollPayoutAmounts } from "../lib/payroll/adjustments.ts";
 import {
   isManualExpenseCategory,
@@ -21,9 +15,7 @@ import {
   manualExpenseSpecialActionLabel,
   PAYROLL_ADVANCE_MANUAL_ACTION,
   payrollAdvanceDefaultMemo,
-  // @ts-expect-error local Node strip-types runner requires explicit extension
 } from "../lib/ledger/manual-entry-policy.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { groupPayrollAdvanceEmployees, ledgerPayrollAdvanceRequestId, parsePayrollAdvanceCancelInput, parsePayrollAdvanceInput, payrollAdvanceCancelErrorStatus, payrollAdvanceEmployees, payrollAdvanceErrorStatus } from "../lib/ledger/payroll-advance.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");

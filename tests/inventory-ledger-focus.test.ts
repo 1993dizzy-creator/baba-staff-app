@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildLedgerEntries } from "../lib/ledger/entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { findInventoryLedgerFocus, parseInventoryLedgerFocus } from "../lib/ledger/inventory-entry-focus.ts";
 
 const snapshot = (id: number, amount: number, category: string) => ({

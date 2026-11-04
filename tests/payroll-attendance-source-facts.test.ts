@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { classifyPayrollAttendanceSource } from "../lib/payroll/source-facts/attendance.ts";
 import type { AttendanceDayFacts, WorkScheduleVersion } from "../lib/payroll/types.ts";
 

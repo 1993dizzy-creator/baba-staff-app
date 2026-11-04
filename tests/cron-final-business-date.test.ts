@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { addStoreDays, calculateStoreBusinessDate } from "../lib/store-settings/business-time-core.ts";
 
 // The final crons (sales-sync-final, sales-deductions-final) must target the

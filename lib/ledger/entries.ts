@@ -1,12 +1,8 @@
 import type { PaymentMode } from "@/lib/partners/policy";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { payableDisplayAsOf, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, sumPayableAmounts, type PayablePayment, type PurchaseSettlement } from "./payables.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerPayrollAdvanceRequestId, PAYROLL_ADVANCE_REVERSAL_SOURCE_TYPE } from "./payroll-advance.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { shortLedgerAccountName } from "./entry-display-account.ts";
 
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { analyzePayrollPaymentGroups } from "./payroll-payment-groups.ts";
 
 export type LedgerEntryItem = {

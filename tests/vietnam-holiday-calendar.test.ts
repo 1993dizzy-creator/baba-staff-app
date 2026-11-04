@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { addCalendarDays, getVietnamHolidayChoices, resolveVietnamHolidayPreparation, vietnameseLunarToSolar } from "../lib/store-settings/vietnam-holiday-calendar.ts";
 
 test("known Vietnamese Tet dates are calculated from lunar 1/1", () => {

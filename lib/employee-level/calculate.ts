@@ -9,7 +9,6 @@ import {
   type EmployeeLevelCalculationInput,
   type EmployeeLevelInfo,
   type EmployeeLevelIneligibleReason,
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 } from "./types.ts";
 
 const DATE_KEY = /^\d{4}-(0[1-9]|1[0-2])-([012]\d|3[01])$/;

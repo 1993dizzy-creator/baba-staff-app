@@ -1,4 +1,3 @@
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { reserveBusinessMonth } from "./reserve-recurring.ts";
 
 // 운영상 잔여이익 (operating residual after reserve): a management view, NOT accounting

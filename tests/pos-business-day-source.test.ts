@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { buildPosBusinessDaySource, buildPosLedgerRangeSource, canonicalPosJson, posSourceFingerprint, validPosBusinessDate } from "../lib/ledger/pos-sales-source.ts";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { comparePosClosedSource, evaluatePosCloseTime, evaluatePosManualCloseTime, validatePosSystemActor } from "../lib/sales/pos-business-day-close-policy.ts";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
 
 const date = "2026-08-20";

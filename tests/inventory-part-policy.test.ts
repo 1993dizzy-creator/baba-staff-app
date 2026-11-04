@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { INVENTORY_PART_VALUES, INVENTORY_PART_FALLBACK, isInventoryPart, resolveInventoryDefaultPart } from "../lib/inventory/parts.ts";
 
 test("INVENTORY_PART_VALUES is exactly kitchen/hall/bar/etc, no owner or cleaning", () => {

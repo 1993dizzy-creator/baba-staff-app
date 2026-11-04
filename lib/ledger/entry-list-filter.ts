@@ -1,8 +1,5 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplaySubtotal, entryMatchesExpenseFilter, entryRequiresReview, isCardSettlementEntry, isReserveLedgerEntry, type LedgerEntry } from "./entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayBadgeKind } from "./entry-display-badge.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayAmount, entryDisplayAmountSign } from "./entry-display-amount.ts";
 
 // Display filters for the daily ledger list. They only choose visible rows;

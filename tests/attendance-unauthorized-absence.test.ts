@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { calculateUnauthorizedAbsencePenalty } from "../lib/payroll/penalties.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

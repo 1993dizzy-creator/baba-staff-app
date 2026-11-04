@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { EDITABLE_EMPLOYEE_ROLE_VALUES, EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel, getEmployeeRoleRank, isEditableEmployeeRole, isEmployeeRole, isOwnerOrMasterRole, toLegacyEmployeePosition } from "../lib/common/roles.ts";
 
 test("EMPLOYEE_ROLE_VALUES includes master; EDITABLE_EMPLOYEE_ROLE_VALUES excludes it", () => {

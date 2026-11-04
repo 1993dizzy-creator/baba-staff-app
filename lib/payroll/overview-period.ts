@@ -31,5 +31,4 @@ export function getPayrollOverviewPeriod(month: string, today = getLastCompleted
   if (month === todayMonth) return { month, asOfDate: today, calculationEndDate: today, future: false, levelAsOfDate };
   return { month, asOfDate: monthEnd, calculationEndDate: monthEnd, future: false, levelAsOfDate: monthEnd };
 }
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";

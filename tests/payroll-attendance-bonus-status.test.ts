@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { attendanceBonusMonthlyStatus } from "../lib/payroll/attendance-bonus-status.ts";
 
 const policy = { minimumActualWorkdays: 26, allowedLateCount: 0, allowedEarlyLeaveCount: 0, bonusAmount: 300000 };

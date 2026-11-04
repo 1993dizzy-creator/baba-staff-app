@@ -1,4 +1,3 @@
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { addStoreDays, isStoreDateKey } from "../store-settings/business-time-core.ts";
 import type { PosCloseTotals,PosCloseBuckets } from './pos-business-day-final-policy';
 export type PosCloseView={

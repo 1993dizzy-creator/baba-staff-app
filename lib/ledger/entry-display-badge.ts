@@ -1,6 +1,4 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { isCardSettlementEntry, isPayrollPaymentOutflow, type LedgerEntry } from "./entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { BALANCE_SCALE_EMOJI, CARD_EMOJI } from "./entry-display-emoji.ts";
 
 // Display-only badge. LedgerEntry.direction stays the accounting bucket used

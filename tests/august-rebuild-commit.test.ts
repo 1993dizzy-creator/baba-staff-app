@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {createAugustApplyManifest} from '../lib/ledger/august-rebuild-commit.ts';
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {previewAugustRebuild,type RebuildInput,type FundAccount,type SheetCell,type SourceLink,type RebuildAdjustment,type ExistingTransaction,type ExistingMovement} from '../lib/ledger/august-rebuild-plan.ts';
 
 const ACCOUNT:Record<FundAccount,string>={

@@ -1,4 +1,3 @@
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { PAYROLL_PROJECTION_ENGINE_VERSION, type AttendanceDayFacts, type CalculationBasis, type PayrollContract, type PayrollProjection, type PayrollWarningCode } from "./types.ts";
 
 export function roundMinutes(value: number, block: number, mode: PayrollContract["roundingMode"]) {

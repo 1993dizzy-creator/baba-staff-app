@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";import {existsSync,readFileSync} from "node:fs";import {join} from "node:path";import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import {calculateInventoryPurchaseAmount} from "../lib/inventory/purchase-cost.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8");const migration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),source=read("lib/ledger/inventory-candidates.ts"),monthly=read("app/api/inventory/monthly/route.ts"),sync=read("app/api/admin/ledger/inventory-candidates/sync/route.ts"),list=read("app/api/admin/ledger/candidates/route.ts"),resolve=read("app/api/admin/ledger/candidates/[id]/route.ts"),payables=read("app/api/admin/ledger/payables/route.ts"),ledger=read("app/api/admin/ledger/route.ts"),pos=read("lib/sales/payment-summary.ts");
 test("purchase amount uses existing quantity times price and three decimals",()=>assert.equal(calculateInventoryPurchaseAmount(1.2345,1000),1234.5));

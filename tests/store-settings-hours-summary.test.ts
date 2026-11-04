@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { groupStoreHours } from "../lib/store-settings/hours-summary.ts";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { DEFAULT_STORE_HOURS } from "../lib/store-settings/types.ts";
 
 test("uniform hours across every weekday collapse into a single group", () => {

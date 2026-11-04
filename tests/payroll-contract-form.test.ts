@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { currencyAmount, formatIntegerInput, hoursInputToMinutes, integerInputDigits, isMonthFirstDate, minutesToHoursInput, resolveFixedRaiseReason, signedAmount } from "../lib/payroll/contract-form.ts";
 
 test("contract hours convert to integer stored minutes", () => {

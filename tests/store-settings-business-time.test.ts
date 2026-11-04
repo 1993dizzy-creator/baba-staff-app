@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { calculateStoreBusinessDate, CORE_DEFAULT_HOURS as DEFAULT_STORE_HOURS, getStoreOperationState, validateStoreHours } from "../lib/store-settings/business-time-core.ts";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { formatVietnamTime, getBusinessDate as getLegacyBusinessDate } from "../lib/common/business-time.ts";
 
 test("cutoff-only business date handles Vietnam boundaries", () => {

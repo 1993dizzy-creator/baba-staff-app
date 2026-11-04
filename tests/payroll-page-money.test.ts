@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatCompactVnd, formatContractRate, formatSignedVnd, formatVnd } from "../lib/payroll/payroll-page-money.ts";
 
 test("payroll list amounts use Vietnamese tr and k notation without decimal units", () => {

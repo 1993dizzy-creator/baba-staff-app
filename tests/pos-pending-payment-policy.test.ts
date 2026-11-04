@@ -6,12 +6,12 @@ import {
   isPendingPaymentReviewDue,
   parsePendingResolutionBody,
   selectPendingCloseHoldDates,
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
+  type PendingPaymentState,
 } from "../lib/sales/pos-pending-payment-policy.ts";
 
 const now = new Date("2026-10-20T16:00:00.000Z");
 const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
-const pending = (extra: Record<string, unknown> = {}) => ({ paymentStatus: 1, isCanceled: false, ...extra });
+const pending = (extra: Partial<PendingPaymentState> = {}): PendingPaymentState => ({ paymentStatus: 1, isCanceled: false, ...extra });
 
 test("30-minute review badge: 29 min no, 30 min yes; canceled/paid never", () => {
   assert.equal(isPendingPaymentReviewDue(pending({ refDate: minutesAgo(29) }), now), false);

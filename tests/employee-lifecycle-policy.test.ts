@@ -2,13 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { employmentIntersectsMonth, isEmployedOn, shouldIncludeMonthlyEmployee, validateEmploymentDates } from "../lib/employment/eligibility.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { resolvePayrollPaymentDate } from "../lib/payroll/payment-schedule.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { enforceTerminationAccountPolicy, getVietnamDateKey } from "../lib/employment/termination-policy.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { isPayrollEligible, isPayrollUserCandidate } from "../lib/payroll/eligibility.ts";
 
 test("payroll eligibility uses role defaults, explicit overrides, and absolute system exclusion",()=>{

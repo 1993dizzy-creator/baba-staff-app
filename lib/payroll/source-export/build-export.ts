@@ -1,11 +1,8 @@
 import type { PayrollRunEmployeeInput } from "../monthly-run";
 import type { PayrollOverviewEmployee, PayrollMonthlyAdjustment } from "../overview";
 import type { PayrollAttendanceSourceFact } from "../source-facts/attendance";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { payrollSourceReadiness } from "./readiness.ts";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { stablePayrollSourceHash } from "./stable-hash.ts";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { PAYROLL_SOURCE_EXPORT_SCHEMA_VERSION } from "./types.ts";
 import type { PayrollSourceAdjustment, PayrollSourceAttendanceItem, PayrollSourceContract, PayrollSourceEmployee, PayrollSourceExport, PayrollSourceExtraWorkItem, PayrollSourceHolidayWorkPremiumItem } from "./types.ts";
 

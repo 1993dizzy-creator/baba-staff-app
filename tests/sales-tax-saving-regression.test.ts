@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner loads the TypeScript source directly.
 import { calculateModifiedReceiptTaxSaving } from "../lib/sales/tax-saving.ts";
 
 const fixture = { originalTaxAmount: 65_000, adjustedTaxAmount: 120_000 };

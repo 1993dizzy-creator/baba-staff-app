@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-// @ts-expect-error Node's test runner imports the TypeScript source directly.
 import { buildEmployeeInsuranceSnapshot, calculateDirectorInsurance, calculatePayrollInsuranceTotals, percentToBasisPoints, selectInsuranceSetting, type PayrollInsuranceGlobalSettings, type PayrollInsuranceSettingVersion } from "../lib/payroll/insurance.ts";
 
 const global:PayrollInsuranceGlobalSettings={employeeRateBp:1050,employerRateBp:2150,directorEnabled:true,directorUserId:2,directorBaseAmount:9_000_000,directorRateBp:3000,directorEmployeeRateBp:950,settingsUpdatedAt:"2026-09-11T00:00:00Z"};

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { getAttendanceAdjustmentTotal, selectAttendancePayrollSummary } from "../lib/payroll/attendance-self-summary.ts";
 import type { PayrollOverviewEmployee } from "../lib/payroll/overview.ts";
 

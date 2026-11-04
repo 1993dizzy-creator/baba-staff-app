@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatRecognizedWork, getPayrollHeaderAmount, sortPayrollEmployeesByHeaderAmount } from "../lib/payroll/payroll-page-display.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatPayrollHeaderAmount } from "../lib/payroll/payroll-page-money.ts";
 
 test("recognized work uses source minutes and keeps the engine-provided day conversion", () => {

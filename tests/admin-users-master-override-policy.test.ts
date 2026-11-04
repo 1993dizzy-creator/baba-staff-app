@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "../lib/employee/profile-update-policy.ts";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { toLegacyEmployeePosition } from "../lib/common/roles.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

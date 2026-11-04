@@ -1,4 +1,3 @@
-// @ts-expect-error Node's type-stripping test runner needs the explicit extension.
 import { CATEGORY_OPTIONS_BY_PART, resolveInventoryCategoryOption } from "./categories.ts";
 
 export const INVENTORY_CATEGORY_GROUPS = {

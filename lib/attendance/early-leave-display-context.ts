@@ -1,6 +1,4 @@
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { normalizeTime } from "./time.ts";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { getBusinessWindowByBusinessDate } from "../common/business-time.ts";
 
 export type EarlyLeaveDisplayContext = {

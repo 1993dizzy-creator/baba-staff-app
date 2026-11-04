@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "../lib/payroll/store-setting-timeline.ts";
 
 // ---------------------------------------------------------------------------

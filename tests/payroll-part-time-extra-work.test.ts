@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculatePartTimeExtraWork, EXTRA_WORK_MINIMUM_CANDIDATE_MINUTES, isExtraWorkEligible, MONTHLY_EXTRA_WORK_CUTOFF_EFFECTIVE_DATE, partTimeExtraWorkDecisionEffect, partTimeExtraWorkSourceHash } from "../lib/payroll/part-time-extra-work.ts";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";
 

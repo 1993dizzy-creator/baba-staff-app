@@ -1,6 +1,4 @@
-// @ts-expect-error Direct Node tests require explicit extensions.
 import { isEligiblePosFinalSync, type PosFinalSyncRun } from './pos-business-day-final-policy.ts';
-// @ts-expect-error Direct Node tests require explicit extensions.
 import { canWritePosBusinessDayClose } from './pos-business-day-close-policy.ts';
 import type { PosBusinessDaySource } from '../ledger/pos-sales-source.ts';
 export async function runManualCloseWorkflow<T>(args:{role:string;reclose:boolean}, deps:{

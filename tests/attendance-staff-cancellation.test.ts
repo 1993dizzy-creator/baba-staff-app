@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { getStaffCancellationDecision } from "../lib/attendance/mutation-policy.ts";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { formatStaffListWorkTime } from "../lib/attendance/time.ts";
 
 const read = (path: string) =>

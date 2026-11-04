@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { manualBusinessDate, manualFormChanges, manualFormFromSource, manualFormMessage, vietnamDateTime, type ManualEditSource } from "../lib/ledger/manual-transaction-form.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { parseManualTransactionCancel, parseManualTransactionUpdate } from "../lib/ledger/manual-transaction-request.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildLedgerEntries, type TransactionRow } from "../lib/ledger/entries.ts";
 
 // TX#2415 as stored (read only, 2026-10-28) after linking THỦY NAM (#35 ↔ business partner 34).

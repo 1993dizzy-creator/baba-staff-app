@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";import {readFileSync} from "node:fs";import {join} from "node:path";import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import {canManageLedger} from "../lib/ledger/authorization.ts";
 const read=(path:string)=>readFileSync(join(process.cwd(),path),"utf8");const sql=read("supabase/migrations/202608210001_create_ledger_v1_foundation.sql");const route=read("app/api/admin/ledger/route.ts");const server=read("lib/ledger/server.ts");const layout=read("app/(protected)/admin/ledger/layout.tsx");const page=read("app/(protected)/admin/ledger/entries/page.tsx");
 test("only owner and master can access ledger",()=>{for(const role of ["owner","master"])assert.equal(canManageLedger(role),true);for(const role of ["manager","leader","staff",null])assert.equal(canManageLedger(role),false);assert.match(server,/getAuthenticatedActor\(\)/);assert.match(server,/canManageLedger\(auth\.actor\.role\)/);assert.match(layout,/requireRole\(LEDGER_MANAGER_ROLES\)/)});

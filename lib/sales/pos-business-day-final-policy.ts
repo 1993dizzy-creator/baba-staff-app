@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { POS_BUCKETS,canonicalPosJson,posSourceFingerprint } from '../ledger/pos-sales-source.ts';
 export type PosCloseBuckets = Record<(typeof POS_BUCKETS)[number], number>;
 export type PosCloseTotals = PosCloseBuckets & { total: number };

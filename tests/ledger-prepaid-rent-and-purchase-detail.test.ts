@@ -1,19 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildLedgerEntries, entryDisplaySubtotal, type LedgerEntry, type TransactionRow } from "../lib/ledger/entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryMatchesListFilter } from "../lib/ledger/entry-list-filter.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "../lib/ledger/entry-display-amount.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { inventoryPurchaseStatusSummary } from "../lib/ledger/inventory-purchase-status.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerHrefWithoutInventoryFocus, parseInventoryLedgerFocus } from "../lib/ledger/inventory-entry-focus.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerMonthHref } from "../lib/ledger/month-query.ts";
 
 // Regression rows are the production shapes (read-only lookup, 2026-10-28):

@@ -1,4 +1,4 @@
-import test from"node:test";import assert from"node:assert/strict";import{existsSync,readFileSync}from"node:fs";// @ts-expect-error Node direct TS tests use explicit extension.
+import test from"node:test";import assert from"node:assert/strict";import{existsSync,readFileSync}from"node:fs";
 import{calculateBep}from"../lib/ledger/bep-core.ts";
 const migration=readFileSync("supabase/migrations/202608210007_add_recurring_reserves_bep.sql","utf8"),reserveApi=readFileSync("app/api/admin/ledger/reserves/route.ts","utf8"),reserveCore=readFileSync("lib/ledger/reserve-balances.ts","utf8"),foundation=readFileSync("tests/ledger-v1-foundation.test.ts","utf8"),pos=readFileSync("tests/ledger-pos-sales.test.ts","utf8"),inventory=readFileSync("tests/ledger-inventory-candidates.test.ts","utf8"),payable=readFileSync("tests/ledger-payable-payments.test.ts","utf8"),meal=readFileSync("tests/ledger-meal-payroll.test.ts","utf8"),card=readFileSync("tests/ledger-card-settlements.test.ts","utf8");
 test("monthly rent plan is seeded",()=>assert.match(migration,/'매장 임대료'.*60000000.*'monthly'/));

@@ -1,8 +1,6 @@
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { PAYROLL_AUTOMATION_START_DATE, PAYROLL_FACTS_ENGINE_VERSION, type AttendanceDayFacts, type PayrollWarningCode, type WorkScheduleVersion } from "./types.ts";
 
 const OFFSET = "+07:00";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { EARLY_LEAVE_REVIEW_START_DATE, resolveEarlyLeaveReview, type EarlyLeaveSelection } from "../attendance/early-leave-review.ts";
 
 type RecordInput = {

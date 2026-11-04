@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { projectPayrollAttendanceDay, roundMinutes } from "../lib/payroll/projection.ts";
 import type { PayrollContract, WorkScheduleVersion } from "../lib/payroll/types.ts";
 

@@ -2,9 +2,7 @@
 // the 장부 group order and KO/VI labels, name order within a group, and the emoji
 // (subtype emoji first, else the partner type's). Each screen keeps its own option
 // values and save logic; only the options' grouping and labels come from here.
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { effectivePartnerEmoji, partnerTypeEmoji } from "./emoji.ts";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { groupManualEntryPartners } from "../ledger/manual-entry-policy.ts";
 import type { PartnerType } from "./policy";
 

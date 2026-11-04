@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { effectivePartnerEmoji, partnerTypeEmoji } from "../lib/partners/emoji.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { parsePartnerSubtypeCreateInput, parsePartnerSubtypeUpdateInput } from "../lib/partners/policy.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { manualExpenseCategoryEmoji } from "../lib/ledger/manual-entry-policy.ts";
-// @ts-expect-error local Node strip-types runner requires explicit extension
 import { chooseLedgerEntryEmoji } from "../lib/ledger/entry-display-emoji.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");

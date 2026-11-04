@@ -1,15 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { classifyMonthlyAttendanceDay, evaluateMonthlyAttendanceStanding, resolveAttendanceStoreClosed } from "../lib/attendance/monthly-standing.ts";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { qualifiesForAttendanceBonus, selectAttendanceBonusEligibilityAt, selectAttendanceBonusPolicyAt } from "../lib/payroll/attendance-bonus.ts";
 import type { AttendanceDayFacts } from "../lib/payroll/types";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { resolveStoreClosedByDate } from "../lib/store-settings/business-time-adapter-core.ts";
-// @ts-expect-error Node direct TypeScript tests require extensions.
 import { isBabaPremiumHoliday } from "../lib/store-settings/holidays-policy.ts";
 
 function facts(overrides:Partial<AttendanceDayFacts>={}):AttendanceDayFacts{return {userId:1,businessDate:"2026-08-01",scheduledMinutes:540,actualMinutes:540,scheduledOverlapMinutes:540,manualLateNormalized:false,lateMinutes:0,rawLateMinutes:0,effectiveLateMinutes:0,lateThresholdMinutes:0,earlyLeaveMinutes:0,rawEarlyLeaveMinutes:0,earlyLeaveThresholdMinutes:0,isEarlyLeave:false,overtimeCandidateMinutes:0,attendanceStatus:"done",payrollStatus:"calculable",warningCodes:[],stored:{status:"done",lateMinutes:0,earlyLeaveMinutes:0,workMinutes:540},source:{attendanceRecordId:1,scheduleVersionId:1,scheduleRevision:1,storeSettingsRevision:1,engineVersion:"attendance-facts-v2"},...overrides};}

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node direct TS tests use explicit extension.
 import { reserveCurrentAmount, reservesByFundAccount } from "../lib/ledger/reserve-balances.ts";
 
 const migration = readFileSync("supabase/migrations/202608270001_link_reserve_plans_to_fund_accounts.sql", "utf8");

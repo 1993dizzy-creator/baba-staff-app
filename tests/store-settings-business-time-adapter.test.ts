@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
 import { getBusinessDate } from "../lib/common/business-time.ts";
-// @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
 import { buildPosCollectionWindow, calculateBusinessTimeContext, createBusinessTimeSnapshot, createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
-// @ts-expect-error Node's direct TypeScript runner requires an explicit extension.
 import { DEFAULT_STORE_HOURS, type StoreSetting } from "../lib/store-settings/types.ts";
 
 const configuredSetting: StoreSetting = {

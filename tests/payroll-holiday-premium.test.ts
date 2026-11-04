@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { calculateHolidayWorkPremiumAmount } from "../lib/payroll/holiday-premium.ts";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { payrollTaxTreatmentForItem } from "../lib/payroll/tax.ts";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { getEffectiveHolidayMultiplier } from "../lib/store-settings/holidays-policy.ts";
 
 const read=(path:string)=>readFileSync(join(process.cwd(),path),"utf8");

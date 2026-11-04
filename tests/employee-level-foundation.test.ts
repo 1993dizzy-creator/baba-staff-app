@@ -2,13 +2,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { addCalendarMonthsClamped, calculateEmployeeLevel } from "../lib/employee-level/calculate.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { EMPLOYEE_LEVEL_THEME } from "../lib/employee-level/presentation.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { EMPLOYEE_LEVEL_MAX_RAISE_COUNT, EMPLOYEE_LEVEL_RAISE_AMOUNT } from "../lib/employee-level/types.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { validateEmployeeLevelConfiguration } from "../lib/employee-level/validation.ts";
 
 const enabled = (asOfDate: string, overrides: Record<string, unknown> = {}) =>

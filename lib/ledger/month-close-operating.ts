@@ -1,8 +1,5 @@
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { allocateCardDifferenceBySaleMonth, type CardDifferenceLine } from "./card-difference-attribution.ts";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { cardMoney } from "./card-settlements.ts";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculateMonthCloseRevenue } from "./month-close-revenue.ts";
 
 type RecognizedTransaction = {

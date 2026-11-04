@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { buildPayrollDashboardSummary, buildPayrollPartTotals, countPayrollDashboardFilters, getPayrollActualPaidAmount, getPayrollApplicabilityBadges, getPayrollCalculatedNetAmount, matchesPayrollDashboardFilter } from "../lib/payroll/payroll-dashboard.ts";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { getPayrollHeaderAmount } from "../lib/payroll/payroll-page-display.ts";
 
 type Status = "calculable" | "requires_review" | "unavailable";

@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node strip-types requires the extension.
 import { buildLedgerEntries, entryDisplaySubtotal } from "../lib/ledger/entries.ts";
-// @ts-expect-error Node strip-types requires the extension.
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
-// @ts-expect-error Node strip-types requires the extension.
 import { entryCategoryEmoji } from "../lib/ledger/entry-display-emoji.ts";
-// @ts-expect-error Node strip-types requires the extension.
 import { accountTransferBadgeLabel } from "../lib/ledger/entry-display-account.ts";
 
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");

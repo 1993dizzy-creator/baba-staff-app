@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { getAttendanceDisplayStatus, getRecentAttendanceDateKeys } from "../lib/attendance/display-status.ts";
 
 test("current month uses Vietnam today and the previous six days", () => {

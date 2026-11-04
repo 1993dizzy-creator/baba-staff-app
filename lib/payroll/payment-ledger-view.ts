@@ -1,7 +1,6 @@
 // /admin/payroll/[runId] 지급장부 표시 전용. 기존 runs/[runId] 응답만 읽으며 급여를 재계산하거나
 // 지급 데이터를 바꾸지 않는다. 차액은 저장된 difference_amount(실제 지급액 − 계산 실수령액)를 그대로 쓴다.
 
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { getPayrollApplicabilityBadges } from "./payroll-dashboard.ts";
 
 export type PaymentLedgerFilter = "all" | "paid" | "unpaid" | "difference";

@@ -1,6 +1,5 @@
 import type { EmployeeLevelInfo } from "../employee-level/types";
 import type { PayrollContract } from "./types";
-// @ts-expect-error Node's strip-types tests require the explicit extension.
 import { calculatePayrollRates } from "./work-policy.ts";
 
 export type CombinedSalaryResult = {

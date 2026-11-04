@@ -1,6 +1,4 @@
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { addStoreDays, calculateStoreBusinessDate, getStoreOperationState, isStoreTime, validateStoreHours } from "./business-time-core.ts";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { DEFAULT_STORE_HOURS, STORE_DEFAULT_CUTOFF, STORE_TIMEZONE, type StoreBusinessHour, type StoreSetting } from "./types.ts";
 
 const STORE_UTC_OFFSET = "+07:00";

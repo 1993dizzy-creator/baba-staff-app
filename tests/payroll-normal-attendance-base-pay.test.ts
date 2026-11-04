@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { applyUnifiedPayrollWorkPolicy as applyPayrollWorkPolicy, calculatePayrollRates, selectUnifiedRecognizedMinutes } from "../lib/payroll/work-policy.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { calculateLatePenalty, calculateTimePenalty } from "../lib/payroll/penalties.ts";
 import type { PayrollContract, WorkScheduleVersion } from "../lib/payroll/types.ts";
 

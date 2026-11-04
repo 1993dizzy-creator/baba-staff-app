@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // Node runs this TypeScript test directly; the explicit extension is required at runtime.
-// @ts-expect-error allowImportingTsExtensions is intentionally not enabled for app builds.
 import { parseReactivateActionForm } from "../lib/bar/keeping-reactivate-request.ts";
 
 function requestForm(overrides: Record<string, unknown> = {}, note: unknown = "재활성화 확인") {

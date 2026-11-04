@@ -3,7 +3,6 @@ import {
   listActualCashOutflowItems,
   roundLedgerMoney,
   type CashOutflowTransaction,
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 } from "./cash-outflow.ts";
 
 export type CashReportCategory = {

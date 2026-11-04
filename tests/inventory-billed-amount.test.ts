@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {AUTO_BILLED_AMOUNT,billedAmountRequest,calculatePurchaseAmount,editBilledAmountDraft,effectiveBilledAmount,manualBilledDraft,parseBilledAmountRequest,resolveBilledAmount} from '../lib/inventory/billed-amount.ts';
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {buildPurchaseCases,type PurchaseCaseLog} from '../lib/inventory/purchase-cases.ts';
 
 test('orange: 3.57 x 85,000 = 303,450; manual 303,000 shows -450 and is sent as manual',()=>{
@@ -83,9 +81,7 @@ test('API and screens send the billed amount on every receipt path; corrections 
  assert.match(page,/calculatePurchaseAmount\(changeQty, parsePrice\(quickPurchasePrice\)\)/);
 });
 
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {buildMonthlyEffectivePurchases} from '../lib/inventory/monthly-effective-purchases.ts';
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {analyzeDailyEffectivePurchases} from '../lib/inventory/daily-effective-purchases.ts';
 
 // Orange receipt #100: 3 kg + linked receipt edits to 3.57 kg; the last edit sets billed 303,000.

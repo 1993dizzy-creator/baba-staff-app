@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { calculateStoreBusinessDate, addStoreDays } from "../lib/store-settings/business-time-core.ts";
 
 test("required inventory time boundaries resolve to the expected business date", () => {

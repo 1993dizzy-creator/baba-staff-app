@@ -1,6 +1,4 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { isPayrollPaymentOutflow, type LedgerEntry } from "./entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { reserveEntryDisplaySign } from "./reserve-text.ts";
 
 // Presentation only. LedgerEntry.amount and direction remain accounting values.

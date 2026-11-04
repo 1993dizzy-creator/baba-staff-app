@@ -1,5 +1,4 @@
-﻿// @ts-expect-error Node's strip-types runner needs the explicit extension.
-import { manualExpenseCategoryEmoji } from "./manual-entry-policy.ts";
+﻿import { manualExpenseCategoryEmoji } from "./manual-entry-policy.ts";
 
 export type DashboardEmojiData = {
   categories: readonly { id: number | string; name: string; emoji?: string | null }[];

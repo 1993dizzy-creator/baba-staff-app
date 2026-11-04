@@ -1,4 +1,3 @@
-// @ts-expect-error Node local tests require the explicit extension.
 import { cardMoney } from "./card-settlements.ts";
 // Normalize only an expected append-only fee when comparing an immutable close
 // with today's recalculation. All holdings, allocations and other drift remain.

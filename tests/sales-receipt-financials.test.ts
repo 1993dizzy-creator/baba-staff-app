@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 // Node's built-in TypeScript runner requires the source extension; the app compiler
 // intentionally keeps allowImportingTsExtensions disabled.
-// @ts-expect-error test-runner-only TypeScript extension
 import { calculateReceiptFinancials, parseVndInteger } from "../lib/sales/receipt-financials.ts";
 
 const lines = [{ finalAmount: 10_470_000, taxRate: 10 }];

@@ -8,7 +8,6 @@
 // recognizedWorkdays(lib/payroll/monthly-run.ts)는 지각·조퇴·스케줄 정책이 반영된 급여
 // 계산 전용 값이라 식대 기준("지각·조퇴와 무관, 퇴근 기록 없어도 발생")과 다르다 — 이 파일은
 // 그 값을 재사용하지 않고 attendance_records를 독립적으로 집계한다.
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { addDaysToDateKey } from "../attendance/time.ts";
 
 export type MealAllowancePolicyVersion = {

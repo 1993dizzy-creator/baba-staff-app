@@ -1,21 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildLedgerEntries, entryDisplaySubtotal, isHiddenRentAllocation, type TransactionRow } from "../lib/ledger/entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { calculateOperatingResidual, monthNewReserve, monthRentRecognized, reserveAttributionMonth } from "../lib/ledger/operating-residual.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildRentUsageSchedule, parseRentContractPayload, rentPaymentSummary, rentReserveOutlook } from "../lib/ledger/rent-contracts.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { parseReserveEntryRequest, restorableReleases } from "../lib/ledger/reserve-entry-request.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { reserveManualOffset, reservePlannedRecurringAmount } from "../lib/ledger/reserve-recurring.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { reserveCurrentAmount } from "../lib/ledger/reserve-balances.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerHrefWithoutInventoryFocus, parseTransactionLedgerFocus } from "../lib/ledger/inventory-entry-focus.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { ledgerMonthHref } from "../lib/ledger/month-query.ts";
 
 // Production shapes read on 2026-10-28 (read only): reserve plan #1 entries #1 (+60M 9/30),

@@ -33,7 +33,7 @@ test("entries stylesheet keeps the complete ledger layout and transaction row se
     const result = new Map<string, string>();
     stylesheet.walkRules(rule => {
       if (!rule.parent || rule.parent.type !== "root" || !rule.selectors.includes(selector)) return;
-      rule.walkDecls(decl => result.set(decl.prop, decl.value));
+      rule.walkDecls(decl => { result.set(decl.prop, decl.value); });
     });
     return result;
   };
@@ -469,8 +469,9 @@ test("daily rows keep category emoji and compact account, amount, and chevron la
   const finalRule = (selector: string, property: string, media?: string) => {
     let value: string | undefined;
     stylesheet.walkRules(selector, rule => {
-      if (media && rule.parent.type === "atrule" && !rule.parent.params.includes(media)) return;
-      if (!media && rule.parent.type !== "root") return;
+      const parent = rule.parent;
+      if (media && parent?.type === "atrule" && !(parent as import("postcss").AtRule).params.includes(media)) return;
+      if (!media && parent?.type !== "root") return;
       rule.walkDecls(property, decl => { value = decl.value; });
     });
     return value;

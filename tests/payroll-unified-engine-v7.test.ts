@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { scheduledMinutesPerDay, schedulesActiveOn } from "../lib/payroll/work-schedule.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { applyUnifiedPayrollWorkPolicy as applyPayrollWorkPolicy, calculatePayrollRates } from "../lib/payroll/work-policy.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { selectUnifiedRecognizedMinutes } from "../lib/payroll/work-policy.ts";
-// @ts-expect-error Node test execution requires explicit TypeScript extensions.
 import { calculateLatePenalty, calculateTimePenalty } from "../lib/payroll/penalties.ts";
 import type { PayrollContract, WorkScheduleVersion } from "../lib/payroll/types.ts";
 import fs from "node:fs";

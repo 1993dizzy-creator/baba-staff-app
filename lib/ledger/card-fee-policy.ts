@@ -1,4 +1,3 @@
-// @ts-expect-error Node's isolated test runner requires the extension.
 import { cardMoney, sumCardMoney, type CardDepositAutoAllocationRow } from "./card-settlements.ts";
 
 export const CARD_FEE_TARGET_RATE = 0.0215;

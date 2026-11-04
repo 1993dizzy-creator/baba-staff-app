@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { payrollContractErrorMessage } from "../lib/payroll/contract-errors.ts";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");

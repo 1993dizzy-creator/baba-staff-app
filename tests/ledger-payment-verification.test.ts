@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { buildPaymentVerificationItems, isPaymentVerification } from "../lib/ledger/payment-verification.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { calculatePayableBalances } from "../lib/ledger/payables.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { computeActualCashOutflow } from "../lib/ledger/cash-outflow.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { calculateMonthCloseOperatingSummary } from "../lib/ledger/month-close-operating.ts";
 
 const receipt = (pending = true) => ({

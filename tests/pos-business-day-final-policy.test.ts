@@ -2,11 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { comparePosFinalAmounts,isEligiblePosFinalSync,posSnapshotTotals } from '../lib/sales/pos-business-day-final-policy.ts';
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { runManualCloseWorkflow,runPosFinalWorkflow } from '../lib/sales/pos-business-day-final-workflow.ts';
-// @ts-expect-error Direct Node TypeScript tests require explicit extensions.
 import { buildPosBusinessDaySource } from '../lib/ledger/pos-sales-source.ts';
 const date='2026-09-11',now=new Date('2026-09-11T20:05:00Z'),cutoffAt='2026-09-11T20:00:00Z';
 const read=(path:string)=>readFileSync(join(process.cwd(),path),'utf8');

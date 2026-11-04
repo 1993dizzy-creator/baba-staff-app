@@ -10,7 +10,6 @@
 // amount/count so the same payable is never shown twice.
 import {
   sumPayableAmounts,
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 } from "./payables.ts";
 
 export type DisplayPartyRow = { partyId: number; closingOutstanding: number; openCount: number };

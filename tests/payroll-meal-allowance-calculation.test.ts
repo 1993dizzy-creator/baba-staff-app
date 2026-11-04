@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculateCurrentMealAllowanceCost, calculateProjectedMealAllowanceForEmployee, selectMealAllowanceEligibilityAt, selectMealAllowancePolicyAt } from "../lib/payroll/meal-allowance.ts";
 
 // ---------------------------------------------------------------------------

@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { calculateFixedMonthlyPayroll } from "../lib/payroll/fixed-monthly.ts";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { isMissingAttendanceCandidateDate } from "../lib/payroll/missing-attendance.ts";
 import type { PayrollContract } from "../lib/payroll/types";
 import type { EmployeeLevelInfo } from "../lib/employee-level/types";

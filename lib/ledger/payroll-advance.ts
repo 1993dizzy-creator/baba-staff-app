@@ -1,6 +1,4 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { isPayrollEligible, type PayrollEligibilityUser } from "../payroll/eligibility.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { getPartKey, type PartValue } from "../common/parts.ts";
 
 // Input contract for POST /api/admin/ledger/payroll-advances. The employee is

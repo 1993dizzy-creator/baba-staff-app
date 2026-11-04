@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { buildLedgerEntries, entryDisplaySubtotal, withPaymentDifferenceAdjustments, type LedgerEntry, type TransactionRow } from "../lib/ledger/entries.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryFilterHeaderAmount, entryMatchesListFilter, LEDGER_ENTRY_FILTERS, ledgerEntryFilterLabel, type LedgerEntryFilter } from "../lib/ledger/entry-list-filter.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayBadgeKind, entryDisplayBadgeLabel } from "../lib/ledger/entry-display-badge.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { entryDisplayAmount } from "../lib/ledger/entry-display-amount.ts";
 
 // One purchase is listed once: 미납 → 일부결제 → 결제. A payable payment fully

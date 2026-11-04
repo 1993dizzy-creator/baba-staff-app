@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {resolveEarlyLeaveReview} from "../lib/attendance/early-leave-review.ts";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {evaluateAttendancePolicy} from "../lib/attendance/policy-engine.ts";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {normalizeAttendanceDayFacts} from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import {calculateTimePenalty} from "../lib/payroll/penalties.ts";
 import type {EarlyLeaveSelection} from "../lib/attendance/early-leave-review";
 const read=(p:string)=>readFileSync(p,"utf8");

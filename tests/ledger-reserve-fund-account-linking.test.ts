@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-// @ts-expect-error Node direct TS tests use explicit extension.
 import { isReserveEligibleFundAccount, reserveShortfall, reserveCurrentAmount } from "../lib/ledger/reserve-balances.ts";
 
 const reservesApi = readFileSync("app/api/admin/ledger/reserves/route.ts", "utf8");

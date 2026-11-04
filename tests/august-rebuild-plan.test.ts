@@ -11,7 +11,6 @@ import {
   type ExistingMovement,
   type SheetCell,
   type RebuildAdjustment,
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 } from '../lib/ledger/august-rebuild-plan.ts';
 
 const opening: Record<FundAccount,string> = {

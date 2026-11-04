@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { canAssignBarZone, canDeleteBarKeeping, canEditBarZone, canEditClosedBarKeeping, canManageBarKeeping, canReactivateBarKeeping, canViewBar, canViewBarLogs } from "../lib/bar/permissions.ts";
 
 // role/position 통합 작업에서 BAR 정책 코드(lib/bar/permissions.ts)는 원칙적으로 건드리지

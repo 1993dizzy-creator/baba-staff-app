@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test runner strips TypeScript directly.
 import { getPayrollOverviewPeriod } from "../lib/payroll/overview-period.ts";
 
 test("current month stops at Vietnam today without future attendance", () => {

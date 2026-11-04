@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-// @ts-expect-error Direct Node tests require explicit extensions.
 import { isSalesSyncSourceComplete, syncRunCompletionEvidence } from '../lib/pos/cukcuk/sales-sync-completeness.ts';
 const complete={status:'success' as const,limitReached:false,skippedDetailCount:0,
   paymentSnapshotUnavailableCount:0,receiptPaymentSourceComplete:true,partial:false,errorMessage:null};

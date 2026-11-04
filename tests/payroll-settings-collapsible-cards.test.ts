@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { selectAttendanceBonusEligibilityAt } from "../lib/payroll/attendance-bonus.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

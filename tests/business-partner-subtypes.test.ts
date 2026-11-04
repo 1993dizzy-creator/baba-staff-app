@@ -3,9 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { groupPartnersByTypeAndSubtype, parsePartnerInput, parsePartnerSubtypeCreateInput, parsePartnerSubtypeUpdateInput, PARTNER_TYPES } from "../lib/partners/policy.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { formatPartnerSubtypeName } from "../lib/partners/text.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

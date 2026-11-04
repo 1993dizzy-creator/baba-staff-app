@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node's native TypeScript test runner requires the source extension.
 import { selectEmployeeLevelProgramVersionsForDates } from "../lib/employee-level/version-selection.ts";
 
 const page = readFileSync("app/(protected)/admin/users/page.tsx", "utf8");

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { calculateAttendanceBusinessDate, evaluateAttendancePolicy, getAdminMissingCheckoutReviewAt, isAdminMissingCheckoutReviewAvailable, type AttendancePolicyInput } from "../lib/attendance/policy-engine.ts";
 
 const base: AttendancePolicyInput = {

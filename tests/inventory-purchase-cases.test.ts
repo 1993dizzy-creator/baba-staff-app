@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {buildPurchaseCases,type PurchaseCaseLog,type PurchaseCaseIssue,type PurchaseCaseCandidate} from '../lib/inventory/purchase-cases.ts';
 // These IDs and relationships are the user-provided 10/11 scenario. Quantities,
 // prices, timestamps and actor names below are synthetic, not production facts.

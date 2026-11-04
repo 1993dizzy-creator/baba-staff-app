@@ -4,7 +4,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { ScriptTarget, transpileModule } from "typescript";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson } from "../lib/sales/menu-sales.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

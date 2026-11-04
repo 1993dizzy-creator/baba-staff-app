@@ -2,9 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { formatInsuranceNote } from "../lib/payroll/insurance-note.ts";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { calculatePayrollRates, applyUnifiedPayrollWorkPolicy } from "../lib/payroll/work-policy.ts";
 import type { PayrollContract } from "../lib/payroll/types.ts";
 

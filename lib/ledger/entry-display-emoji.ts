@@ -1,6 +1,4 @@
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { manualExpenseCategoryEmoji } from "./manual-entry-policy.ts";
-// @ts-expect-error Node's local strip-types test runner requires the extension.
 import { effectivePartnerEmoji } from "../partners/emoji.ts";
 import type { PartnerType } from "../partners/policy";
 import type { LedgerEntry } from "./entries";

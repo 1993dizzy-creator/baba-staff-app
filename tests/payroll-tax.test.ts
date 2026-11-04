@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-// @ts-expect-error Node test execution requires the explicit TypeScript extension.
 import { calculateAccountingTaxableCompensationAmount, calculateEmployeePit, calculateProgressivePit, calculateTaxableCompensationAmount, grossUpNetTaxableIncome, payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, selectEmployeeTaxSetting, selectTaxPolicy, validateTaxBrackets } from "../lib/payroll/tax.ts";
-// @ts-expect-error Node test execution requires the explicit TypeScript extension.
 import { calculatePayrollPayoutAmounts } from "../lib/payroll/adjustments.ts";
-// @ts-expect-error Node test execution requires the explicit TypeScript extension.
 import { calculatePayrollInsuranceTotals } from "../lib/payroll/insurance.ts";
-// @ts-expect-error Node test execution requires the explicit TypeScript extension.
 import { calculatePayrollRates } from "../lib/payroll/work-policy.ts";
 
 const brackets = [

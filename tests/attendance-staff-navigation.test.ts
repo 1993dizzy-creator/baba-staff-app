@@ -4,9 +4,7 @@ import test from "node:test";
 import ts from "typescript";
 import { pathToFileURL } from "node:url";
 import { setImmediate } from "node:timers/promises";
-// @ts-expect-error Direct Node TypeScript tests use explicit extensions.
 import { shouldIncludeMonthlyEmployee } from "../lib/employment/eligibility.ts";
-// @ts-expect-error Direct Node TypeScript tests use explicit extensions.
 import { getAdjacentStaffId, getStaffDetailUrl, getStaffSwipeDirection, SWIPE_INTERACTIVE_SELECTOR } from "../lib/attendance/staff-navigation.ts";
 
 const staff = readFileSync("app/(protected)/attendance/staff/page.tsx", "utf8");

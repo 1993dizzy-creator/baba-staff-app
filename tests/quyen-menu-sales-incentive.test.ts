@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { buildMenuSales, MENU_SALES_RAW_JSON_SELECT, restoreMenuSalesRawJson } from "../lib/sales/menu-sales.ts";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { QUYEN_MENU_SALES_INCENTIVE_POLICY, calculateQuyenMenuSalesIncentive, resolveQuyenMenuSalesIncentiveCronTarget, syncQuyenMenuSalesIncentive } from "../lib/payroll/quyen-menu-sales-incentive.ts";
-// @ts-expect-error Node strip-types resolves the TypeScript source directly.
 import { calculateManualAdjustmentTotals, calculatePayrollPayoutAmounts, calculateSalesMenuIncentiveTotals } from "../lib/payroll/adjustments.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

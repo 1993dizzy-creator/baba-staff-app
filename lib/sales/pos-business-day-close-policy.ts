@@ -1,8 +1,5 @@
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { buildPosCollectionWindow, type BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { POS_BUCKETS, validPosBusinessDate, type PosBusinessDaySource } from "../ledger/pos-sales-source.ts";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { isPosTimestampOnlyDrift } from "./pos-business-day-final-policy.ts";
 
 export function canWritePosBusinessDayClose(role: string | null | undefined, reclose = false) {

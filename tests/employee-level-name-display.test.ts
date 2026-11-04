@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatEmployeeNameWithLevel } from "../lib/employee-level/display.ts";
 import type { EmployeeLevelInfo } from "../lib/employee-level/types.ts";
 

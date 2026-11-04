@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { lockPaidExtraWorkReview, paidExtraWorkAmount, paidExtraWorkRows } from "../lib/payroll/paid-extra-work.ts";
 import type { PayrollOverviewEmployee } from "../lib/payroll/overview.ts";
 

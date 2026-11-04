@@ -3,9 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import ts from "typescript";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { CATEGORY_OPTIONS_BY_PART } from "../lib/inventory/categories.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatInventoryItemCount, getDominantInventoryCategoryGroup, getInventoryCategoryGroup, listUnmappedDefaultInventoryCategories } from "../lib/inventory/category-groups.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");

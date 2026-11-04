@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";import{existsSync,readFileSync}from"node:fs";import{join}from"node:path";import test from"node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import{buildOldestFirstAllocations,calculatePayableBalances,payableMonthBounds,sumPayableAmounts}from"../lib/ledger/payables.ts";
 import ts from "typescript";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import * as payableFunctions from "../lib/ledger/payables.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import{groupPayablesForDisplay}from"../lib/ledger/payable-display-groups.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));

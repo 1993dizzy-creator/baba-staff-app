@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import { projectDailyEffectivePurchases } from "../lib/inventory/daily-effective-purchases.ts";
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import { findInventoryLanguageMissingItems } from "../lib/inventory/language-missing.ts";
 const root = { id: 12407, item_id: 613, reason: "purchase", change_quantity: 2, correction_of_inventory_log_id: null, new_purchase_price: 30000, is_active: false };
 test("linked cancellation on a later date removes #12407 without touching audit facts", () => {

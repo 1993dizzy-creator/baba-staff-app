@@ -1,4 +1,3 @@
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 import { resolveEarlyLeaveReview, type EarlyLeaveSelection } from "./early-leave-review.ts";
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;

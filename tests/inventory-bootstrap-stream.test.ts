@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // Node 24 executes this type-strippable module directly; production imports omit the extension.
-// @ts-expect-error TypeScript disallows explicit .ts imports without allowImportingTsExtensions.
 import { parseInventoryBootstrapStreamEvent, readInventoryBootstrapStream } from "../lib/inventory/bootstrap-stream.ts";
 
 type Item = { id: number; name: string };

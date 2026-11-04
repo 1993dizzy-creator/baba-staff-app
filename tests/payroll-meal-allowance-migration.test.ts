@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { selectMealAllowanceEligibilityAt } from "../lib/payroll/meal-allowance.ts";
 
 const MIGRATION_PATH = "supabase/migrations/202608070001_add_payroll_meal_allowance.sql";

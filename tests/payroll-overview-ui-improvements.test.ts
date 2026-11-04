@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { calculatePayrollInsuranceTotals } from "../lib/payroll/insurance.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { getPayrollHeaderAmount } from "../lib/payroll/payroll-page-display.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { formatPositiveIntegerInput, normalizePositiveIntegerInput } from "../lib/payroll/positive-integer-input.ts";
 
 const read=(path:string)=>fs.readFileSync(path,"utf8");

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 import { isPayrollOwnerRole, requiresFixedMonthlyContract } from "../lib/payroll/eligibility.ts";
 
 test("requiresFixedMonthlyContract: owner/master roles require fixed monthly regardless of attendance tracking", () => {

@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node direct TS tests use explicit extensions.
 import { getBusinessMonthEndBoundary } from "../lib/common/business-time.ts";
-// @ts-expect-error Node direct TS tests use explicit extensions.
 import { buildFundAccountView, fundAccountViewMode } from "../lib/ledger/fund-account-view.ts";
-// @ts-expect-error Node direct TS tests use explicit extensions.
 import { reservesByFundAccount } from "../lib/ledger/reserve-balances.ts";
 
 const route = readFileSync("app/api/admin/ledger/route.ts", "utf8");

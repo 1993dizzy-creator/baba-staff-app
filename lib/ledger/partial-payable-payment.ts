@@ -3,7 +3,6 @@ import {
   sumPayableAmounts,
   type OutstandingPayable,
   type PayableAllocation,
-// @ts-expect-error Node's test runner requires the explicit TypeScript extension.
 } from "./payables.ts";
 
 // Partial (arbitrary amount) payment for one party. Allocation is exactly

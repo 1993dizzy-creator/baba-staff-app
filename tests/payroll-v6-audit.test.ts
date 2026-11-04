@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { normalizeAttendanceDayFacts } from "../lib/payroll/attendance-facts.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { isMissingAttendanceCandidateDate } from "../lib/payroll/missing-attendance.ts";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { getLastCompletedBusinessDate } from "../lib/payroll/overview-period.ts";
 
 const schedule={id:1,userId:7,startTime:"16:00",endTime:"01:00",unpaidBreakMinutes:0,effectiveFrom:"2026-07-01",effectiveTo:null,revision:1,changeReason:"fixture"};

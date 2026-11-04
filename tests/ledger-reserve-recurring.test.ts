@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-// @ts-expect-error Node direct TS tests use explicit extension.
 import { isReserveRecurringActiveForMonth, reservePlannedRecurringAmount, reserveTargetReached, shouldGenerateReserveSchedule } from "../lib/ledger/reserve-recurring.ts";
 
 const migration = readFileSync("supabase/migrations/202608280001_add_reserve_recurring_allocation.sql", "utf8");

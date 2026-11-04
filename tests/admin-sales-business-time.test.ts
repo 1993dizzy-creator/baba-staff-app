@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error test runner imports the TypeScript source directly.
 import { calculateStoreBusinessDate } from "../lib/store-settings/business-time-core.ts";
 
 // /admin/sales* pages and APIs must land on the same businessDate as the

@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { calculateCurrentMealAllowanceCost } from "../lib/payroll/meal-allowance.ts";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { previousVietnamBusinessDate, selectMealSyncActor, syncConfirmedMealSource } from "../lib/ledger/meal-late-source-sync.ts";
 
 const route = readFileSync("app/api/cron/ledger-meal-auto-post/route.ts", "utf8");

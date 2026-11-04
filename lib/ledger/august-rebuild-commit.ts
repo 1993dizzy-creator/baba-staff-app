@@ -16,7 +16,6 @@ import {
   type RebuildInput,
   type RebuildAdjustment,
   type SourceLink,
-// @ts-expect-error Node's direct TypeScript tests require the explicit extension.
 } from "./august-rebuild-plan.ts";
 
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { isOwnerOrMasterRole } from "../lib/common/roles.ts";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { isPayrollOwnerRole } from "../lib/payroll/eligibility.ts";
 
 // lib/payroll/eligibility.ts intentionally keeps its own self-contained

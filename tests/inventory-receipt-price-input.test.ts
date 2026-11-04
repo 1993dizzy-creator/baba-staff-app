@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-// @ts-expect-error Node strip-types uses explicit TypeScript extensions.
 import {formatReceiptPriceInput,receiptPriceCaret} from '../lib/inventory/receipt-price-input.ts';
 
 test('receipt price groups integer digits without losing decimal edits or precision',()=>{

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-// @ts-expect-error Node strips TypeScript extensions in tests.
 import { groupPartnersByType, PARTNER_TYPE_GROUP_ORDER } from "../lib/partners/policy.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");

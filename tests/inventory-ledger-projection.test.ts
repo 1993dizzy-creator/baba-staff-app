@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test runner supports TS extensions.
 import { inventoryDisplayOverlay, inventoryLogDisplayUpdate, inventoryPurchaseLogCurrentItemSyncUpdate, ledgerSyncNotice } from "../lib/inventory/ledger-sync-contract.ts";
 
 test("display-only helper never mutates purchase economics", () => {

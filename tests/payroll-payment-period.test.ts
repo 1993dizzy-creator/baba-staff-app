@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node test execution needs explicit TypeScript extensions.
 import { isClosedPayrollMonth, vietnamPayrollMonth } from "../lib/payroll/payment-period.ts";
 
 test("August payroll opens only after September begins in Vietnam",()=>{

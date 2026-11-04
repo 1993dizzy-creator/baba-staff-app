@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's direct TypeScript tests require an explicit extension.
 import { buildAdminAttendancePolicyInput, selectActiveScheduleVersion } from "../lib/attendance/policy-resolution-core.ts";
 import type { StoreSetting } from "../lib/store-settings/types";
 

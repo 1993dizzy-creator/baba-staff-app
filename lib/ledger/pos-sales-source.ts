@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-// @ts-expect-error Node's direct TypeScript tests require explicit extensions.
 import { buildPaymentSummary, classifyPaymentBucket, filterPaidPayments, findPaymentReconciliationMismatches, getPaidReceiptTotal, paymentSummaryByBucket, type PosPaymentBucket, type PosPaymentRow } from "../sales/payment-summary.ts";
 
 export type PosSourceReceipt = {

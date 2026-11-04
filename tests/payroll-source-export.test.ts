@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-// @ts-expect-error Node's strip-types test runner requires the explicit extension.
 import { buildPayrollSourceExport } from "../lib/payroll/source-export/build-export.ts";
 
 function fixture(options?:{reviewCodes?:string[];contract?:boolean;extraStatus?:"approved"|"rejected"|"review_required"|"stale";taxReview?:boolean;unresolved?:boolean;holidayPremium?:boolean}){
