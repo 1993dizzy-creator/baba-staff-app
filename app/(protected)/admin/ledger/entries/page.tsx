@@ -731,7 +731,9 @@ function LedgerEntriesContent() {
     if (transactionFocusHandledRef.current === handledKey) return;
     transactionFocusHandledRef.current = handledKey;
     router.replace(ledgerHrefWithoutInventoryFocus(pathname, searchParams.toString()), { scroll: false });
-    const found = data.entries.find(entry => entry.transactionId === focusTransactionId);
+    // A billed-amount correction has no row of its own: open the purchase it corrects.
+    const found = data.entries.find(entry => entry.transactionId === focusTransactionId) ??
+      data.entries.find(entry => entry.items.some(item => item.billedCorrection?.corrections.some(correction => correction.transactionId === focusTransactionId)));
     if (found) {
       setSelected(found);
       setCandidateDraft(null);
@@ -1841,8 +1843,9 @@ function EntryDetailSheet({
               </span>
               <span className={styles.itemAmount}>
                 {item.displayTime ? <small>{item.displayTime}</small> : null}
-                <b>{money(item.purchaseSettlement?.effectiveAmount ?? item.amount)}</b>
+                <b>{money(item.billedCorrection?.finalAmount ?? item.purchaseSettlement?.effectiveAmount ?? item.amount)}</b>
               </span>
+              {item.billedCorrection ? <BilledCorrectionHistory correction={item.billedCorrection} vi={vi} /> : null}
               {entry.status === "pending" || (confirmedInventory && editMode) ? (
                 <button
                   className={styles.itemAction}
@@ -2912,6 +2915,26 @@ function InventoryAdvancedDetails({ entry, issues, lang }: { entry: LedgerEntry;
         ) : null}
         {!settled.length && !matched.length && !(entry.status === "confirmed" && entry.origin === "auto")
           ? <p className={styles.policyNote}>{vi ? "Không có thêm chi tiết." : "추가 상세가 없습니다."}</p> : null}
+      </div>
+    </details>
+  );
+}
+
+// Purchase item detail, collapsed: paid-receipt billed-amount corrections folded into the
+// item's final amount (수정 전 → 수정 후, 차액, 사유, 정정 전표 #).
+function BilledCorrectionHistory({ correction, vi }: { correction: NonNullable<LedgerEntryItem["billedCorrection"]>; vi: boolean }) {
+  return (
+    <details className={styles.advancedDetails} data-testid="billed-correction-history">
+      <summary>{vi ? `Lịch sử sửa số tiền thực tính · ${correction.corrections.length} lần` : `실청구금액 수정 이력 · ${correction.corrections.length}건`}</summary>
+      <div className={styles.advancedBody}>
+        <p>{vi ? "Số tiền thực tính cuối cùng" : "최종 실청구금액"} <b>{money(correction.finalAmount)}</b>
+          {` · ${vi ? "Ban đầu" : "최초"} ${money(correction.originalAmount)} · ${vi ? "Chênh lệch" : "차액"} ${money(correction.difference)}`}</p>
+        {correction.corrections.map(row => (
+          <p key={row.transactionId} className={styles.paymentHistoryMeta} data-billed-correction-transaction-id={row.transactionId}>
+            {`${formatDate(row.businessDate, vi ? "vi" : "ko")} · ${vi ? "Trước" : "수정 전"} ${row.previousAmount == null ? "—" : money(row.previousAmount)} → ${vi ? "Sau" : "수정 후"} ${row.billedAmount == null ? "—" : money(row.billedAmount)} · ${vi ? "Chênh lệch" : "차액"} ${money(row.difference)} · ${vi ? "Phiếu điều chỉnh" : "정정 전표"} #${row.transactionId}`}
+            {row.reason ? <><br />{`${vi ? "Lý do" : "사유"}: ${row.reason}`}</> : null}
+          </p>
+        ))}
       </div>
     </details>
   );

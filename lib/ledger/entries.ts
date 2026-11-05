@@ -30,6 +30,11 @@ export type LedgerEntryItem = {
   remainingAmount?: number;
   settlementStatus?: "unpaid" | "partial" | "paid";
   purchaseSettlement?: PurchaseSettlement;
+  // Paid-receipt billed-amount corrections (inventory_purchase_billed_correction rows whose
+  // correction_of_id is this item's transaction, all in this view) folded into the item:
+  // finalAmount = booked amount − Σ corrections. The correction rows get no list row of their
+  // own; their amount and fund movement are unchanged and still read by every server total.
+  billedCorrection?: LedgerBilledCorrection;
   // A payable booked as 결제 미확인 (snapshot paymentVerification "pending"):
   // listed under 미납금 현황 › 기타, outside the month-end 미납 total.
   paymentVerificationPending?: boolean;
@@ -38,6 +43,15 @@ export type LedgerEntryItem = {
   displayTime?: string | null;
   sortTimestamp?: number;
 };
+
+export type LedgerBilledCorrection = {
+  originalAmount: number;
+  finalAmount: number;
+  difference: number;
+  corrections: { transactionId: number; businessDate: string; previousAmount: number | null; billedAmount: number | null; difference: number; reason: string | null }[];
+};
+
+export const INVENTORY_BILLED_CORRECTION_SOURCE_TYPE = "inventory_purchase_billed_correction";
 
 // One cash payment applied to a payable row, as of the view month. `amount` is
 // the part applied to this row; `linkedTransactionIds` are the listed payable
@@ -648,6 +662,26 @@ export function buildLedgerEntries(
       .map(row => value(row.correction_of_id)),
   );
   const transactionsById = new Map(transactions.map(row => [value(row.id), row]));
+  // Billed-amount corrections are folded into their original purchase item only when that
+  // original is a confirmed, unreversed inventory purchase row of this same view. Anything
+  // else (original outside the view, unexpected shape) keeps its own row, so its expense and
+  // fund effect are never dropped. Unlinked manual rows are never matched by memo or amount.
+  const billedCorrectionsByOriginal = new Map<number, TransactionRow[]>();
+  const foldedBilledCorrectionIds = new Set<number>();
+  for (const row of transactions) {
+    if (row.source_type !== INVENTORY_BILLED_CORRECTION_SOURCE_TYPE || row.status !== "confirmed" ||
+        row.type !== "expense" || Number(row.economic_effect_sign) !== -1 || row.correction_of_id == null) continue;
+    const originalId = value(row.correction_of_id);
+    const original = transactionsById.get(originalId);
+    if (!original || original.status !== "confirmed" || original.type !== "expense" || original.correction_of_id != null ||
+        (original.source_type !== "inventory_purchase_candidate" && original.source_type !== "inventory_purchase_rebook") ||
+        reversedInventoryIds.has(originalId) ||
+        original.recognition_month !== row.recognition_month) continue;
+    const linked = billedCorrectionsByOriginal.get(originalId) ?? [];
+    linked.push(row);
+    billedCorrectionsByOriginal.set(originalId, linked);
+    foldedBilledCorrectionIds.add(value(row.id));
+  }
   const linkedPaymentDifferences = new Map<number, { actualPaidAmount: number; differenceAmount: number }>();
   const hiddenPaymentDifferenceIds = new Set<number>();
   for (const payment of transactions) {
@@ -717,6 +751,7 @@ export function buildLedgerEntries(
     if (row.type === "expense_recognition" && row.source_type === "payroll_completed_batch") continue;
     if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id)) ||
         hiddenPaymentDifferenceIds.has(value(row.id))) continue;
+    if (foldedBilledCorrectionIds.has(value(row.id))) continue;
     if (
       row.source_type === "ledger_correction" &&
       row.correction_of_id != null &&
@@ -761,7 +796,29 @@ export function buildLedgerEntries(
         systemDisplay: { kind: "inventory", itemCount: 0, partyMissing, needsConfirmation: false }, items: [],
       } satisfies LedgerEntry;
       const item = inventoryItem(row,viewMonth);
-      group.amount += item.purchaseSettlement?.effectiveAmount ?? amount;
+      const bookedAmount = item.purchaseSettlement?.effectiveAmount ?? amount;
+      const billedCorrections = [...(billedCorrectionsByOriginal.get(transactionId) ?? [])].sort((a, b) => value(a.id) - value(b.id));
+      if (billedCorrections.length) {
+        const correctionTotal = sumPayableAmounts(billedCorrections.map(correction => correction.amount));
+        const snapshotAmount = (snapshot: Record<string, unknown> | null | undefined, key: string) => {
+          const number = Number(snapshot?.[key]);
+          return snapshot?.[key] == null || !Number.isFinite(number) ? null : number;
+        };
+        item.billedCorrection = {
+          originalAmount: bookedAmount,
+          finalAmount: sumPayableAmounts([bookedAmount, -correctionTotal]),
+          difference: -correctionTotal,
+          corrections: billedCorrections.map(correction => ({
+            transactionId: value(correction.id),
+            businessDate: correction.business_date,
+            previousAmount: snapshotAmount(correction.source_snapshot, "previousAmount"),
+            billedAmount: snapshotAmount(correction.source_snapshot, "billedAmount"),
+            difference: -value(correction.amount),
+            reason: correction.memo?.trim() || null,
+          })),
+        };
+      }
+      group.amount += item.billedCorrection?.finalAmount ?? bookedAmount;
       group.remainingAmount = (group.remainingAmount??0)+(paymentDisplay?.remainingAmount??0);
       const history = payablePaymentHistory(row, viewMonth, linkedPayablesByPayment);
       if (history.length) mergePayablePaymentHistory(group.payablePayments ??= [], history);
