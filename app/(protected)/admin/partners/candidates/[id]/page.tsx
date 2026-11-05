@@ -8,6 +8,8 @@ import { BarField, BarSection, BarSegmentedControl, dangerButtonStyle, keepingFo
 import type { FundAccount, PartnerFormValue, PartnerSubtype } from "@/components/PartnerForm";
 import type { InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { useLanguage } from "@/lib/language-context";
+import DuplicatePartnerNotice from "@/components/partners/DuplicatePartnerNotice";
+import { findDuplicatePartner, type DuplicatePartner } from "@/lib/partners/duplicate-partner";
 import { ledgerSettingsHref } from "@/lib/partners/settings-view";
 import styles from "../../partners.module.css";
 
@@ -49,11 +51,16 @@ export default function SupplierCandidatePage() {
   const [existingPartnerId, setExistingPartnerId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [duplicate, setDuplicate] = useState<{ partner: DuplicatePartner | null } | null>(null);
   const load = useCallback(async () => {
     const response = await fetch(`/api/admin/partners/aliases/${id}`, { cache: "no-store" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.code);
     setAlias(body.alias); setPartners(body.partners); setFundAccounts(body.fundAccounts); setPartnerSubtypes(body.partnerSubtypes); setInventoryItems(body.inventoryItems ?? []);
+    // Same name key as a registered partner (e.g. THỦY NAM vs Thuỷ Nam): offer linking it, not a new one.
+    const existing = body.alias?.status === "pending" ? findDuplicatePartner(body.partners ?? [], body.alias.supplierName) : null;
+    setDuplicate(existing ? { partner: existing } : null);
+    if (existing?.isActive) { setAction("link_existing"); setExistingPartnerId(String(existing.id)); }
   }, [id]);
   useEffect(() => { void load().catch(error => setError(String(error))); }, [load]);
 
@@ -62,11 +69,13 @@ export default function SupplierCandidatePage() {
     choose: "Chọn đối tác", save: "Lưu xử lý", review: "Xét duyệt đăng ký", info: "Thông tin đăng ký",
     remove: "Xóa", removeSection: "Dọn dẹp", removeConfirm: "Bạn có muốn xóa đối tác chờ duyệt không còn mặt hàng liên kết này không?",
     removeInUse: "Không thể xóa vì vẫn còn mặt hàng liên kết.", archived: "Đã xóa",
+    linkDuplicate: "Liên kết với đối tác hiện có",
   } : {
     pending: "등록 대기", linked: "연결 완료", create: "새 정규 거래처로 등록", existing: "기존 정규 거래처에 연결",
     choose: "거래처 선택", save: "처리 저장", review: "등록 검토", info: "등록 정보",
     remove: "삭제", removeSection: "정리", removeConfirm: "연결된 품목이 없는 등록대기 거래처를 삭제하시겠습니까?",
     removeInUse: "연결된 품목이 남아 있어 삭제할 수 없습니다.", archived: "삭제됨",
+    linkDuplicate: "기존 거래처에 연결",
   };
 
   async function review(payload: Record<string, unknown>) {
@@ -74,7 +83,15 @@ export default function SupplierCandidatePage() {
     try {
       const response = await fetch(`/api/admin/partners/aliases/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
-      if (!response.ok) { setError(body.code); return false; }
+      if (!response.ok) {
+        if (body.code === "DUPLICATE_NAME") {
+          const existing: DuplicatePartner | null = body.duplicatePartner ?? null;
+          setDuplicate({ partner: existing });
+          if (existing?.isActive) { setAction("link_existing"); setExistingPartnerId(String(existing.id)); }
+          return false;
+        }
+        setError(body.code); return false;
+      }
       router.push(body.result?.partnerId ? `/admin/partners/${body.result.partnerId}` : ledgerSettingsHref("partners", "pending"));
       return true;
     } finally { setBusy(false); }
@@ -103,6 +120,7 @@ export default function SupplierCandidatePage() {
   return page(<div style={keepingFormCardStyle}>
     <BarSection title={labels.review} icon="📋" first>
       {identity(labels.pending)}
+      {duplicate ? <DuplicatePartnerNotice lang={lang} partner={duplicate.partner} action={duplicate.partner?.isActive ? <button type="button" disabled={busy} data-testid="duplicate-partner-link" onClick={() => void review({ action: "link_existing", existingPartnerId: duplicate.partner!.id })} style={{ ...primaryButtonStyle, width: "100%", marginTop: 8, opacity: busy ? .6 : 1 }}>{labels.linkDuplicate}</button> : undefined} /> : null}
       <BarSegmentedControl<Action> label={lang === "vi" ? "Cách xét duyệt" : "검토 방식"} value={action} disabled={busy} onChange={setAction} options={lang === "vi" ? [{ value: "create_partner", label: "Tạo mới" }, { value: "link_existing", label: "Liên kết" }] : [{ value: "create_partner", label: "새 거래처" }, { value: "link_existing", label: "기존 거래처" }]} />
     </BarSection>
     {action === "create_partner" ? <CandidatePartnerReviewForm lang={lang} initial={initial} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} submitLabel={labels.save} onSubmit={createPartner} /> : null}

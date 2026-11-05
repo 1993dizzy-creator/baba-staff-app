@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import Container from "@/components/Container";
 import { BarSection, keepingFormCardStyle, keepingInputStyle, primaryButtonStyle } from "@/components/bar/keeping/KeepingUi";
 import PartnerForm, { type FundAccount, type PartnerFormValue, type PartnerSubtype } from "@/components/PartnerForm";
+import DuplicatePartnerNotice from "@/components/partners/DuplicatePartnerNotice";
+import type { DuplicatePartner } from "@/lib/partners/duplicate-partner";
 import { useLanguage } from "@/lib/language-context";
 import { partnerText } from "@/lib/partners/text";
 import type { PartnerPriceChange } from "@/lib/partners/price-changes";
@@ -17,7 +19,7 @@ type PriceChangesStatus = "idle" | "loading" | "loaded" | "error";
 
 export default function PartnerDetailPage() {
   const params = useParams<{ id: string }>(); const { lang } = useLanguage(); const t = partnerText[lang];
-  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [error, setError] = useState("");
+  const [partner, setPartner] = useState<Partner | null>(null); const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]); const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]); const [linkedInventory, setLinkedInventory] = useState<LinkedInventory[]>([]); const [error, setError] = useState(""); const [duplicate, setDuplicate] = useState<{ partner: DuplicatePartner | null } | null>(null);
   const [priceChanges, setPriceChanges] = useState<PartnerPriceChange[]>([]); const [priceChangesStatus, setPriceChangesStatus] = useState<PriceChangesStatus>("idle"); const [detailTab, setDetailTab] = useState<DetailTab>("items");
   const [tagInput, setTagInput] = useState(""); const [tagSaving, setTagSaving] = useState(false); const [tagError, setTagError] = useState("");
   // ledgerPartyId is preserved from the API response (backend bridge field) even though
@@ -33,7 +35,16 @@ export default function PartnerDetailPage() {
     setTagInput(body.partner.displayTag ?? "");
   }, [params.id]);
   useEffect(() => { void load().catch(() => setError(t.loadFailed)); }, [load, t.loadFailed]);
-  async function update(value: PartnerFormValue) { setError(""); const response = await fetch(`/api/admin/partners/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }); const body = await response.json(); if (!response.ok) { setError(body.code === "DUPLICATE_NAME" ? t.duplicate : body.code); return false; } await load(); alert(t.saved); return true; }
+  async function update(value: PartnerFormValue) {
+    setError(""); setDuplicate(null);
+    const response = await fetch(`/api/admin/partners/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
+    const body = await response.json();
+    if (!response.ok) {
+      if (body.code === "DUPLICATE_NAME") { setDuplicate({ partner: body.duplicatePartner ?? null }); return false; }
+      setError(body.code); return false;
+    }
+    await load(); alert(t.saved); return true;
+  }
 
   async function openPriceChanges() {
     setDetailTab("priceChanges");
@@ -111,6 +122,7 @@ export default function PartnerDetailPage() {
           }) : <p className={styles.candidateItemsEmpty}>{t.noPriceChanges}</p>}
         </div>}
       </BarSection>
+      {duplicate ? <DuplicatePartnerNotice lang={lang} partner={duplicate.partner} /> : null}
       <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} />
       <BarSection title={tagLabels.title} icon="🏷️">
         <div style={{ display: "flex", gap: 8 }}>

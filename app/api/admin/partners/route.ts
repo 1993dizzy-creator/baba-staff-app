@@ -1,5 +1,5 @@
 import { parsePartnerInput } from "@/lib/partners/policy";
-import { loadPartnerData, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
+import { duplicatePartnerResponse, findDuplicatePartnerByName, loadPartnerData, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,9 @@ export async function POST(request: Request) {
   const input = parsePartnerInput(await request.json().catch(() => null));
   if (!input) return partnerJson({ ok: false, code: "INVALID_BODY" }, 400);
   try {
+    // Same name key as an existing partner (active or inactive): name it instead of creating.
+    // The unique name-key index still decides under concurrent submits (duplicate_name below).
+    if (await findDuplicatePartnerByName(input.name)) return duplicatePartnerResponse(input.name);
     const { data, error } = await supabaseServer.rpc("business_partner_create_v4", {
       p_name: input.name,
       p_partner_type: input.partnerType,
@@ -42,6 +45,7 @@ export async function POST(request: Request) {
     if (error) throw error;
     const result = data as { status?: string };
     if (result.status !== "created") {
+      if (result.status === "duplicate_name") return duplicatePartnerResponse(input.name);
       const status = result.status === "duplicate_name" || result.status === "ledger_party_already_linked" ? 409 : result.status === "forbidden" ? 403 : 400;
       return partnerJson({ ok: false, code: String(result.status ?? "CREATE_FAILED").toUpperCase() }, status);
     }

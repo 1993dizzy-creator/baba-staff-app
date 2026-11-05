@@ -1,5 +1,5 @@
 import { parsePartnerInput } from "@/lib/partners/policy";
-import { loadLinkedPartnerInventory, loadPartnerDetailData, partnerJson, requirePartnerManager } from "@/lib/partners/server";
+import { duplicatePartnerResponse, findDuplicatePartnerByName, loadLinkedPartnerInventory, loadPartnerDetailData, partnerJson, requirePartnerManager } from "@/lib/partners/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 function parseId(raw: string) {
@@ -29,6 +29,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const input = parsePartnerInput(await request.json().catch(() => null));
   if (id === null || !input) return partnerJson({ ok: false, code: "INVALID_BODY" }, 400);
   try {
+    // Renaming onto another partner's name key (active or inactive) is blocked; the partner itself is excluded.
+    if (await findDuplicatePartnerByName(input.name, id)) return duplicatePartnerResponse(input.name, id);
     const { data, error } = await supabaseServer.rpc("business_partner_update_v4", {
       p_partner_id: id,
       p_name: input.name,
@@ -50,6 +52,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (error) throw error;
     const result = data as { status?: string };
     if (result.status !== "updated") {
+      if (result.status === "duplicate_name") return duplicatePartnerResponse(input.name, id);
       const status = result.status === "not_found" ? 404 : result.status === "duplicate_name" || result.status === "ledger_party_already_linked" ? 409 : result.status === "forbidden" ? 403 : 400;
       return partnerJson({ ok: false, code: String(result.status ?? "UPDATE_FAILED").toUpperCase() }, status);
     }

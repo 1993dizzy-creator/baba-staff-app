@@ -3,11 +3,26 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { getDominantInventoryCategoryGroup } from "@/lib/inventory/category-groups";
+import { findDuplicatePartner, type DuplicatePartner } from "@/lib/partners/duplicate-partner";
 import { PARTNER_MANAGER_ROLES } from "@/lib/partners/policy";
 import { buildPartnerPriceChanges } from "@/lib/partners/price-changes";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const normalizeSupplierName = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
+// Existing regular partner (active or inactive) under the same name key, other than excludeId.
+// Used before the create/rename/approve RPCs and to name the partner when the database's
+// business_partners_name_key_unique index answers duplicate_name (concurrent submits).
+export async function findDuplicatePartnerByName(name: unknown, excludeId?: number | null): Promise<DuplicatePartner | null> {
+  const { data, error } = await supabaseServer.from("business_partners").select("id,name,is_active");
+  if (error) throw error;
+  return findDuplicatePartner(data ?? [], name, excludeId);
+}
+
+export async function duplicatePartnerResponse(name: unknown, excludeId?: number | null) {
+  const duplicatePartner = await findDuplicatePartnerByName(name, excludeId).catch(() => null);
+  return partnerJson({ ok: false, code: "DUPLICATE_NAME", duplicatePartner }, 409);
+}
 
 export function partnerJson(body: Record<string, unknown>, status = 200) {
   return NextResponse.json(body, { status });

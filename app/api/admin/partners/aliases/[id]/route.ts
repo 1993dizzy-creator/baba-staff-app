@@ -1,5 +1,5 @@
 import { parsePartnerInput } from "@/lib/partners/policy";
-import { loadPartnerData, loadSupplierAliasInventory, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
+import { duplicatePartnerResponse, findDuplicatePartnerByName, loadPartnerData, loadSupplierAliasInventory, loadSupplierAliases, partnerJson, requirePartnerManager } from "@/lib/partners/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const parseId = (value: string) => {
@@ -57,6 +57,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const existingPartnerId = action === "link_existing" ? Number(body.existingPartnerId) : null;
   if (action === "link_existing" && (!Number.isSafeInteger(existingPartnerId) || Number(existingPartnerId) < 1)) return partnerJson({ ok: false, code: "INVALID_PARTNER" }, 400);
   try {
+    // 등록대기 → 새 거래처: an existing partner under the same name key must be linked instead.
+    if (partnerInput && await findDuplicatePartnerByName(partnerInput.name)) return duplicatePartnerResponse(partnerInput.name);
     const { data, error } = await supabaseServer.rpc("business_partner_review_supplier_alias_v4", {
       p_alias_id: id, p_action: action, p_existing_partner_id: existingPartnerId,
       p_name: partnerInput?.name ?? null, p_partner_type: partnerInput?.partnerType ?? null,
@@ -73,6 +75,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (error) throw error;
     const result = data as { status?: string };
     if (result.status !== "reviewed") {
+      if (result.status === "duplicate_name" && partnerInput) return duplicatePartnerResponse(partnerInput.name);
       const status = result.status === "not_found" ? 404 : result.status === "forbidden" ? 403 : result.status === "duplicate_name" ? 409 : 400;
       return partnerJson({ ok: false, code: String(result.status ?? "REVIEW_FAILED").toUpperCase() }, status);
     }

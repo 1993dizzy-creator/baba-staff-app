@@ -19,6 +19,7 @@ import { InventoryImageCompressionError, compressInventoryImage, formatFileSize 
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
 import { duplicateInventoryItemMessage, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
+import SupplierDuplicateHint from "@/components/inventory/SupplierDuplicateHint";
 import BilledAmountField from "@/components/inventory/BilledAmountField";
 import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 type InventoryItem = {
@@ -993,6 +994,7 @@ export default function InventoryItemEditor({ itemId, initialItem, initialSuppli
                                     {t.newSupplier}
                                 </div>
                                 <input type="text" placeholder={t.newSupplierPlaceholder} value={supplier} onChange={(e) => { setSupplier(e.target.value); setSupplierPartnerId(null); }} style={ui.input} ref={supplierRef} onKeyDown={(e) => handleKeyDown(e, priceRef)}/>
+                                <SupplierDuplicateHint partners={supplierPartners} aliases={supplierAliases} value={supplier} lang={lang} onUse={(match) => { setIsCustomSupplier(false); setSupplierPartnerId(match.kind === "partner" ? match.id : null); setSupplier(match.name); }}/>
                             </div>)}
 
                         {/* 구매가 */}

@@ -6,6 +6,8 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { BarSheet } from "@/components/bar/keeping/KeepingUi";
 import PartnerForm, { type FundAccount, type PartnerFormValue, type PartnerSubtype } from "@/components/PartnerForm";
 import PartnerSubtypeManager from "@/components/PartnerSubtypeManager";
+import DuplicatePartnerNotice from "@/components/partners/DuplicatePartnerNotice";
+import { findDuplicatePartner, type DuplicatePartner } from "@/lib/partners/duplicate-partner";
 import { formatInventoryItemCount, type InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { groupPartnersByTypeAndSubtype } from "@/lib/partners/policy";
 import { effectivePartnerEmoji, partnerTypeEmoji } from "@/lib/partners/emoji";
@@ -48,6 +50,7 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
   const [partnerSubtypes, setPartnerSubtypes] = useState<PartnerSubtype[]>([]);
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [duplicate, setDuplicate] = useState<{ partner: DuplicatePartner | null } | null>(null);
   const [addSaving, setAddSaving] = useState(false);
   const [showSubtypeManager, setShowSubtypeManager] = useState(false);
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -78,18 +81,24 @@ export default function PartnerSettingsPanel({ lang, view, onViewChange }: { lan
 
   async function create(value: PartnerFormValue) {
     setError("");
+    const existing = findDuplicatePartner(partners, value.name);
+    if (existing) { setDuplicate({ partner: existing }); return false; }
     const response = await fetch("/api/admin/partners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
     const body = await response.json();
-    if (!response.ok) { setError(body.code === "DUPLICATE_NAME" ? t.duplicate : body.code); return false; }
-    setShowAdd(false); await load(); alert(t.saved); return true;
+    if (!response.ok) {
+      if (body.code === "DUPLICATE_NAME") { setDuplicate({ partner: body.duplicatePartner ?? null }); return false; }
+      setError(body.code); return false;
+    }
+    setDuplicate(null); setShowAdd(false); await load(); alert(t.saved); return true;
   }
 
   return <section className={styles.compactPage} aria-label={labels.title}>
     <div className={styles.partnerSettingsHeader}>
       <h2>{labels.title}</h2>
-      <button ref={addButtonRef} type="button" className={styles.partnerAddButton} onClick={() => setShowAdd(true)}>{labels.add}</button>
+      <button ref={addButtonRef} type="button" className={styles.partnerAddButton} onClick={() => { setDuplicate(null); setShowAdd(true); }}>{labels.add}</button>
     </div>
     {showAdd ? <BarSheet kind="full" compact title={labels.addTitle} closeLabel={labels.close} saving={addSaving} onClose={() => setShowAdd(false)} returnFocusRef={addButtonRef} footer={<button type="submit" form={ADD_FORM_ID} className={styles.primary} disabled={addSaving} style={{ width: "100%" }}>{addSaving ? t.saving : t.add}</button>}>
+      {duplicate ? <DuplicatePartnerNotice lang={lang} partner={duplicate.partner} /> : null}
       <PartnerForm formId={ADD_FORM_ID} lang={lang} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} submitLabel={t.add} showActive={false} layout="modal" onSavingChange={setAddSaving} onSubmit={create} />
     </BarSheet> : null}
     <div className={styles.infoActions}>

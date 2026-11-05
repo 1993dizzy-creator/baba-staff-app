@@ -48,6 +48,7 @@ import type { PartnerSelectOption } from "@/lib/partners/select-options";
 import { duplicateInventoryItemMessage, matchDuplicateInventoryItem, type DuplicateMatchedField } from "@/lib/inventory/duplicate-item";
 import { createInventoryRegistration } from "@/lib/inventory/registration-recovery";
 import SupplierSelectOptions from "@/components/inventory/SupplierSelectOptions";
+import SupplierDuplicateHint from "@/components/inventory/SupplierDuplicateHint";
 import BilledAmountField from "@/components/inventory/BilledAmountField";
 import { AUTO_BILLED_AMOUNT, billedAmountRequest, calculatePurchaseAmount, resolveBilledAmount, type BilledAmountDraft } from "@/lib/inventory/billed-amount";
 import { findSimilarInventoryItems } from "@/lib/inventory/similarity";
@@ -4920,6 +4921,11 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
                                     ref={supplierRef}
                                     onKeyDown={(e) => handleKeyDown(e, priceRef)}
                                 />
+                                <SupplierDuplicateHint partners={supplierPartners} aliases={supplierAliases} value={supplier} lang={lang} onUse={(match) => {
+                                    setIsCustomSupplier(false);
+                                    setSupplierPartnerId(match.kind === "partner" ? match.id : null);
+                                    setSupplier(match.name);
+                                }} />
                             </div>
                         )}
 
