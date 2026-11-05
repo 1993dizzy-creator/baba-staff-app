@@ -1128,10 +1128,11 @@ const s = {
   reviewMoreButton: { minHeight:24, padding:"2px 7px", border:"1px solid #e5e7eb", borderRadius:999, background:"#f3f4f6", color:"#4b5563", fontSize:10.5, fontWeight:800, cursor:"pointer" },
   reviewMoreList: { gridColumn:"1 / -1", display:"flex", flexWrap:"wrap", justifyContent:"flex-end", gap:4, minWidth:0 },
   // 접힘: 기존 배경·정렬 유지(투명 테두리로 펼칠 때 레이아웃 흔들림 방지). 펼침: 연회색 헤더 + 구분선 + 상세 여백으로 한 그룹.
-  collapsibleGroup: { margin:"0 -6px", border:"1px solid transparent", borderRadius:8, overflow:"hidden", minWidth:0 },
+  // 접힘·펼침에서 바뀌는 값은 개별 속성(borderColor, backgroundColor)만 쓴다 — 축약/개별 속성 혼용 시 React 경고.
+  collapsibleGroup: { margin:"0 -6px", borderWidth:1, borderStyle:"solid", borderColor:"transparent", borderRadius:8, overflow:"hidden", minWidth:0 },
   collapsibleGroupOpen: { borderColor:"#e5e7eb" },
-  collapsibleHeader: { width:"100%", display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:8, minHeight:34, padding:"2px 5px", border:0, background:"transparent", textAlign:"left", cursor:"pointer", minWidth:0, boxSizing:"border-box" },
-  collapsibleHeaderOpen: { background:"#f3f4f6" },
+  collapsibleHeader: { width:"100%", display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:8, minHeight:34, padding:"2px 5px", border:0, backgroundColor:"transparent", textAlign:"left", cursor:"pointer", minWidth:0, boxSizing:"border-box" },
+  collapsibleHeaderOpen: { backgroundColor:"#f3f4f6" },
   collapsibleBody: { borderTop:"1px solid #e5e7eb", padding:"8px 10px 10px" },
   collapsibleSummary: { display:"inline-flex", alignItems:"center", gap:6, minWidth:0 },
   collapsibleSummaryValue: { color:"#111827", fontSize:12.5, fontWeight:900, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" },

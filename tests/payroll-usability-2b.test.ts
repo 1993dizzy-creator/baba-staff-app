@@ -135,7 +135,12 @@ test("salary composition and month application are independent collapsed banners
   assert.match(section, /open \? s\.collapsibleHeaderOpen/);
   assert.match(section, /open \? s\.collapsibleGroupOpen/);
   assert.ok(section.indexOf("collapsibleChevron") < section.indexOf("{title}"), "chevron sits left of the title");
-  assert.match(card, /collapsibleHeaderOpen: \{ background:"#f3f4f6" \}/);
+  assert.match(card, /collapsibleHeaderOpen: \{ backgroundColor:"#f3f4f6" \}/);
+  // 접힘↔펼침에서 병합되는 스타일은 축약/개별 속성을 섞지 않는다(React shorthand 충돌 경고 방지).
+  const styleLine = (name: string) => card.match(new RegExp(`^  ${name}: \\{.*\\},$`, "m"))?.[0] ?? "";
+  assert.match(styleLine("collapsibleGroup"), /borderWidth:1, borderStyle:"solid", borderColor:"transparent"/);
+  assert.doesNotMatch(styleLine("collapsibleGroup"), /\bborder:/);
+  assert.doesNotMatch(styleLine("collapsibleHeader"), /\bbackground:/);
   assert.match(card, /collapsibleBody: \{ borderTop:"1px solid #e5e7eb"/);
   assert.match(card, /<CollapsibleDetailSection icon="💰" title=\{detailText\.salaryComposition\} summary=\{formatContractRate\(combined, employee\.contract\.payType, lang\)\} first>/);
   assert.match(card, /<CollapsibleDetailSection icon="📅" title=\{detailText\.monthApplication\} summary=\{employee\.amounts\.workAppliedAmount === null \? \(lang === "vi" \? "Cần kiểm tra" : "확인 필요"\) : formatVnd\(employee\.amounts\.workAppliedAmount\)\}/);
