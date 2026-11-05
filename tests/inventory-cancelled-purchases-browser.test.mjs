@@ -44,10 +44,18 @@ test('completed cancellation history: KO/VI desktop/mobile, links, missing evide
   for(const r of roots){await page.getByTestId('snapshot-cancelled-purchase-'+r.id).click();const close=page.getByRole('button',{name:lang==='ko'?'닫기':'Đóng',exact:true}).last();await close.waitFor();assert.ok(reads.includes('/api/inventory/items/'+r.item_id+'/logs'));await close.click();}
   await header.click();assert.equal(await header.getAttribute('aria-expanded'),'false');await header.click();
   await page.getByRole('button',{name:'20',exact:true}).click();await banner.waitFor({state:'detached'});await page.getByRole('button',{name:'11',exact:true}).click();await banner.waitFor();assert.equal(await header.getAttribute('aria-expanded'),'false');
-  const variants=[{projectionStatuses:[]},{projectionStatusUnavailable:true},{projectionStatuses:completed[0].projectionStatuses.slice(1)},{projectionStatuses:completed[0].projectionStatuses.slice(0,1)},...['pending','review_required','failed'].map(status=>({projectionStatuses:completed[0].projectionStatuses.map(s=>({...s,status}))})),{projectionStatuses:completed[0].projectionStatuses.map(s=>({...s,code:'UNKNOWN'}))},{code:'invalid_correction_family'},{code:'linked_correction'},{rootLogId:null},{logIds:[12972]}];
+  const variants=[{projectionStatuses:[]},{projectionStatusUnavailable:true},{projectionStatuses:completed[0].projectionStatuses.slice(1)},{projectionStatuses:completed[0].projectionStatuses.slice(0,1)},...['pending','review_required','failed'].map(status=>({projectionStatuses:completed[0].projectionStatuses.map(s=>({...s,status}))})),{projectionStatuses:completed[0].projectionStatuses.map(s=>({...s,code:'UNKNOWN'}))},{code:'invalid_correction_family'},{code:'linked_correction'},{code:'linked_correction',projectionStatuses:completed[0].projectionStatuses.map(s=>({...s,status:'failed'}))},{rootLogId:null},{logIds:[12972]}];
+  // A linked correction whose every status is synced is normally processed: hidden. Everything else stays.
+  const shown=variants.filter(v=>!(v.code==='linked_correction'&&!v.projectionStatuses));
   diagnostics=[...completed,...variants.map((v,i)=>{const id=90000+i;return{...completed[0],...v,logId:id,rootLogId:v.rootLogId===null?null:id,log:{...roots[0],id,item_name:'확인 필요 '+i,item_name_vi:'Cần kiểm tra '+i},logIds:(v.logIds||completed[0].logIds).map(n=>n===12972?id:n),projectionStatuses:(v.projectionStatuses||completed[0].projectionStatuses).map(s=>({...s,inventory_log_id:s.inventory_log_id===12972?id:s.inventory_log_id}))};})];
   await select();await banner.waitFor();assert.match(await header.innerText(),lang==='ko'?/2건/:/2 mục/);
-  const review=page.getByRole('region',{name:lang==='ko'?'입고 기록 확인':'Kiểm tra nhật ký nhập',exact:true});assert.equal(await review.locator('article').count(),variants.length);assert.equal(await review.getByRole('button').count(),variants.length);
+  const review=page.getByRole('region',{name:lang==='ko'?'입고 확인 필요':'Nhập hàng cần kiểm tra',exact:true});assert.equal(await review.locator('[data-purchase-review-log-id]').count(),shown.length);
+  assert.equal(await review.getByRole('button',{name:lang==='ko'?'해결':'Xử lý',exact:true}).count(),shown.length);
+  assert.doesNotMatch(await review.innerText(),/#\d|PURCHASE_CANCELLED|REBOOKED|METADATA_SYNCED|PROJECTED/);
+  assert.equal(await review.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+  await review.screenshot({path:'.qa-review/cancelled-purchases/review-'+lang+'-'+(mobile?'mobile':'desktop')+'.png'});
+  await review.getByRole('button',{name:lang==='ko'?'해결':'Xử lý',exact:true}).first().click();
+  const closeReview=page.getByRole('button',{name:lang==='ko'?'닫기':'Đóng',exact:true}).last();await closeReview.waitFor();await closeReview.click();
   assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
   console.log('PASS height',height,'IDs, original history, empty date, mixed evidence, keyboard, reset, no writes',lang,mobile?'mobile':'desktop');await context.close();
  }}finally{await browser.close();}

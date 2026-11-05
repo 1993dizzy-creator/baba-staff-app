@@ -1,6 +1,7 @@
 "use client";
 import { inventoryReasonChangeIssue, inventoryPurchaseErrorMessage } from "@/lib/inventory/reasons";
 import type { DailyPurchaseDiagnostic } from "@/lib/inventory/daily-effective-purchases";
+import { isResolvedLinkedCorrection, PURCHASE_REVIEW_STATE_LABEL, purchaseReviewState, shortBusinessDate } from "@/lib/inventory/purchase-review";
 import { buildDailyItemLogEntries, type DailyItemLogEntry } from "@/lib/inventory/daily-item-log-entries";
 import { renderPartnerOptionGroups } from "@/components/partners/PartnerOptionGroups";
 import type { PartnerSelectOption } from "@/lib/partners/select-options";
@@ -398,7 +399,7 @@ export default function InventorySnapshotsPage() {
     const [purchaseDiagnostics,setPurchaseDiagnostics]=useState<PurchaseDiagnostic[]>([]);
     const [completedCancellationsExpanded, setCompletedCancellationsExpanded] = useState(false);
     const completedCancellations = purchaseDiagnostics.filter(isCompletedCancellation);
-    const reviewPurchaseDiagnostics = purchaseDiagnostics.filter(row => !isCompletedCancellation(row));
+    const reviewPurchaseDiagnostics = purchaseDiagnostics.filter(row => !isCompletedCancellation(row) && !isResolvedLinkedCorrection(row));
     const [isItemLogsLoading, setIsItemLogsLoading] = useState(false);
     const [itemLogsError, setItemLogsError] = useState("");
     const [changingReasonLogId, setChangingReasonLogId] = useState<number | null>(null);
@@ -2686,15 +2687,17 @@ export default function InventorySnapshotsPage() {
                 </section>
             )}
 
-            {reviewPurchaseDiagnostics.length>0 ? <section style={{...ui.card,padding:12,marginBottom:16}} aria-label={lang==="vi"?"Kiểm tra nhật ký nhập":"입고 기록 확인"}>
-                <h3>{lang==="vi"?"Nhật ký nhập cần kiểm tra / đã hủy":"입고 기록 확인·취소 내역"}</h3>
-                <p style={ui.metaText}>{lang==="vi"?"Không tự sửa nhật ký cũ. Phiếu hủy hoàn toàn không tính vào nhập hàng; số âm chưa liên kết không bù trừ phiếu nhập khác.":"과거 기록을 자동 수정하지 않습니다. 완전 취소 입고는 합계에서 제외하고, 원본에 연결되지 않은 음수 기록은 다른 입고에서 차감하지 않습니다."}</p>
-                {reviewPurchaseDiagnostics.map(row=><article key={row.logId} style={{padding:8,borderTop:"1px solid #e5e7eb"}}>
-                    <strong>#{row.logId} · {lang==="vi"?row.log.item_name_vi||row.log.item_name:row.log.item_name||row.log.item_name_vi}</strong>
-                    <p>{row.code==="fully_cancelled"?(lang==="vi"?"Đã hủy hoàn toàn · không tính nhập":"완전 취소 · 입고 합계 제외") :row.code==="linked_correction"?(lang==="vi"?"Sửa lô nhập đã liên kết · xem lô gốc":"원입고 연결 정정 · 원본 기록 확인"):(lang==="vi"?"Cần kiểm tra phân loại/liên kết; không tính là mua mới":"분류·원본 연결 확인 필요 · 신규 구매로 집계하지 않음")} · {row.quantity??"?"}{row.log.unit??""}</p>
-                    <p style={ui.metaText}>{lang==="vi"?"Nhật ký liên quan":"연결 기록"}: {row.logIds.map(id=>'#'+id).join(', ')} · {lang==="vi"?"Trạng thái sổ":"장부 처리 상태"}: {row.projectionStatusUnavailable?(lang==="vi"?"Không thể kiểm tra":"확인 불가"):!row.projectionStatuses?.length?(lang==="vi"?"Chưa xác nhận":"미확인"):row.projectionStatuses.map(status=>'#'+status.inventory_log_id+': '+({synced:lang==="vi"?"Đã đồng bộ":"동기화 완료",pending:lang==="vi"?"Chờ xử lý":"처리 대기",review_required:lang==="vi"?"Cần kiểm tra":"검토 필요",failed:lang==="vi"?"Thất bại":"실패"}[status.status]??status.status)+' ('+status.code+')').join(' · ')}</p>
-                    <button type="button" style={ui.subButton} onClick={()=>void fetchItemLogs(mapLogToSnapshotItem(row.log))}>{lang==="vi"?"Xem nhật ký gốc":"원본 기록 보기"}</button>
-                </article>)}
+            {reviewPurchaseDiagnostics.length>0 ? <section data-testid="snapshot-purchase-review" style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:14,padding:"8px 12px",marginBottom:12}} aria-label={lang==="vi"?"Nhập hàng cần kiểm tra":"입고 확인 필요"}>
+                <h3 style={{margin:"0 0 4px",fontSize:13,fontWeight:900,color:"#92400e"}}>{lang==="vi"?"Nhập hàng cần kiểm tra":"입고 확인 필요"} · {reviewPurchaseDiagnostics.length}</h3>
+                {reviewPurchaseDiagnostics.map(row=>{
+                    const state=PURCHASE_REVIEW_STATE_LABEL[purchaseReviewState(row)];
+                    return <div key={row.logId} data-purchase-review-log-id={row.logId} style={{display:"flex",alignItems:"center",gap:8,minHeight:36,borderTop:"1px solid #fde68a"}}>
+                        <span style={{flexShrink:0,fontSize:12,fontWeight:700,color:"#6b7280",fontVariantNumeric:"tabular-nums"}}>{shortBusinessDate(row.log.business_date)}</span>
+                        <strong style={{flex:1,minWidth:0,fontSize:13,fontWeight:800,color:"#111827",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{lang==="vi"?row.log.item_name_vi||row.log.item_name:row.log.item_name||row.log.item_name_vi}</strong>
+                        <span style={{flexShrink:0,fontSize:11,fontWeight:800,color:state.color,background:state.background,borderRadius:999,padding:"2px 8px",whiteSpace:"nowrap"}}>{lang==="vi"?state.vi:state.ko}</span>
+                        <button type="button" onClick={()=>void fetchItemLogs(mapLogToSnapshotItem(row.log))} style={{flexShrink:0,minHeight:28,padding:"0 10px",border:"1px solid #d97706",borderRadius:8,background:"#fff",color:"#92400e",fontSize:12,fontWeight:800,cursor:"pointer"}}>{lang==="vi"?"Xử lý":"해결"}</button>
+                    </div>;
+                })}
             </section> : null}
 
             {purchasedItems.length > 0 && (
