@@ -69,6 +69,7 @@ function fixture(transactionCount, extraTables = {}) {
     "@/lib/common/business-time": require("../lib/common/business-time.ts"),
     "@/lib/ledger/month-close-card": require("../lib/ledger/month-close-card.ts"),
     "@/lib/ledger/month-close-operating": require("../lib/ledger/month-close-operating.ts"),
+    "@/lib/ledger/fund-account-view": require("../lib/ledger/fund-account-view.ts"),
     "@/lib/ledger/card-settlement-data": { loadCardRows },
     "@/lib/ledger/card-settlements": cardSettlements,
     "@/lib/supabase/server": { supabaseServer },
@@ -103,6 +104,37 @@ test("verification purchase affects expense but not cash or ordinary payable sub
   assert.equal(snapshot.funds.liquidFunds, 0);
   assert.equal(snapshot.payables.totalOutstanding, 0);
   assert.deepEqual(snapshot.paymentVerification, { count: 1, totalOutstanding: 1_900_000 });
+});
+
+test('month-close funds exclude restored July cash after August while retaining #1190 and its August 3 settlement', async () => {
+  const accounts=[{id:1,code:'store_cash',type:'cash'},{id:2,code:'baba_corporate_bank',type:'bank'},
+    {id:3,code:'cho_personal_custody',type:'personal_custody'},{id:5,code:'vuong_personal_custody',type:'personal_custody'},
+    {id:4,code:'card_clearing',type:'card_clearing'}];
+  const opening=[95_464_986,104_186_605,95_470_741,5_231_310];
+  const tx=(id,date,amount,fund,type='balance_adjustment')=>({id,type,business_date:date,recognition_month:null,amount:Math.abs(amount),economic_effect_sign:1,
+    source_type:'manual',source_key:null,category:null,movements:[{fund_account_id:fund,amount}]});
+  const transactions=opening.map((amount,i)=>tx(i+1,'2026-08-01',amount,[1,2,3,5][i],'opening'));
+  const sale={...tx(1190,'2026-07-31',3_694_200,4,'sales'),recognition_month:'2026-07-01',source_type:'pos_sales_daily_payment',source_key:'pos:2026-07-31:card'};
+  transactions.push(sale,tx(1200,'2026-08-03',-3_694_200,4,'card_settlement_deposit'));
+  const reconciliation={id:1,status:'matched',deposit_date:'2026-08-03',deposit_amount:3_611_603.422,matched_gross_amount:3_694_200,difference_amount:82_596.578};
+  const tables={ledger_transactions:transactions,ledger_fund_accounts:accounts,ledger_card_reconciliations:[reconciliation],
+    ledger_card_reconciliation_lines:[{id:1,reconciliation_id:1,pos_card_transaction_id:1190,allocated_gross_amount:3_694_200,
+      reconciliation,sale:{business_date:'2026-07-31'}}]};
+  const original=JSON.stringify(tables);
+  const reconstructed={...tables,ledger_transactions:[...transactions,...[1,2,3,5].map((id)=>tx(9000+id,'2026-07-20',-1234567,id))]};
+  for(const month of ['2026-08','2026-09','2026-10','2026-11']) {
+    const before=await fixture(0,tables).buildMonthCloseSnapshot(month);
+    const after=await fixture(0,reconstructed).buildMonthCloseSnapshot(month);
+    assert.deepEqual(after,before,`${month} complete snapshot projection impact = 0`);
+    assert.equal(after.funds.liquidFunds,300_353_642);
+    assert.equal(after.funds.cardClearing,0);
+    assert.equal(after.card.unsettledGross,0,'July sale remains settled by its existing August allocation');
+  }
+  const july=await fixture(0,reconstructed).buildMonthCloseSnapshot('2026-07');
+  assert.equal(july.funds.liquidFunds,-4*1_234_567);
+  assert.equal(july.funds.cardClearing,3_694_200);
+  assert.equal(july.card.unsettledGross,3_694_200);
+  assert.equal(JSON.stringify(tables),original);
 });
 
 for (const count of [1000, 1001, 1013]) {

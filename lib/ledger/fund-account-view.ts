@@ -1,5 +1,15 @@
 export type FundAccountViewMode = "live" | "provisional" | "closed_snapshot";
 
+// These accounts already carry July's closing cash in the August 1 opening.
+// Earlier reconstructed movements belong to the historical ledger only.
+// Card clearing has no cash opening seed: keep its cross-month sale/settlement chain.
+const AUGUST_OPENING_ACCOUNTS = new Set([
+  "store_cash", "baba_corporate_bank", "cho_personal_custody", "vuong_personal_custody",
+]);
+export function fundMovementInScope(code: string | undefined, businessDate: string, month: string) {
+  return !AUGUST_OPENING_ACCOUNTS.has(code ?? "") || month < "2026-08" || businessDate >= "2026-08-01";
+}
+
 export type FundAccountReservePlan = {
   id: number | string;
   name: string;
@@ -26,6 +36,7 @@ type FundAccount = {
 type FundMovement = {
   fund_account_id: number | string;
   amount: number | string;
+  transaction?: { business_date?: string } | null;
 };
 
 type MonthCloseSummary = {

@@ -11,7 +11,7 @@ import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
-import { buildFundAccountView, fundAccountViewMode, type FundAccountReservePlan, type FundAccountViewMode } from "@/lib/ledger/fund-account-view";
+import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, type FundAccountReservePlan, type FundAccountViewMode } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
 import { buildAccrualReport, type AccrualCloseSnapshot, type AccrualCorrectionRow } from "@/lib/ledger/accrual-report";
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
@@ -32,7 +32,8 @@ const EMPTY_ROWS = { data: [] as never[], error: null };
 type BuildFundAccountsInput = Parameters<typeof buildFundAccountView>[0];
 // One balance Source of Truth for the full ledger GET and the settings
 // accounts scope: same queries, same reserve scope, same buildFundAccountView.
-function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][number]>({ fundsViewMode, now, accountRows, openingRows, priorConfirmedMovements, movementRows, reservePlanRows, reserveEntryRows, closeSummary }: {
+function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][number]>({ month, fundsViewMode, now, accountRows, openingRows, priorConfirmedMovements, movementRows, reservePlanRows, reserveEntryRows, closeSummary }: {
+  month: string;
   fundsViewMode: FundAccountViewMode;
   now: Date;
   accountRows: T[];
@@ -44,8 +45,8 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
   closeSummary: unknown;
 }) {
   const reserveEntriesByPlan = new Map<number, Array<{ entry_type: string; amount: number | string }>>();
-  // Balance scope is unchanged: everything up to now (live) or up to the
-  // month-end cutoff (provisional); closed months keep their snapshot.
+  // Keep existing upper cutoffs and stored close snapshots. The four seeded
+  // cash accounts additionally exclude pre-August movements after the cutover.
   const reserveBalanceEntries = fundsViewMode === "closed_snapshot"
     ? []
     : fundsViewMode === "live"
@@ -61,11 +62,14 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
     ...plan,
     entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
   }));
+  const accountCodes = new Map(accountRows.map(account => [Number(account.id), account.code]));
+  const inScope = (row: BuildFundAccountsInput["movements"][number]) =>
+    fundMovementInScope(accountCodes.get(Number(row.fund_account_id)), row.transaction?.business_date ?? "", month);
   return buildFundAccountView({
     accounts: accountRows,
     openingMovements: openingRows,
-    priorConfirmedMovements,
-    movements: movementRows,
+    priorConfirmedMovements: priorConfirmedMovements?.filter(inScope),
+    movements: movementRows.filter(inScope),
     reservePlans,
     groupReserves: reservesByFundAccount,
     mode: fundsViewMode,
@@ -173,7 +177,7 @@ export async function GET(request: Request) {
       const priorConfirmedMovements = (openingResult.data?.length ?? 0) > 0 ? [] : await loadPriorConfirmedFundMovements(monthStart);
       mark("prior_movements");
       const accounts = buildLedgerFundAccounts({
-        fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
+        month, fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
         movementRows: movementsResult.data ?? [], reservePlanRows: reservesResult.data ?? [], reserveEntryRows: reserveEntriesResult.data ?? [],
         closeSummary: closureResult.data?.summary_snapshot,
       });
@@ -289,7 +293,7 @@ export async function GET(request: Request) {
     );
     const reserveEntryRows = reserveEntriesResult.data ?? [];
     const accounts = buildLedgerFundAccounts({
-      fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
+      month, fundsViewMode, now, accountRows: accountsResult.data ?? [], openingRows: openingResult.data ?? [], priorConfirmedMovements,
       movementRows: movementsResult.data ?? [], reservePlanRows: reservesResult.data ?? [], reserveEntryRows,
       closeSummary: closureResult.data?.summary_snapshot,
     });

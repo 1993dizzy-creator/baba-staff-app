@@ -5,6 +5,7 @@ import { getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { calculateMonthCloseCardSnapshot, type MonthCloseCardLine } from "@/lib/ledger/month-close-card";
 import { type CardDifferenceLine } from "@/lib/ledger/card-difference-attribution";
 import { calculateMonthCloseOperatingSummary } from "@/lib/ledger/month-close-operating";
+import { fundMovementInScope } from "@/lib/ledger/fund-account-view";
 import { loadCardRows } from "@/lib/ledger/card-settlement-data";
 import { cardFeeRowsAsAllocationLines, cardMoney, type CardFeeAllocationRow } from "@/lib/ledger/card-settlements";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -67,7 +68,16 @@ export async function buildMonthCloseSnapshot(month: string) {
   });
   const { revenue, expense, operatingResult } = calculateMonthCloseOperatingSummary(month, recognized, cardFeeLines);
   const signed=(tx:Tx)=>Number(tx.amount)*Number(tx.economic_effect_sign??1);
-  const fundBalances=new Map<number,number>();for(const tx of txs.filter(tx=>tx.business_date<endExclusive))for(const movement of tx.movements??[])fundBalances.set(Number(movement.fund_account_id),(fundBalances.get(Number(movement.fund_account_id))??0)+Number(movement.amount));
+  const accountCodes = new Map((accountsResult.data ?? []).map(account => [Number(account.id), account.code]));
+  const fundBalances = new Map<number, number>();
+  for (const tx of txs) {
+    if (tx.business_date >= endExclusive) continue;
+    for (const movement of tx.movements ?? []) {
+      const accountId = Number(movement.fund_account_id);
+      if (!fundMovementInScope(accountCodes.get(accountId), tx.business_date, month)) continue;
+      fundBalances.set(accountId, (fundBalances.get(accountId) ?? 0) + Number(movement.amount));
+    }
+  }
   const accounts=(accountsResult.data??[]).map(account=>({...account,balance:fundBalances.get(Number(account.id))??0}));
   const allocationByPayable=new Map<number,number>();for(const row of allocationResult.data??[])allocationByPayable.set(Number(row.payable_id),(allocationByPayable.get(Number(row.payable_id))??0)+Number(row.allocated_amount));
   const verificationPayables=(payableResult.data??[]).filter(row=>(row.expense as unknown as {source_snapshot?:Record<string,unknown>|null}|null)?.source_snapshot?.paymentVerification==="pending");
