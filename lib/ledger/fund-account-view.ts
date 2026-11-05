@@ -33,11 +33,36 @@ type FundAccount = {
   [key: string]: unknown;
 };
 
-type FundMovement = {
+export type FundMovement = {
   fund_account_id: number | string;
   amount: number | string;
   transaction?: { business_date?: string } | null;
 };
+
+// A ledger_movements row as returned by a Supabase embedded relation select
+// (`transaction:ledger_transactions!inner(...)`). The generated client types the
+// many-to-one relation as an array while PostgREST returns a single object, so
+// both shapes are accepted here.
+type FundMovementTransaction = { business_date?: unknown } | null | undefined;
+export type FundMovementSourceRow = {
+  fund_account_id: number | string;
+  amount: number | string;
+  transaction?: FundMovementTransaction | readonly FundMovementTransaction[];
+};
+
+// Normalizes relation rows to the single-object FundMovement shape the balance
+// calculation expects, keeping only the transaction business_date it reads.
+export function normalizeFundMovementRows(rows: readonly FundMovementSourceRow[] | null | undefined): FundMovement[] {
+  return (rows ?? []).map((row) => {
+    const relation = Array.isArray(row.transaction) ? row.transaction[0] : row.transaction as FundMovementTransaction;
+    const businessDate = relation && typeof relation.business_date === "string" ? relation.business_date : undefined;
+    return {
+      fund_account_id: row.fund_account_id,
+      amount: row.amount,
+      transaction: relation ? { business_date: businessDate } : null,
+    };
+  });
+}
 
 type MonthCloseSummary = {
   funds?: { accounts?: unknown } | null;

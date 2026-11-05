@@ -38,6 +38,30 @@ test('July cash reconstruction changes historical views only, including live Nov
  }
  assert.equal(JSON.stringify(tables),snapshot);
 });
+test('movement relation rows returned as arrays normalize to the same August opening, November opening/current balances and zero July impact', async () => {
+ const tables=dashboardTables();
+ tables.ledger_fund_accounts[1].code='baba_corporate_bank';
+ tables.ledger_fund_accounts.push(...[{id:4,code:'cho_personal_custody'},{id:5,code:'vuong_personal_custody'}].map(a=>({...a,type:'personal_custody',is_active:true,is_business_fund:true})));
+ const withHistory=structuredClone(tables);
+ for(const id of [1,2,4,5]) withHistory.ledger_movements.push({id:9100+id,fund_account_id:id,amount:-1_234_567,transaction:{type:'expense',status:'confirmed',business_date:'2026-07-20',occurred_at:'2026-07-20T12:00:00+07:00'}});
+ const api=(t,shape)=>dashboardApi(t,{businessDate:'2026-11-15',movementRelationShape:shape});
+ for(const month of ['2026-08','2026-09','2026-10','2026-11']) for(const scope of ['','&scope=accounts']) {
+  const object=await body(api(tables,'object'),month,scope);
+  const array=await body(api(tables,'array'),month,scope);
+  const arrayWithJuly=await body(api(withHistory,'array'),month,scope);
+  assert.deepEqual(array.accounts,object.accounts,`${month} ${scope}: array relation = object relation`);
+  assert.deepEqual(arrayWithJuly.accounts,object.accounts,`${month} ${scope}: July history impact = 0 with array relations`);
+  if(month==='2026-08') assert.equal(array.accounts.find(a=>a.id===1).openingBalance,100000,'August opening seed kept');
+  if(month==='2026-11') {
+   // November has no opening row: opening = prior confirmed movements (business_date kept for the boundary).
+   const october=await body(api(tables,'array'),'2026-10','&scope=accounts');
+   for(const account of array.accounts) assert.equal(account.openingBalance,october.accounts.find(a=>a.id===account.id).balance,`November opening = October closing (${account.code})`);
+   assert.ok(array.accounts.some(a=>a.balance!==0),'November current balances are computed');
+  }
+ }
+ // Both read paths share the one normalization: accounts scope equals the general ledger read.
+ for(const month of ['2026-08','2026-11']) assert.deepEqual((await body(api(withHistory,'array'),month,'&scope=accounts')).accounts,(await body(api(withHistory,'array'),month,'')).accounts);
+});
 for(const month of ['2026-08','2026-09','2026-10'])test(`${month}: full/dashboard report, details, cash, balances, estimates and revision 3 agree`,async()=>{
  const tables=dashboardTables(),snapshot=JSON.stringify(tables),full=dashboardApi(tables),light=dashboardApi(tables);
  const previous=`2026-${String(Number(month.slice(5))-1).padStart(2,'0')}`;

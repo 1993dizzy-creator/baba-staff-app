@@ -27,7 +27,7 @@ function queryKind(table, columns, filters) {
 
 // Read-only Supabase double. The default cap, inclusive ranges, filters and
 // multi-column ordering are enforced; shuffled input cannot accidentally pass.
-export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false, businessDate = '2026-10-19' } = {}) {
+export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false, businessDate = '2026-10-19', movementRelationShape = 'object' } = {}) {
   const routeCode = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const spies = { inventoryDisplay:0, inventoryIssues:0, entries:0, reserveEntries:0 };
   const entriesModule = require('../../lib/ledger/entries.ts');
@@ -64,7 +64,10 @@ export function dashboardApi(tables, { failKind, source = readFileSync('app/api/
           return 0;
         }).slice(from, Math.min(to + 1, from + 1000));
         call.ids = rows.map(row => row.id);
-        const selected=rows.map(row=>project(row,columns));call.bytes=Buffer.byteLength(JSON.stringify(selected));
+        // movementRelationShape 'array' returns ledger_movements.transaction as the one-element
+        // array the generated client types it as (filters still apply to the related row).
+        const projected=rows.map(row=>project(row,columns));
+        const selected=movementRelationShape==='array'&&table==='ledger_movements'?projected.map(row=>row&&row.transaction&&!Array.isArray(row.transaction)?{...row,transaction:[row.transaction]}:row):projected;call.bytes=Buffer.byteLength(JSON.stringify(selected));
         return { data: single ? selected[0] ?? null : selected, error: null };
       }
       const query = {

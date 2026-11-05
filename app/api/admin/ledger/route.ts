@@ -11,7 +11,7 @@ import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
-import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, type FundAccountReservePlan, type FundAccountViewMode } from "@/lib/ledger/fund-account-view";
+import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, normalizeFundMovementRows, type FundAccountReservePlan, type FundAccountViewMode, type FundMovement, type FundMovementSourceRow } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
 import { buildAccrualReport, type AccrualCloseSnapshot, type AccrualCorrectionRow } from "@/lib/ledger/accrual-report";
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
@@ -37,9 +37,11 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
   fundsViewMode: FundAccountViewMode;
   now: Date;
   accountRows: T[];
-  openingRows: BuildFundAccountsInput["openingMovements"];
-  priorConfirmedMovements: BuildFundAccountsInput["priorConfirmedMovements"];
-  movementRows: BuildFundAccountsInput["movements"];
+  // Raw relation-select rows; normalized below so the general ledger read and
+  // scope=accounts share one normalization and balance calculation path.
+  openingRows: readonly FundMovementSourceRow[];
+  priorConfirmedMovements: readonly FundMovementSourceRow[];
+  movementRows: readonly FundMovementSourceRow[];
   reservePlanRows: Array<Omit<FundAccountReservePlan, "entries">>;
   reserveEntryRows: Array<{ reserve_plan_id: number | string; entry_type: string; amount: number | string; occurred_at: string }>;
   closeSummary: unknown;
@@ -63,13 +65,13 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
     entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
   }));
   const accountCodes = new Map(accountRows.map(account => [Number(account.id), account.code]));
-  const inScope = (row: BuildFundAccountsInput["movements"][number]) =>
+  const inScope = (row: FundMovement) =>
     fundMovementInScope(accountCodes.get(Number(row.fund_account_id)), row.transaction?.business_date ?? "", month);
   return buildFundAccountView({
     accounts: accountRows,
-    openingMovements: openingRows,
-    priorConfirmedMovements: priorConfirmedMovements?.filter(inScope),
-    movements: movementRows.filter(inScope),
+    openingMovements: normalizeFundMovementRows(openingRows),
+    priorConfirmedMovements: normalizeFundMovementRows(priorConfirmedMovements).filter(inScope),
+    movements: normalizeFundMovementRows(movementRows).filter(inScope),
     reservePlans,
     groupReserves: reservesByFundAccount,
     mode: fundsViewMode,
@@ -489,7 +491,8 @@ async function loadPayableAllocationCategories(paymentTransactionIds: number[]):
 }
 
 async function loadPriorConfirmedFundMovements(monthStart: string) {
-  const rows: Array<{ fund_account_id: number; amount: number | string }> = [];
+  // Keep the embedded transaction (business_date) for the August boundary filter.
+  const rows: FundMovementSourceRow[] = [];
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer.from("ledger_movements")
