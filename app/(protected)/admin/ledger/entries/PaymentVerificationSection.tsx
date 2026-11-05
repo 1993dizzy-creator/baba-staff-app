@@ -11,6 +11,17 @@ import { payablePaymentErrorMessage } from "@/lib/ledger/payable-payment-message
 import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
 import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import type { PurchaseSettlement } from "@/lib/ledger/payables";
+import { planPrepaymentApplication, totalUnusedPrepayment, type UnusedPrepayment } from "@/lib/ledger/supplier-prepayments";
+
+// Pseudo account: settle from the party's unused 선결제 (allocations only, no new outflow).
+const PREPAYMENT_ACCOUNT = "prepayment";
+const prepaymentMessage = (code: string, vi: boolean) => ({
+  PREPAYMENT_INSUFFICIENT: vi ? "Số dư trả trước không đủ." : "선결제 잔액이 부족합니다.",
+  AMOUNT_EXCEEDS_OUTSTANDING: vi ? "Vượt quá số còn lại." : "남은 금액을 초과합니다.",
+  DUPLICATE_ALLOCATION: vi ? "Khoản trả trước này đã được liên kết." : "이미 연결된 선결제입니다.",
+  INVALID_PREPAYMENT: vi ? "Không dùng được khoản trả trước này." : "사용할 수 없는 선결제입니다.",
+  LEDGER_MONTH_CLOSED: vi ? "Tháng của khoản trả trước đã chốt sổ." : "선결제가 속한 월이 마감되어 연결할 수 없습니다.",
+} as Record<string, string>)[code] ?? null;
 
 // Same contract as buildPaymentVerificationItems() in lib/ledger/payment-verification.ts.
 export type VerificationItem = {
@@ -47,11 +58,25 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
   const [error, setError] = useState("");
   // Date groups start collapsed; keyed by party + date because two parties can share a date.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Unused prepayments by party, read when the sheet is opened (a click, never an effect); one idempotency key per started target.
+  const [prepayments, setPrepayments] = useState<UnusedPrepayment[]>([]);
+  const [prepayRequestId, setPrepayRequestId] = useState(() => crypto.randomUUID());
+  const loadPrepayments = async () => {
+    try {
+      const response = await fetch("/api/admin/ledger/prepayments", { cache: "no-store" }), body = await response.json();
+      if (response.ok) setPrepayments(body.prepayments ?? []);
+    } catch { /* prepayment option simply stays hidden */ }
+  };
   const single = selected && !selected.bulk ? selected.items[0] : null;
   const bulkPlan = selected?.bulk ? planVerificationDatePayment(selected.items) : null;
   const amountValue = Number(amount);
   const amountValid = single !== null && Number.isFinite(amountValue) && amountValue > 0 && amountValue <= single.remainingAmount && Math.round(amountValue * 1000) / 1000 === amountValue;
-  const canSubmit = selected !== null && (selected.bulk ? bulkPlan !== null : amountValid);
+  const partyPrepayments = selected ? prepayments.filter(row => row.partyId === selected.partyId) : [];
+  const prepaymentAvailable = totalUnusedPrepayment(partyPrepayments);
+  const usePrepayment = accountId === PREPAYMENT_ACCOUNT;
+  const requestedAmount = selected?.bulk ? bulkPlan?.amount ?? 0 : amountValid ? amountValue : 0;
+  const prepaymentShort = usePrepayment && requestedAmount > prepaymentAvailable;
+  const canSubmit = selected !== null && (selected.bulk ? bulkPlan !== null : amountValid) && !prepaymentShort;
   // Same real party together; derived from props, so a paid item/group disappears on reload.
   const partyGroups = groupVerificationItemsByParty(group.items);
   const itemName = (item: VerificationItem) => vi ? item.itemNameVi || item.itemName : item.itemName;
@@ -63,6 +88,7 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
 
   function start(target: PaymentTarget) {
     setSelected(target); setAmount(target.bulk ? "" : String(target.items[0].remainingAmount)); setAccountId(""); setDate(getBusinessDate()); setMemo(""); setError("");
+    setPrepayRequestId(crypto.randomUUID());
   }
 
   async function submit() {
@@ -72,6 +98,16 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
       : { partyId: selected.partyId, amount: amountValue, allocations: [{ payableId: selected.items[0].payableId, allocatedAmount: amountValue }] };
     setBusy(true); setError("");
     try {
+      if (usePrepayment) {
+        const plan = planPrepaymentApplication(partyPrepayments, payment.allocations);
+        if ("error" in plan) throw new Error("PREPAYMENT_INSUFFICIENT");
+        const response = await fetch("/api/admin/ledger/prepayments/apply", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: prepayRequestId, partyId: payment.partyId, allocations: plan.allocations }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.code || "PREPAYMENT_APPLY_FAILED");
+        await onPaid(); await loadPrepayments(); setSelected(null);
+        return;
+      }
       await sendPayablePayment({ partyId: payment.partyId, fundAccountId: Number(accountId), occurredAt: `${date}T12:00:00+07:00`, amount: payment.amount, allocations: payment.allocations, memo: memo || null }, onPaid);
       setSelected(null);
     } catch (cause) {
@@ -90,7 +126,7 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
         <p className={styles.payableReadOnlyHint} role="note">{canPay
           ? (vi ? "Chỉ ghi khi đã xác nhận thanh toán thực tế." : "실제 지급을 확인한 건만 기록하세요.")
           : (vi ? "Chỉ xem. Không thể ghi thanh toán cho tháng trước." : "조회만 가능합니다. 과거월은 결제를 기록할 수 없습니다.")}</p>
-        {error ? <p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p> : null}
+        {error ? <p className={styles.error} role="alert">{prepaymentMessage(error, vi) ?? payablePaymentErrorMessage(error,vi)}</p> : null}
         {error === "IDEMPOTENCY_KEY_REQUIRED" ? <PayablePaymentRefreshButton vi={vi}/> : null}
         {canPay ? [...new Set(group.items.map(item => item.partyId))].map(partyId => <PayablePaymentRecovery key={partyId} partyId={partyId} vi={vi} accounts={accounts} onConfirmed={async () => { await onPaid(); setSelected(null); }} />) : null}
         {selected ? <div className={styles.verificationForm}>
@@ -109,10 +145,15 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
             </div> : null}
           <BarField label={`🏦 ${vi ? "Tài khoản chi" : "지급 계정"}`} required compact>{({ id }) => <select id={id} required value={accountId} onChange={(event) => setAccountId(event.target.value)} style={keepingInputStyle}>
             <option value="">{vi ? "Chọn" : "선택"}</option>
+            {prepaymentAvailable > 0 ? <option value={PREPAYMENT_ACCOUNT}>{`💸 ${vi ? "Dùng tiền trả trước" : "선결제 잔액 사용"} (${money(prepaymentAvailable)})`}</option> : null}
             {accounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}</option>)}
           </select>}</BarField>
+          {usePrepayment ? <p className={styles.verificationNotice} role="note">{prepaymentShort
+            ? (vi ? `Số dư trả trước ${money(prepaymentAvailable)} không đủ. Hãy giảm số tiền rồi thanh toán phần còn lại bằng tài khoản.` : `선결제 잔액 ${money(prepaymentAvailable)}이 부족합니다. 금액을 줄이고 나머지는 계정으로 결제하세요.`)
+            : (vi ? "Trừ vào khoản đã trả trước. Không phát sinh thêm khoản chi." : "이미 지급한 선결제에서 차감합니다. 추가 출금은 없습니다.")}</p> : <>
           <BarField label={`📅 ${vi ? "Ngày thanh toán" : "지급일"}`} required compact>{({ id }) => <input id={id} type="date" min={selected.businessDate} value={date} onChange={(event) => setDate(event.target.value)} style={keepingInputStyle} />}</BarField>
           <BarField label={`📝 ${vi ? "Ghi chú" : "메모"}`} compact>{({ id }) => <input id={id} value={memo} onChange={(event) => setMemo(event.target.value)} style={keepingInputStyle} />}</BarField>
+          </>}
         </div> : <div className={styles.verificationList}>
           {partyGroups.map((partyGroup) => <section key={partyGroup.partyId} className={styles.verificationGroup} aria-label={partyGroup.name}>
             <div className={styles.verificationGroupHeader}><strong>{partyGroup.name}</strong><span>{count(partyGroup.count)} · {money(partyGroup.amount)}</span></div>
@@ -146,7 +187,7 @@ export default function PaymentVerificationSection({ group, accounts, vi, canPay
       footer={footer}>{content}</BarSheet>;
   return <>
     {/* Same markup/classes as a party row in .payableParties */}
-    <button type="button" onClick={() => setOpen(true)}>
+    <button type="button" onClick={() => { setOpen(true); if (canPay) void loadPrepayments(); }}>
       <span className={styles.payablePartyMain}>
         <span className={styles.partnerTypeBadge}>{vi ? "Khác" : "기타"}</span>
         <span className={styles.payablePartyName}>{vi ? "Khác" : "기타"} <em className={styles.verificationBadge}>{vi ? "Chưa xác minh" : "결제 미확인"}</em></span>

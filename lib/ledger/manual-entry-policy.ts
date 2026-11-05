@@ -226,12 +226,21 @@ export function manualExpenseCategoryLabel(name: string, lang: "ko" | "vi") {
 // adjustment), not a new P&L expense.
 export const PAYROLL_ADVANCE_MANUAL_ACTION = "__payroll_advance__";
 
+// A supplier prepayment (선결제) is purchase money paid before receipt: one outflow
+// saved as an unallocated payable_payment, no P&L expense until a receipt is linked.
+export const SUPPLIER_PREPAYMENT_MANUAL_ACTION = "__supplier_prepayment__";
+
 export const MANUAL_EXPENSE_SPECIAL_ACTIONS = [
   { value: PAYROLL_ADVANCE_MANUAL_ACTION, emoji: "👥", ko: "가불", vi: "Ứng lương" },
+  { value: SUPPLIER_PREPAYMENT_MANUAL_ACTION, emoji: "💸", ko: "선결제 (입고 전 매입대금)", vi: "Trả trước tiền hàng" },
 ] as const;
 
 export function isPayrollAdvanceManualAction(value: unknown) {
   return value === PAYROLL_ADVANCE_MANUAL_ACTION;
+}
+
+export function isSupplierPrepaymentManualAction(value: unknown) {
+  return value === SUPPLIER_PREPAYMENT_MANUAL_ACTION;
 }
 
 export function manualExpenseSpecialActionLabel(action: (typeof MANUAL_EXPENSE_SPECIAL_ACTIONS)[number], lang: "ko" | "vi") {

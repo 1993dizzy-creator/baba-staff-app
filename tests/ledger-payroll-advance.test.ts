@@ -41,7 +41,8 @@ const advanceRow = {
 test("expense category selector keeps the 19 DB categories and adds 👥 가불 as a special action", () => {
   assert.equal(MANUAL_EXPENSE_CATEGORY_NAMES.length, 19);
   assert.ok(!MANUAL_EXPENSE_CATEGORY_NAMES.some((name: string) => /가불|급여|인건비/.test(name)));
-  assert.deepEqual(MANUAL_EXPENSE_SPECIAL_ACTIONS.map((action: { value: string }) => action.value), [PAYROLL_ADVANCE_MANUAL_ACTION]);
+  // 👥 가불 stays first; 💸 선결제 (supplier prepayment) is the second special action.
+  assert.deepEqual(MANUAL_EXPENSE_SPECIAL_ACTIONS.map((action: { value: string }) => action.value), [PAYROLL_ADVANCE_MANUAL_ACTION, "__supplier_prepayment__"]);
   assert.equal(manualExpenseSpecialActionLabel(MANUAL_EXPENSE_SPECIAL_ACTIONS[0], "ko"), "👥 가불");
   assert.equal(manualExpenseSpecialActionLabel(MANUAL_EXPENSE_SPECIAL_ACTIONS[0], "vi"), "👥 Ứng lương");
   // The sentinel is never a real category row.

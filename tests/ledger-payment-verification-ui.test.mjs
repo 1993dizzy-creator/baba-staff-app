@@ -21,7 +21,8 @@ const Sheet = ({ children, footer, title }) => React.createElement('section', { 
 const Field = ({ children, label }) => React.createElement('label', null, label, typeof children === 'function' ? children({ id: 'field' }) : children);
 
 // useState seeded by call order: 0 open, 1 selected payment target, 2 amount, 3 accountId,
-// 4 date, 5 memo, 6 busy, 7 error, 8 expanded date keys. Setter calls are recorded.
+// 4 date, 5 memo, 6 busy, 7 error, 8 expanded date keys, 9 unused prepayments, 10 prepayment request id.
+// Setter calls are recorded.
 function load(states, updates = []) {
   let index = 0;
   const react = { ...React, useState(initial) {
@@ -40,6 +41,7 @@ function load(states, updates = []) {
     '@/lib/ledger/payable-payment-messages': createRequire(import.meta.url)('../lib/ledger/payable-payment-messages.ts'),
     '@/lib/ledger/payable-payment-client': { sendPayablePayment: async (body, onPaid) => { const response = await fetch('/api/admin/ledger/payables/pay', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!response.ok) throw Error('PAYMENT_FAILED'); await onPaid(); } },
     '@/components/ledger/PayablePaymentRecovery': { __esModule:true, default:()=>null },
+    '@/lib/ledger/supplier-prepayments': createRequire(import.meta.url)('../lib/ledger/supplier-prepayments.ts'),
   })[name], mod, mod.exports);
   return { component: mod.exports.default };
 }

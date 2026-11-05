@@ -64,6 +64,7 @@ import {
   manualExpenseCategoryLabel,
   manualExpenseSpecialActionLabel,
   payrollAdvanceDefaultMemo,
+  isSupplierPrepaymentManualAction,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
@@ -2301,6 +2302,9 @@ function ManualEntrySheet({
   // 👥 가불 looks like an expense category but is saved as a payroll advance
   // (payroll_payment + payroll adjustment), never as a P&L expense.
   const payrollAdvance = type === "expense" && isPayrollAdvanceManualAction(categoryId);
+  // 💸 선결제 is saved as an unallocated supplier payment (one outflow, no expense yet);
+  // the receipt is linked later from 🧾 기타 · 결제 미확인 without a second outflow.
+  const supplierPrepayment = type === "expense" && isSupplierPrepaymentManualAction(categoryId);
   // 수입은 먼저 💳 카드입금 / 💵 일반수입을 고른다. 카드입금은 일반 수입으로 기표하지 않고
   // 기존 카드정산 등록(미정산 카드매출 자동 배분 RPC)으로만 저장한다.
   const [incomeMode, setIncomeMode] = useState<"card" | "general" | null>(null);
@@ -2363,7 +2367,9 @@ function ManualEntrySheet({
       const isInvestmentAdjustment = type === "balance_adjustment" && adjustmentType === "investment";
       if (payrollAdvance && !employeeId) throw new Error(vi ? "Hãy chọn nhân viên." : "직원을 선택하세요.");
       if (payrollAdvance && !fromAccountId) throw new Error(vi ? "Hãy chọn tài khoản chi." : "출금 계정을 선택하세요.");
-      const response = await fetch(payrollAdvance ? "/api/admin/ledger/payroll-advances" : isInvestmentAdjustment ? "/api/admin/ledger/investments" : "/api/admin/ledger", {
+      if (supplierPrepayment && !selectedPartner?.ledgerPartyId) throw new Error(vi ? "Hãy chọn đối tác đã liên kết sổ sách." : "장부에 연결된 거래처를 선택하세요.");
+      if (supplierPrepayment && !fromAccountId) throw new Error(vi ? "Hãy chọn tài khoản chi." : "출금 계정을 선택하세요.");
+      const response = await fetch(payrollAdvance ? "/api/admin/ledger/payroll-advances" : isInvestmentAdjustment ? "/api/admin/ledger/investments" : supplierPrepayment ? "/api/admin/ledger/prepayments" : "/api/admin/ledger", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payrollAdvance ? {
@@ -2381,6 +2387,13 @@ function ManualEntrySheet({
             fundAccountId: Number(investmentAction === "contribution" ? toAccountId : fromAccountId),
             reason,
             memo,
+          } : supplierPrepayment ? {
+            requestId: advanceRequestId,
+            partyId: Number(selectedPartner?.ledgerPartyId),
+            fundAccountId: Number(fromAccountId),
+            occurredAt: `${occurredDate}T${occurredTime}:00+07:00`,
+            amount: amountValue,
+            memo: memo || null,
           } : {
             type,
             amount: amountValue,
@@ -2413,6 +2426,7 @@ function ManualEntrySheet({
       if (!response.ok) throw new Error(body.code === "AUTOMATIC_MEAL_REQUIRES_ADJUSTMENT"
         ? (vi ? "Hãy sửa giao dịch tiền ăn tự động của ngày này." : "해당 날짜의 자동식대 거래에서 수정하세요.") : body.code);
       if (payrollAdvance) setAdvanceRequestId(crypto.randomUUID());
+      if (supplierPrepayment) setAdvanceRequestId(crypto.randomUUID());
       if (!manualSheetMountedRef.current) return;
       await onSaved();
     } catch (cause) {
@@ -2527,7 +2541,7 @@ function ManualEntrySheet({
                 )}
               </BarField>
             ) : type === "expense" ? (
-              <BarField label={`🤝 ${vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)"}`} compact>
+              <BarField label={`🤝 ${supplierPrepayment ? (vi ? "Đối tác" : "거래처") : (vi ? "Đối tác (không bắt buộc)" : "거래처 (선택)")}`} required={supplierPrepayment} compact>
                 {({ id }) => (
                   <PartnerSelect id={id} manual partners={data.partners} lang={lang} value={partnerId} onChange={setPartnerId} />
                 )}
@@ -2695,6 +2709,11 @@ function ManualEntrySheet({
               </div>
             </>
           )}
+          {supplierPrepayment ? (
+            <p className={styles.manualNotice}>{vi
+              ? "Tiền hàng trả trước khi nhập kho: chỉ trừ tiền một lần, chưa ghi chi phí. Khi hàng về, liên kết ở mục Khác · Chưa xác minh thanh toán mà không chi thêm."
+              : "입고 전에 지급한 매입대금입니다. 출금은 1회만 기록되고 비용은 아직 인식하지 않습니다. 입고되면 🧾 기타 · 결제 미확인에서 추가 출금 없이 연결하세요."}</p>
+          ) : null}
           {payrollAdvance ? (
             <p className={styles.manualNotice}>{vi
               ? "Ứng lương được trừ vào lương tháng này và không được tính thêm là chi phí nhân công."
