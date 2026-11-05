@@ -117,14 +117,63 @@ test('wrong party, ordinary payment or cancelled prepayment cannot be used; retr
     assert.equal((await apply(db, bad)).status, 'invalid_allocations');
 });
 
-test('closed months: no prepayment in a closed month; a closed-month prepayment cannot be applied', async () => {
+// Everything a closed October snapshot depends on: its transactions, movements and audit rows.
+const octoberState = db => one(db, `select
+  (select json_agg(json_build_object('id',id,'status',status,'amount',amount,'snapshot',source_snapshot) order by id) from ledger_transactions where business_date<'2026-11-01') tx,
+  (select json_agg(json_build_object('id',m.id,'amount',m.amount) order by m.id) from ledger_movements m join ledger_transactions t on t.id=m.transaction_id where t.business_date<'2026-11-01') mv,
+  (select json_agg(json_build_object('id',id,'action',action,'after',after_snapshot) order by id) from ledger_audit_logs where created_at is not null and action<>'supplier_prepayment_applied') audits`);
+
+test('closed October prepayment links to an open November receipt without changing October', async () => {
   const db = await setup();
   const { prepaymentTransactionId: id } = await create(db, { amount: 1_000_000, at: '2026-10-31T12:00:00+07:00' });
-  const p = await receipt(db, 1_000_000, '2026-11-02');
+  const nov = await receipt(db, 600_000, '2026-11-02'), nov2 = await receipt(db, 700_000, '2026-11-03');
   await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
-  await assert.rejects(() => create(db, { at: '2026-10-20T12:00:00+07:00' }), /LEDGER_MONTH_CLOSED/);
-  await assert.rejects(() => apply(db, [{ prepaymentTransactionId: id, payableId: p, allocatedAmount: 1_000_000 }]), /LEDGER_MONTH_CLOSED/);
-  assert.deepEqual(await payable(db, p), { status: 'unpaid', outstanding: '1000000.000' });
+  await assert.rejects(() => create(db, { at: '2026-10-20T12:00:00+07:00' }), /LEDGER_MONTH_CLOSED/, 'no new prepayment in a closed month');
+  const october = await octoberState(db);
+  const cash = Number((await totals(db)).cash);
+  // partial across the month boundary: 600,000 + 400,000 of 700,000
+  assert.equal((await apply(db, [{ prepaymentTransactionId: id, payableId: nov, allocatedAmount: 600_000 }, { prepaymentTransactionId: id, payableId: nov2, allocatedAmount: 400_000 }])).status, 'applied');
+  assert.deepEqual(await payable(db, nov), { status: 'paid', outstanding: '0.000' });
+  assert.deepEqual(await payable(db, nov2), { status: 'partially_paid', outstanding: '300000.000' });
+  assert.equal(await unused(db, id), 0);
+  assert.equal(Number((await totals(db)).cash), cash, 'no outflow on link');
+  assert.deepEqual(await octoberState(db), october, 'closed October rows are untouched');
+  // the application date is the receipt date, never the October prepayment date
+  const dates = (await db.query(`select greatest(t.business_date,e.business_date)::text d from ledger_payable_allocations a join ledger_transactions t on t.id=a.payment_transaction_id
+    join ledger_payables p on p.id=a.payable_id join ledger_transactions e on e.id=p.expense_transaction_id where a.payment_transaction_id=$1 order by 1`, [id])).rows.map(r => r.d);
+  assert.deepEqual(dates, ['2026-11-02', '2026-11-03']);
+  // once the application month (November) closes, the application rows are frozen too
+  await db.exec("insert into ledger_month_closures(month,status) values('2026-11-01','closed')");
+  await assert.rejects(() => db.query('delete from ledger_payable_allocations where payment_transaction_id=$1', [id]), /LEDGER_MONTH_CLOSED/);
+});
+
+test('receipt in a closed month cannot take a prepayment; ordinary payments keep the original guard', async () => {
+  const db = await setup();
+  const oct = await receipt(db, 500_000, '2026-10-30');
+  const { prepaymentTransactionId: id } = await create(db, { amount: 500_000, at: '2026-11-04T12:00:00+07:00' });
+  await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+  // application month = greatest(11/04, 10/30) = November is open, so a later prepayment may settle an October receipt
+  assert.equal((await apply(db, [{ prepaymentTransactionId: id, payableId: oct, allocatedAmount: 500_000 }])).status, 'applied');
+  // a prepayment dated before an October receipt would apply in October: blocked
+  const db2 = await setup();
+  const { prepaymentTransactionId: early } = await create(db2, { amount: 500_000, at: '2026-10-01T12:00:00+07:00' });
+  const lateOct = await receipt(db2, 500_000, '2026-10-30');
+  await db2.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+  await assert.rejects(() => apply(db2, [{ prepaymentTransactionId: early, payableId: lateOct, allocatedAmount: 500_000 }]), /LEDGER_MONTH_CLOSED/);
+  assert.deepEqual(await payable(db2, lateOct), { status: 'unpaid', outstanding: '500000.000' });
+  // ordinary (non-prepayment) payment in a closed month: unchanged original guard
+  const nov = await receipt(db2, 100_000, '2026-11-05');
+  const ordinary = await one(db2, "insert into ledger_transactions(operation_id,type,occurred_at,business_date,amount,party_id,status,source_type,source_snapshot,created_by,confirmed_by) values(gen_random_uuid(),'payable_payment','2026-09-30T12:00:00+07:00','2026-09-30',100000,20,'confirmed','manual','{\"allocationMode\":\"custom\"}',2,2) returning id");
+  await db2.exec("insert into ledger_month_closures(month,status) values('2026-09-01','closed')");
+  await assert.rejects(() => db2.query('insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) values($1,$2,100000)', [nov, ordinary.id]), /LEDGER_MONTH_CLOSED/);
+});
+
+test('migration refuses to replace an unexpected allocation guard', async () => {
+  const db = await database();
+  await db.exec(read('202608210004_add_ledger_payable_payments.sql'));
+  await db.exec(read('20261018105936_add_payable_payment_idempotency_v2.sql'));
+  await db.exec("create or replace function public.ledger_payable_allocation_month_guard_v1() returns trigger language plpgsql as $$begin return new;end$$");
+  await assert.rejects(() => db.exec(migration), /differs from the expected baseline/);
 });
 
 test('grants: service_role only; existing payment RPC definitions are untouched', () => {

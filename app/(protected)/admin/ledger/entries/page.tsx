@@ -65,6 +65,7 @@ import {
   manualExpenseSpecialActionLabel,
   payrollAdvanceDefaultMemo,
   isSupplierPrepaymentManualAction,
+  SUPPLIER_PREPAYMENT_MANUAL_ACTION,
 } from "@/lib/ledger/manual-entry-policy";
 import styles from "./entries.module.css";
 import InventoryPurchaseCaseSummary from "@/components/ledger/InventoryPurchaseCaseSummary";
@@ -2305,6 +2306,10 @@ function ManualEntrySheet({
   // 💸 선결제 is saved as an unallocated supplier payment (one outflow, no expense yet);
   // the receipt is linked later from 🧾 기타 · 결제 미확인 without a second outflow.
   const supplierPrepayment = type === "expense" && isSupplierPrepaymentManualAction(categoryId);
+  // A general expense for a goods supplier may really be purchase money paid before
+  // receipt. Only suggest 💸 선결제; the user decides, nothing is converted automatically.
+  const prepaymentHint = type === "expense" && !payrollAdvance && !supplierPrepayment && !!selectedPartner?.ledgerPartyId
+    && ["food", "alcohol", "beverage", "consumable"].includes(selectedPartner.partnerType);
   // 수입은 먼저 💳 카드입금 / 💵 일반수입을 고른다. 카드입금은 일반 수입으로 기표하지 않고
   // 기존 카드정산 등록(미정산 카드매출 자동 배분 RPC)으로만 저장한다.
   const [incomeMode, setIncomeMode] = useState<"card" | "general" | null>(null);
@@ -2709,6 +2714,12 @@ function ManualEntrySheet({
               </div>
             </>
           )}
+          {prepaymentHint ? (
+            <p className={styles.manualNotice} data-testid="manual-prepayment-hint">{vi
+              ? "Nếu đây là tiền hàng trả trước khi nhập kho, hãy ghi là trả trước. Ghi là chi phí thường sẽ bị tính hai lần khi hàng về."
+              : "입고 전에 지급한 매입대금이라면 선결제로 기록하세요. 일반 비용으로 저장하면 입고될 때 비용이 두 번 잡힙니다."}{" "}
+              <button type="button" className={styles.itemAction} onClick={() => setCategoryId(SUPPLIER_PREPAYMENT_MANUAL_ACTION)}>{vi ? "💸 Ghi là trả trước" : "💸 선결제로 기록"}</button></p>
+          ) : null}
           {supplierPrepayment ? (
             <p className={styles.manualNotice}>{vi
               ? "Tiền hàng trả trước khi nhập kho: chỉ trừ tiền một lần, chưa ghi chi phí. Khi hàng về, liên kết ở mục Khác · Chưa xác minh thanh toán mà không chi thêm."

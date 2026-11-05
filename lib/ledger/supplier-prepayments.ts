@@ -54,3 +54,20 @@ export function planPrepaymentApplication(prepayments: readonly UnusedPrepayment
   }
   return { allocations, amount: fromUnits(requested) };
 }
+
+// A prepayment application takes effect on greatest(prepayment date, receipt date):
+// the prepayment's own month is never changed retroactively by a later link.
+export function prepaymentApplicationDate(prepaymentBusinessDate: string, receiptBusinessDate: string | null | undefined) {
+  return receiptBusinessDate && receiptBusinessDate > prepaymentBusinessDate ? receiptBusinessDate : prepaymentBusinessDate;
+}
+
+// Unused balance as of a month end (businessDateExclusive = first day of the next month).
+// Applications dated on/after that day are still unused for that month.
+export function unusedPrepaymentAmountAsOf(
+  amount: number | string, prepaymentBusinessDate: string,
+  allocations: readonly { allocated_amount: number | string; receiptBusinessDate?: string | null }[] | null | undefined,
+  businessDateExclusive: string,
+) {
+  if (prepaymentBusinessDate >= businessDateExclusive) return 0;
+  return unusedPrepaymentAmount(amount, (allocations ?? []).filter(row => prepaymentApplicationDate(prepaymentBusinessDate, row.receiptBusinessDate) < businessDateExclusive));
+}

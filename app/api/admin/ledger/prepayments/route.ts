@@ -1,32 +1,47 @@
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
-import { unusedPrepaymentAmount, type UnusedPrepayment } from "@/lib/ledger/supplier-prepayments";
+import { unusedPrepaymentAmount, unusedPrepaymentAmountAsOf, type UnusedPrepayment } from "@/lib/ledger/supplier-prepayments";
+import { payableMonthBounds } from "@/lib/ledger/payables";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const dynamic = "force-dynamic";
 
-// Unused supplier prepayments (선결제 잔액), optionally for one ledger party.
+// Unused supplier prepayments (선결제 잔액), optionally for one ledger party. With
+// ?month=YYYY-MM the balance is as of that month end: prepayments paid by then, minus
+// only applications dated (greatest(prepayment, receipt) business date) by then.
 export async function GET(request: Request) {
   const auth = await requireLedgerActor(); if (auth.response) return auth.response;
-  const partyParam = new URL(request.url).searchParams.get("partyId");
+  const params = new URL(request.url).searchParams;
+  const month = params.get("month");
+  let businessDateExclusive: string | null = null;
+  if (month !== null) { try { businessDateExclusive = payableMonthBounds(month).nextMonthStart; } catch { return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400); } }
+  const partyParam = params.get("partyId");
   const partyId = partyParam === null ? null : Number(partyParam);
   if (partyId !== null && (!Number.isSafeInteger(partyId) || partyId <= 0)) return ledgerJson({ ok: false, code: "INVALID_PARTY" }, 400);
-  const rows: Array<{ id: number; party_id: number; business_date: string; amount: number | string; memo: string | null; allocations: { allocated_amount: number | string }[] | null }> = [];
+  type AllocationRow = { allocated_amount: number | string; payable: { expense: { business_date: string } | { business_date: string }[] | null } | { expense: { business_date: string } | { business_date: string }[] | null }[] | null };
+  const rows: Array<{ id: number; party_id: number; business_date: string; amount: number | string; memo: string | null; allocations: AllocationRow[] | null }> = [];
   for (let from = 0; ; from += 1000) {
     let query = supabaseServer.from("ledger_transactions")
-      .select("id,party_id,business_date,amount,memo,allocations:ledger_payable_allocations!payment_transaction_id(allocated_amount)")
+      .select("id,party_id,business_date,amount,memo,allocations:ledger_payable_allocations!payment_transaction_id(allocated_amount,payable:ledger_payables(expense:ledger_transactions!expense_transaction_id(business_date)))")
       .eq("type", "payable_payment").eq("status", "confirmed").eq("source_snapshot->>prepayment", "true");
     if (partyId !== null) query = query.eq("party_id", partyId);
+    if (businessDateExclusive !== null) query = query.lt("business_date", businessDateExclusive);
     const { data, error } = await query.order("business_date", { ascending: true }).order("id", { ascending: true }).range(from, from + 999);
     if (error) { console.error("[LEDGER_PREPAYMENTS_GET_FAILED]", { code: error.code }); return ledgerJson({ ok: false, code: "PREPAYMENTS_LOAD_FAILED" }, 500); }
     rows.push(...(data ?? []) as typeof rows);
     if ((data?.length ?? 0) < 1000) break;
   }
-  const prepayments: UnusedPrepayment[] = rows.map(row => ({
-    id: Number(row.id), partyId: Number(row.party_id), businessDate: row.business_date, amount: Number(row.amount),
-    unusedAmount: unusedPrepaymentAmount(row.amount, row.allocations), memo: row.memo,
-  })).filter(row => row.unusedAmount > 0);
-  return ledgerJson({ ok: true, prepayments });
+  // Embedded many-to-one relations may arrive as an object or a one-element array.
+  const first = <T,>(value: T | T[] | null | undefined) => (Array.isArray(value) ? value[0] : value) ?? null;
+  const prepayments: UnusedPrepayment[] = rows.map(row => {
+    const allocations = (row.allocations ?? []).map(allocation => ({ allocated_amount: allocation.allocated_amount, receiptBusinessDate: first(first(allocation.payable)?.expense)?.business_date ?? null }));
+    return {
+      id: Number(row.id), partyId: Number(row.party_id), businessDate: row.business_date, amount: Number(row.amount),
+      unusedAmount: businessDateExclusive === null ? unusedPrepaymentAmount(row.amount, allocations) : unusedPrepaymentAmountAsOf(row.amount, row.business_date, allocations, businessDateExclusive),
+      memo: row.memo,
+    };
+  }).filter(row => row.unusedAmount > 0);
+  return ledgerJson({ ok: true, ...(month !== null ? { month } : {}), prepayments });
 }
 
 // Registers a prepayment paid before receipt: one outflow, no expense, no allocation.

@@ -109,7 +109,7 @@ export function dashboardApi(tables, { failKind, source = readFileSync('app/api/
       },
     },
   };
-  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow']) {
+  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'supplier-prepayments']) {
     dependencies['@/lib/ledger/' + name] = require('../../lib/ledger/' + name + '.ts');
   }
   dependencies['@/lib/partners/emoji'] = require('../../lib/partners/emoji.ts');

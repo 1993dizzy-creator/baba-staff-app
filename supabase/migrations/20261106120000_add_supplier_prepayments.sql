@@ -6,9 +6,45 @@
 -- amount is the unused prepayment balance.
 -- Applying it to a received purchase only inserts ledger_payable_allocations rows from
 -- that payment transaction: no new transaction, no movement, so no second outflow.
--- Existing tables, constraints, triggers (month guard on allocations) and
--- ledger_pay_payables_v1/v2 are unchanged. Idempotency reuses
--- ledger_payable_payment_requests with a "kind" in the stored payload.
+-- Existing tables, constraints and ledger_pay_payables_v1/v2 are unchanged.
+-- Idempotency reuses ledger_payable_payment_requests with a "kind" in the payload.
+--
+-- Allocation date of a prepayment application = greatest(prepayment business_date,
+-- received purchase business_date). The payable only exists from its receipt date, so
+-- every existing payment-date based reader (payables, month close, preflight) gives the
+-- same result; the prepayment's own (possibly closed) month is never changed.
+-- The allocation month guard is replaced with one exception: for a prepayment
+-- payment it checks that application month instead of the prepayment month. Every
+-- other allocation keeps the original check unchanged.
+
+do $$
+declare v_src text;
+begin
+ select prosrc into v_src from pg_proc where oid='public.ledger_payable_allocation_month_guard_v1()'::regprocedure;
+ -- Expected production baseline (202608210008), or this migration's own version on re-run.
+ if md5(v_src)<>'ac92f7318abeeed1ddb591050a32f1a4' and position('supplier prepayment application' in v_src)=0 then
+  raise exception 'ledger_payable_allocation_month_guard_v1 differs from the expected baseline; review before applying';
+ end if;
+end $$;
+
+create or replace function public.ledger_payable_allocation_month_guard_v1() returns trigger
+language plpgsql security definer set search_path=pg_catalog,public as $$
+declare v_tx public.ledger_transactions%rowtype;v_id bigint;v_payable_id bigint;v_date date;
+begin
+ v_id:=case when tg_op='DELETE' then old.payment_transaction_id else new.payment_transaction_id end;
+ v_payable_id:=case when tg_op='DELETE' then old.payable_id else new.payable_id end;
+ select * into v_tx from public.ledger_transactions where id=v_id;
+ v_date:=v_tx.business_date;
+ -- supplier prepayment application: guard the application month (receipt side).
+ if v_tx.type='payable_payment' and v_tx.source_snapshot->'prepayment'='true'::jsonb then
+  select greatest(v_tx.business_date,e.business_date) into v_date
+  from public.ledger_payables p join public.ledger_transactions e on e.id=p.expense_transaction_id where p.id=v_payable_id;
+  v_date:=coalesce(v_date,v_tx.business_date);
+ end if;
+ perform public.ledger_assert_month_open_v1(date_trunc('month',v_date)::date);
+ return case when tg_op='DELETE' then old else new end;
+end $$;
+revoke all on function public.ledger_payable_allocation_month_guard_v1() from public,anon,authenticated,service_role;
 
 create or replace function public.ledger_create_supplier_prepayment_v1(
  p_request_id uuid,p_party_id bigint,p_fund_account_id bigint,p_occurred_at timestamptz,
@@ -157,8 +193,16 @@ begin
   return jsonb_build_object('status','duplicate_allocation');
  end if;
  insert into public.ledger_payable_payment_requests(request_id,actor_user_id,request_payload) values(p_request_id,p_actor_user_id,v_payload);
- -- The allocation month guard (ledger_payable_allocation_month_guard_v1) requires the
- -- prepayment's month to be open; a closed-month prepayment cannot be applied.
+ -- Each application month = greatest(prepayment date, receipt date) must be open. A
+ -- closed earlier-month prepayment can be applied to an open later-month receipt; a
+ -- receipt in a closed month cannot be changed (also enforced by the allocation guard).
+ for v_row in select distinct greatest(t.business_date,e.business_date) as applied_on
+   from jsonb_array_elements(v_allocations) x
+   join public.ledger_transactions t on t.id=(x.value->>'prepaymentTransactionId')::bigint
+   join public.ledger_payables p on p.id=(x.value->>'payableId')::bigint
+   join public.ledger_transactions e on e.id=p.expense_transaction_id loop
+  perform public.ledger_assert_month_open_v1(date_trunc('month',v_row.applied_on)::date);
+ end loop;
  for v_item in select value from jsonb_array_elements(v_allocations) loop
   insert into public.ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount)
   values((v_item->>'payableId')::bigint,(v_item->>'prepaymentTransactionId')::bigint,(v_item->>'allocatedAmount')::numeric);

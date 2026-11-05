@@ -73,6 +73,7 @@ async function summary(sales, lines, { failAllocations = false, parties = [] } =
       if (name === "@/lib/ledger/entries") return { buildLedgerEntries: () => [], buildReserveLedgerEntries: () => [] };
       if (name === "@/lib/ledger/reserve-balances") return { reservesByFundAccount: () => new Map() };
       if (name === "@/lib/ledger/payables") return require("../lib/ledger/payables.ts");
+      if (name === "@/lib/ledger/supplier-prepayments") return require("../lib/ledger/supplier-prepayments.ts");
       if (name === "@/lib/ledger/summary") return require("../lib/ledger/summary.ts");
       if (name === "@/lib/ledger/cash-outflow") return require("../lib/ledger/cash-outflow.ts");
       if (name === "@/lib/ledger/card-settlements") return require("../lib/ledger/card-settlements.ts");

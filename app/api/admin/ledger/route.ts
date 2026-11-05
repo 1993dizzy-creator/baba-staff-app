@@ -13,6 +13,7 @@ import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
 import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, normalizeFundMovementRows, type FundAccountReservePlan, type FundAccountViewMode, type FundMovement, type FundMovementSourceRow } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
+import { prepaymentApplicationDate } from "@/lib/ledger/supplier-prepayments";
 import { buildAccrualReport, type AccrualCloseSnapshot, type AccrualCorrectionRow } from "@/lib/ledger/accrual-report";
 import { isPayrollAdvanceManualAction, manualExpenseCategoryNameForPartner } from "@/lib/ledger/manual-entry-policy";
 
@@ -272,6 +273,9 @@ export async function GET(request: Request) {
       : await Promise.all([
       loadPayableAllocationCategories(
         transactions.filter((row) => row.type === "payable_payment").map((row) => Number(row.id)),
+        // Supplier prepayments (선결제): a link to a later receipt never re-categorizes this month.
+        new Map(transactions.filter((row) => row.type === "payable_payment" && row.source_snapshot?.prepayment === true).map((row) => [Number(row.id), String(row.business_date)])),
+        nextMonth,
       ),
       loadPrepaidCategoryIds(transactions),
     ]);
@@ -446,7 +450,7 @@ async function loadPrepaidCategoryIds(transactions: readonly TransactionRow[]) {
   return result;
 }
 
-async function loadPayableAllocationCategories(paymentTransactionIds: number[]): Promise<PayableAllocationCategory[]> {
+async function loadPayableAllocationCategories(paymentTransactionIds: number[], prepaymentDates: ReadonlyMap<number, string> = new Map(), businessDateExclusive?: string): Promise<PayableAllocationCategory[]> {
   if (paymentTransactionIds.length === 0) return [];
   const allocations: Array<{ payment_transaction_id: number; payable_id: number; allocated_amount: number | string }> = [];
   const chunkSize = 200;
@@ -475,15 +479,23 @@ async function loadPayableAllocationCategories(paymentTransactionIds: number[]):
   }
   const expenseIds = [...new Set(payables.map((row) => Number(row.expense_transaction_id)))];
   const expenseCategories = new Map<number, number | null>();
+  const expenseDates = new Map<number, string>();
   for (let offset = 0; offset < expenseIds.length; offset += chunkSize) {
     const { data, error } = await supabaseServer.from("ledger_transactions")
-      .select("id,category_id")
+      .select("id,category_id,business_date")
       .in("id", expenseIds.slice(offset, offset + chunkSize));
     if (error) throw error;
-    for (const row of data ?? []) expenseCategories.set(Number(row.id), row.category_id == null ? null : Number(row.category_id));
+    for (const row of data ?? []) {
+      expenseCategories.set(Number(row.id), row.category_id == null ? null : Number(row.category_id));
+      expenseDates.set(Number(row.id), String(row.business_date));
+    }
   }
   const expenseIdByPayable = new Map(payables.map((row) => [Number(row.id), Number(row.expense_transaction_id)]));
-  return allocations.map((row) => ({
+  return allocations.filter((row) => {
+    const prepaymentDate = prepaymentDates.get(Number(row.payment_transaction_id));
+    if (prepaymentDate === undefined || businessDateExclusive === undefined) return true;
+    return prepaymentApplicationDate(prepaymentDate, expenseDates.get(expenseIdByPayable.get(Number(row.payable_id)) ?? -1)) < businessDateExclusive;
+  }).map((row) => ({
     paymentTransactionId: Number(row.payment_transaction_id),
     allocatedAmount: Number(row.allocated_amount),
     expenseCategoryId: expenseCategories.get(expenseIdByPayable.get(Number(row.payable_id)) ?? -1) ?? null,

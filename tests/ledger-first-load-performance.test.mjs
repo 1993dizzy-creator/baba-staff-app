@@ -74,6 +74,7 @@ function ledgerRoute(db) {
         "@/lib/ledger/manual-entry-policy": require("../lib/ledger/manual-entry-policy.ts"),
         "@/lib/partners/emoji": require("../lib/partners/emoji.ts"),
         "@/lib/ledger/payables": require("../lib/ledger/payables.ts"),
+        "@/lib/ledger/supplier-prepayments": require("../lib/ledger/supplier-prepayments.ts"),
         "@/lib/ledger/summary": require("../lib/ledger/summary.ts"),
         "@/lib/ledger/cash-outflow": require("../lib/ledger/cash-outflow.ts"),
         "@/lib/ledger/card-settlements": require("../lib/ledger/card-settlements.ts"),

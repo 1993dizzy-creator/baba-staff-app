@@ -72,3 +72,47 @@ test("prepayment API routes call only the new RPCs with the actor id and validat
     assert.doesNotMatch(route, /\.from\("ledger_(movements|payable_allocations|payables)"\)\.(insert|update|delete)/);
   }
 });
+
+// ---------------------------------------------------------------------------
+// P0-3 follow-up: month boundaries — application date vs original payment date
+// ---------------------------------------------------------------------------
+import { prepaymentApplicationDate, unusedPrepaymentAmountAsOf } from "../lib/ledger/supplier-prepayments.ts";
+
+test("application date = greatest(prepayment, receipt); the prepayment date is never moved", () => {
+  assert.equal(prepaymentApplicationDate("2026-10-31", "2026-11-02"), "2026-11-02");
+  assert.equal(prepaymentApplicationDate("2026-11-04", "2026-10-30"), "2026-11-04");
+  assert.equal(prepaymentApplicationDate("2026-11-04", null), "2026-11-04");
+});
+
+test("past-month unused balance is not changed by a later link (October stays 1,000,000 after a November link)", () => {
+  const allocations = [{ allocated_amount: 600_000, receiptBusinessDate: "2026-11-02" }, { allocated_amount: 300_000, receiptBusinessDate: "2026-12-01" }];
+  assert.equal(unusedPrepaymentAmountAsOf(1_000_000, "2026-10-31", allocations, "2026-11-01"), 1_000_000, "as of October end");
+  assert.equal(unusedPrepaymentAmountAsOf(1_000_000, "2026-10-31", allocations, "2026-12-01"), 400_000, "as of November end: partial");
+  assert.equal(unusedPrepaymentAmountAsOf(1_000_000, "2026-10-31", allocations, "2027-01-01"), 100_000, "as of December end");
+  assert.equal(unusedPrepaymentAmountAsOf(1_000_000, "2026-11-04", [], "2026-11-01"), 0, "not yet paid in October");
+  // a same-month receipt before the prepayment is applied on the prepayment date
+  assert.equal(unusedPrepaymentAmountAsOf(500_000, "2026-11-04", [{ allocated_amount: 500_000, receiptBusinessDate: "2026-10-30" }], "2026-11-01"), 0);
+  assert.equal(unusedPrepaymentAmountAsOf(500_000, "2026-11-04", [{ allocated_amount: 500_000, receiptBusinessDate: "2026-10-30" }], "2026-12-01"), 0);
+});
+
+test("unused prepayment API supports ?month as-of reads; cash report keeps later links out of the payment month", () => {
+  const prepayments = read("app/api/admin/ledger/prepayments/route.ts"), ledger = read("app/api/admin/ledger/route.ts");
+  assert.match(prepayments, /businessDateExclusive = payableMonthBounds\(month\)\.nextMonthStart/);
+  assert.match(prepayments, /query = query\.lt\("business_date", businessDateExclusive\)/);
+  assert.match(prepayments, /unusedPrepaymentAmountAsOf\(row\.amount, row\.business_date, allocations, businessDateExclusive\)/);
+  assert.match(prepayments, /payable:ledger_payables\(expense:ledger_transactions!expense_transaction_id\(business_date\)\)/);
+  assert.match(ledger, /row\.source_snapshot\?\.prepayment === true\)\.map\(\(row\) => \[Number\(row\.id\), String\(row\.business_date\)\]\)\),\s*nextMonth,/);
+  assert.match(ledger, /return prepaymentApplicationDate\(prepaymentDate, expenseDates\.get\(expenseIdByPayable\.get\(Number\(row\.payable_id\)\) \?\? -1\)\) < businessDateExclusive;/);
+  // ordinary payable payments are not filtered
+  assert.match(ledger, /if \(prepaymentDate === undefined \|\| businessDateExclusive === undefined\) return true;/);
+});
+
+test("manual expense suggests 💸 선결제 for goods suppliers but never converts automatically", () => {
+  const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+  assert.match(page, /const prepaymentHint = type === "expense" && !payrollAdvance && !supplierPrepayment && !!selectedPartner\?\.ledgerPartyId\s*&& \["food", "alcohol", "beverage", "consumable"\]\.includes\(selectedPartner\.partnerType\);/);
+  assert.match(page, /입고 전에 지급한 매입대금이라면 선결제로 기록하세요/);
+  assert.match(page, /onClick=\{\(\) => setCategoryId\(SUPPLIER_PREPAYMENT_MANUAL_ACTION\)\}/);
+  // the only places that select the prepayment action are the hint button and the category selector
+  assert.equal((page.match(/setCategoryId\(SUPPLIER_PREPAYMENT_MANUAL_ACTION\)/g) ?? []).length, 1);
+  assert.doesNotMatch(page, /useEffect\([^)]*SUPPLIER_PREPAYMENT_MANUAL_ACTION/);
+});
