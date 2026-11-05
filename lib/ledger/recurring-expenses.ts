@@ -116,6 +116,28 @@ export function buildRecurringMonthStatuses(
   });
 }
 
+// Daily cron (see app/api/cron/ledger-recurring-expenses): the business month of today (03:00
+// Vietnam cutoff) and the month before, so a missed run (e.g. a failure on the last days of a
+// month) is caught up the next day. Older months are never touched automatically.
+export function recurringAutoSyncMonths(businessDate: string) {
+  const current = businessDate.slice(0, 7);
+  return validRecurringMonth(current) ? [shiftMonth(current, -1), current] : [];
+}
+
+// Months that still need a recognition: an active plan applies, nothing (confirmed or
+// cancelled) is booked under its source key, and the month is not closed. A cancelled
+// recognition is a decision, not a gap — sync v2 never recreates it either.
+export function recurringMonthsNeedingSync(
+  plans: readonly RecurringPlanRow[],
+  recognitions: readonly RecurringRecognitionRow[],
+  closures: readonly ClosureRow[],
+  months: readonly string[],
+) {
+  return buildRecurringMonthStatuses(plans, recognitions, closures, months)
+    .filter(month => month.closure !== "closed" && month.missingCount > 0)
+    .map(month => month.month);
+}
+
 export function parseCreatePlanBody(body: Record<string, unknown> | null): { ok: true; value: CreatePlanInput } | { ok: false; code: string } {
   if (!body) return { ok: false, code: "INVALID_BODY" };
   const name = typeof body.name === "string" ? body.name.trim() : "";

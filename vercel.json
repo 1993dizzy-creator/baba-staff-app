@@ -37,6 +37,10 @@
       "schedule": "17 20 * * *"
     },
     {
+      "path": "/api/cron/ledger-recurring-expenses",
+      "schedule": "25 20 * * *"
+    },
+    {
       "path": "/api/cron/sales-close-final",
       "schedule": "5 20 * * *"
     },
