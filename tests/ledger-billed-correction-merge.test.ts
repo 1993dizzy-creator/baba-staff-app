@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildLedgerEntries, entryDisplaySubtotal, withPaymentDifferenceAdjustments, type LedgerEntry, type TransactionRow } from "../lib/ledger/entries.ts";
 import { entryMatchesListFilter, type LedgerEntryFilter } from "../lib/ledger/entry-list-filter.ts";
+import { computePaidExpenseTotal } from "../lib/ledger/payables.ts";
 
 // Paid-receipt billed-amount corrections (inventory_purchase_billed_correction) are folded into
 // the purchase they correct: one final amount per item, no separate expense row.
@@ -23,9 +24,9 @@ function purchase(id: number, date: string, partyId: number, party: string, item
 }
 function correction(id: number, originalId: number, date: string, previous: number, billed: number, pay: typeof cash): TransactionRow {
   return { id, type: "expense", status: "confirmed", business_date: date, recognition_month: month, occurred_at: `${date}T12:00:00+07:00`,
-    amount: previous - billed, economic_effect_sign: -1, correction_of_id: originalId, source_type: "inventory_purchase_billed_correction",
+    amount: Math.abs(previous - billed), economic_effect_sign: billed > previous ? 1 : -1, correction_of_id: originalId, source_type: "inventory_purchase_billed_correction",
     source_key: `inventory-log:${id}:paid-billed`, memo: `실청구금액 정정(지급완료 입고): ${previous}.000 → ${billed}`,
-    source_snapshot: { originalTransactionId: originalId, previousAmount: previous, billedAmount: billed, difference: previous - billed }, movements: pay(previous - billed) };
+    source_snapshot: { originalTransactionId: originalId, previousAmount: previous, billedAmount: billed, difference: previous - billed, expenseDelta: billed - previous }, movements: pay(previous - billed) };
 }
 
 const rows: TransactionRow[] = [
@@ -109,6 +110,34 @@ test("multiple corrections of one item sum; out-of-view or unexpected correction
   }
   const total = multi.filter(entry => entryMatchesListFilter(entry, "all")).reduce((sum, entry) => sum + entryDisplaySubtotal(entry as LedgerEntry).expense, 0);
   assert.equal(total, 9_500 - 100 - 100);
+});
+
+test("increase corrections (sign +1) fold too: 146,424 → 147,000 and 200,000 → 201,000 → 199,500 → 200,500", () => {
+  const built = buildLedgerEntries([
+    ...purchase(1, nov4, 7, "Shopee", "방향제", 146_424, 2, bank),
+    correction(3, 1, nov4, 146_424, 147_000, bank),
+    ...purchase(10, nov4, 9, "Mart", "치즈", 200_000, 11, cash),
+    correction(12, 10, nov4, 200_000, 201_000, cash),
+    correction(13, 10, nov4, 201_000, 199_500, cash),
+    correction(14, 10, nov4, 199_500, 200_500, cash),
+  ], [], new Map(), [], "2026-11");
+  const item = (id: number) => built.flatMap(entry => entry.items).find(row => row.transactionId === id)!;
+  assert.deepEqual(item(1).billedCorrection, { originalAmount: 146_424, finalAmount: 147_000, difference: 576,
+    corrections: [{ transactionId: 3, businessDate: nov4, previousAmount: 146_424, billedAmount: 147_000, difference: 576,
+      reason: "실청구금액 정정(지급완료 입고): 146424.000 → 147000" }] });
+  assert.equal(item(10).billedCorrection?.finalAmount, 200_500);
+  assert.deepEqual(item(10).billedCorrection?.corrections.map(row => row.difference), [1_000, -1_500, 1_000]);
+  assert.equal(built.some(entry => [3, 12, 13, 14].includes(entry.transactionId ?? 0)), false);
+  const listedRows = built.filter(entry => entryMatchesListFilter(entry, "all"));
+  assert.equal(listedRows.reduce((sum, entry) => sum + entryDisplaySubtotal(entry).expense, 0), 147_000 + 200_500);
+});
+
+test("server paid-expense total counts a paid receipt plus its billed corrections once (increase and decrease)", () => {
+  const root = (id: number, amount: number) => ({ id, amount, economicEffectSign: 1, sourceType: "inventory_purchase_candidate", correctionOfId: null, payableStatus: "paid", allocatedAmount: amount, corrections: [] });
+  const fix = (id: number, of: number, amount: number, sign: number) => ({ id, amount, economicEffectSign: sign, sourceType: "inventory_purchase_billed_correction", correctionOfId: of, payableStatus: null, allocatedAmount: 0, corrections: [] });
+  assert.equal(computePaidExpenseTotal([root(1, 146_424), fix(2, 1, 576, 1)]), 147_000);
+  assert.equal(computePaidExpenseTotal([root(1, 543_150), fix(2, 1, 150, -1)]), 543_000);
+  assert.equal(computePaidExpenseTotal([root(1, 200_000), fix(2, 1, 1_000, 1), fix(3, 1, 1_500, -1), fix(4, 1, 1_000, 1)]), 200_500);
 });
 
 test("detail shows a collapsed correction history and ?transactionId= of a correction opens its purchase", () => {

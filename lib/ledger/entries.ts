@@ -32,7 +32,7 @@ export type LedgerEntryItem = {
   purchaseSettlement?: PurchaseSettlement;
   // Paid-receipt billed-amount corrections (inventory_purchase_billed_correction rows whose
   // correction_of_id is this item's transaction, all in this view) folded into the item:
-  // finalAmount = booked amount − Σ corrections. The correction rows get no list row of their
+  // finalAmount = booked amount + Σ(amount × economic_effect_sign) (decrease −, increase +). The correction rows get no list row of their
   // own; their amount and fund movement are unchanged and still read by every server total.
   billedCorrection?: LedgerBilledCorrection;
   // A payable booked as 결제 미확인 (snapshot paymentVerification "pending"):
@@ -670,7 +670,7 @@ export function buildLedgerEntries(
   const foldedBilledCorrectionIds = new Set<number>();
   for (const row of transactions) {
     if (row.source_type !== INVENTORY_BILLED_CORRECTION_SOURCE_TYPE || row.status !== "confirmed" ||
-        row.type !== "expense" || Number(row.economic_effect_sign) !== -1 || row.correction_of_id == null) continue;
+        row.type !== "expense" || ![1, -1].includes(Number(row.economic_effect_sign)) || row.correction_of_id == null) continue;
     const originalId = value(row.correction_of_id);
     const original = transactionsById.get(originalId);
     if (!original || original.status !== "confirmed" || original.type !== "expense" || original.correction_of_id != null ||
@@ -799,7 +799,9 @@ export function buildLedgerEntries(
       const bookedAmount = item.purchaseSettlement?.effectiveAmount ?? amount;
       const billedCorrections = [...(billedCorrectionsByOriginal.get(transactionId) ?? [])].sort((a, b) => value(a.id) - value(b.id));
       if (billedCorrections.length) {
-        const correctionTotal = sumPayableAmounts(billedCorrections.map(correction => correction.amount));
+        // Signed: a decrease (sign −1) lowers the cost, an increase (sign +1) raises it.
+        const signedCorrection = (correction: TransactionRow) => sumPayableAmounts([correction.amount]) * Number(correction.economic_effect_sign);
+        const correctionTotal = -sumPayableAmounts(billedCorrections.map(signedCorrection));
         const snapshotAmount = (snapshot: Record<string, unknown> | null | undefined, key: string) => {
           const number = Number(snapshot?.[key]);
           return snapshot?.[key] == null || !Number.isFinite(number) ? null : number;
@@ -813,7 +815,7 @@ export function buildLedgerEntries(
             businessDate: correction.business_date,
             previousAmount: snapshotAmount(correction.source_snapshot, "previousAmount"),
             billedAmount: snapshotAmount(correction.source_snapshot, "billedAmount"),
-            difference: -value(correction.amount),
+            difference: signedCorrection(correction),
             reason: correction.memo?.trim() || null,
           })),
         };

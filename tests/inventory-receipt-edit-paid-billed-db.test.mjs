@@ -7,6 +7,7 @@ import {item,editReceipt,state} from './helpers/inventory-receipt-edit-fixture.m
 // Isolated PGlite only (store day 2026-10-11, receipt #100 10 cans x 20,000 Won Mart, booked expense #1).
 const supplierMigration='supabase/migrations/20261030180000_inventory_receipt_supplier_all_staff.sql';
 const migration='supabase/migrations/20261104170000_inventory_receipt_edit_month_and_paid_billed.sql';
+const increaseMigration='supabase/migrations/20261105120000_inventory_paid_receipt_billed_increase.sql';
 const one=async(db,sql,args=[])=>(await db.query(sql,args)).rows[0];
 const n=async(db,sql,args=[])=>Number(Object.values(await one(db,sql,args))[0]);
 const expense=db=>n(db,"select coalesce(sum(amount*economic_effect_sign),0) from ledger_transactions where type='expense' and status='confirmed'");
@@ -16,6 +17,7 @@ async function fixture({paid=true,account=1,paymentDate='2026-10-11'}={}){
  const db=await billedFixture();
  await db.exec(readFileSync(supplierMigration,'utf8'));
  await db.exec(readFileSync(migration,'utf8'));
+ await db.exec(readFileSync(increaseMigration,'utf8'));
  // Fixture-only: the receipt-edit fixture predates payable payments and the Vượng account.
  await db.exec(`alter table ledger_transactions drop constraint if exists ledger_transactions_type_check;
   insert into ledger_fund_accounts(id,code,type,display_name,holder_name,is_active,is_business_fund,sort_order,active_from)
@@ -84,8 +86,62 @@ test('the correction returns to the paying account: Vượng +100',async()=>{
  }finally{await db.close();}
 });
 
+const corrections=async db=>(await db.query("select economic_effect_sign s,amount a from ledger_transactions where source_type='inventory_purchase_billed_correction' order by id")).rows.map(r=>[Number(r.s),Number(r.a)]);
+
+test('paid receipt: billed-only increase books +576 cost / -576 from the paying account (Vượng), payment kept',async()=>{
+ const db=await fixture({account:5});try{
+  const before=await state(db);
+  const r=await editReceipt(db,await item(db),billed(200576,{reason:'실제 지급 200,576₫'}));
+  assert.equal(r.status,'ok');assert.equal(r.completion,'complete');assert.equal(r.ledgerSync.code,'PAID_BILLED_CORRECTED');
+  assert.equal(Number(r.amount),200576);assert.equal(Number(r.ledgerSync.fundDelta),-576);
+  assert.equal(await expense(db),200576);assert.equal(await fund(db,5),-200576);assert.equal(await fund(db,1),0);
+  const after=await state(db);
+  assert.deepEqual(after.ledger_payables,before.ledger_payables);
+  assert.deepEqual(after.ledger_transactions.filter(r=>[1,50].includes(Number(r.row.id))),before.ledger_transactions);
+  const c=await one(db,"select * from ledger_transactions where source_type='inventory_purchase_billed_correction'");
+  assert.equal(Number(c.economic_effect_sign),1);assert.equal(Number(c.amount),576);assert.equal(Number(c.correction_of_id),1);
+  assert.equal(Number(c.source_snapshot.expenseDelta),576);assert.equal(Number(c.source_snapshot.previousAmount),200000);
+  assert.deepEqual((await db.query('select fund_account_id,amount from ledger_movements where transaction_id=$1',[c.id])).rows.map(r=>[Number(r.fund_account_id),Number(r.amount)]),[[5,-576]]);
+  const now=await item(db);assert.equal(Number(now.quantity),10);assert.equal(Number(now.purchase_price),20000);
+  const audit=await one(db,"select * from ledger_audit_logs where action='inventory_paid_receipt_billed_corrected'");
+  assert.equal(Number(audit.after_snapshot.fundDelta),-576);assert.equal(Number(audit.after_snapshot.expenseDelta),576);
+  const reproject=(await one(db,'select ledger_project_inventory_purchase_log_v1($1,1) as p',[r.inventoryLogId])).p;
+  assert.ok(['UNCHANGED','METADATA_SYNCED'].includes(reproject.code));
+  // Same request again (lost response / double click): nothing new.
+  const settled=await state(db);
+  assert.equal((await editReceipt(db,await item(db),billed(200576,{reason:'실제 지급 200,576₫'}))).status,'no_change');
+  assert.deepEqual(await state(db),settled);
+ }finally{await db.close();}
+});
+
+test('repeated edits 200,000 → 201,000 → 199,500 → 200,500: cost and account follow the last amount',async()=>{
+ const db=await fixture();try{
+  for(const [amount,cost] of [[201000,201000],[199500,199500],[200500,200500]]){
+   const r=await editReceipt(db,await item(db),billed(amount,{reason:`정정 ${amount}`}));
+   assert.equal(r.ledgerSync.code,'PAID_BILLED_CORRECTED',String(amount));
+   assert.equal(await expense(db),cost);assert.equal(await fund(db,1),-cost);
+  }
+  assert.deepEqual(await corrections(db),[[1,1000],[-1,1500],[1,1000]]);
+  // Original payment / allocation untouched; one correction per edit.
+  assert.deepEqual((await db.query('select allocated_amount from ledger_payable_allocations')).rows.map(r=>Number(r.allocated_amount)),[200000]);
+  assert.equal(Number((await one(db,'select amount from ledger_transactions where id=1')).amount),200000);
+  // Decrease after the increases still nets correctly, and a stale previous amount is refused (no write).
+  assert.equal(await one(db,"select inventory_ledger_private.paid_receipt_billed_correction_ready_v1(1,200000,199000,'2026-10-11') as x").then(r=>r.x),false);
+  assert.equal(await one(db,"select inventory_ledger_private.paid_receipt_billed_correction_ready_v1(1,200500,199000,'2026-10-11') as x").then(r=>r.x),true);
+ }finally{await db.close();}
+});
+
+test('decrease then increase back to the original nets to zero',async()=>{
+ const db=await fixture();try{
+  await editReceipt(db,await item(db),billed(199850));
+  const r=await editReceipt(db,await item(db),billed(200000,{reason:'원복'}));
+  assert.equal(r.ledgerSync.code,'PAID_BILLED_CORRECTED');
+  assert.equal(await expense(db),200000);assert.equal(await fund(db,1),-200000);
+  assert.deepEqual(await corrections(db),[[-1,150],[1,150]]);
+ }finally{await db.close();}
+});
+
 for(const [name,setup,edit] of [
- ['billed increase',null,billed(200100)],
  ['quantity change',null,billed(180000,{quantity:9})],
  ['unit price change',null,billed(199000,{purchase_price:19999})],
  ['auto mode',null,{billed_amount_mode:'auto',purchase_price:19990,reason:'단가'}],
@@ -107,14 +163,26 @@ test('closed or previous-month payment, and previous-month receipts, are never c
  for(const [label,options,setup,expected] of [
   ['closed month',{},"insert into ledger_month_closures(month) values('2026-10-01')",'month_closed'],
   ['payment in September',{paymentDate:'2026-09-30'},null,'payment_completed'],
- ]){
+ ])for(const amount of [199850,200100]){
   const db=await fixture(options);try{
    if(setup)await db.exec(setup);
    const before=await state(db);
-   const r=await editReceipt(db,await item(db),billed(199850));
-   assert.equal(r.blockReason,expected,label);assert.deepEqual(await state(db),before,label);
+   const r=await editReceipt(db,await item(db),billed(amount));
+   assert.equal(r.blockReason,expected,`${label} ${amount}`);assert.deepEqual(await state(db),before,`${label} ${amount}`);
   }finally{await db.close();}
  }
+});
+
+test('increase migration refuses to run before 20261104170000 and keeps the private functions closed',async()=>{
+ const db=await billedFixture();try{
+  await db.exec(readFileSync(supplierMigration,'utf8'));
+  await assert.rejects(db.exec(readFileSync(increaseMigration,'utf8')),/INVENTORY_PAID_BILLED_INCREASE_REQUIRES_20261104170000/);
+  await db.exec('rollback');
+  await db.exec(readFileSync(migration,'utf8'));await db.exec(readFileSync(increaseMigration,'utf8'));
+  for(const fn of ['inventory_ledger_private.paid_receipt_billed_correction_ready_v1(bigint,numeric,numeric,date)',
+    'inventory_ledger_private.correct_paid_receipt_billed_v1(bigint,bigint,bigint,numeric,numeric,date,bigint)'])
+   assert.equal((await one(db,`select has_function_privilege('service_role','${fn}','execute') as x`)).x,false,fn);
+ }finally{await db.close();}
 });
 
 test('a projector disagreement rolls the whole paid correction back',async()=>{
