@@ -290,6 +290,98 @@ export async function fetchSaInvoiceDetail(params: {
   return data && typeof data === "object" ? (data as JsonObject) : json;
 }
 
+export const SAINVOICES_PAGING_WITH_DETAIL_ENDPOINT = "/api/v1/sainvoices/paging-with-detail";
+
+// Thrown for any incomplete or inconsistent paging-with-detail collection. The
+// sync route's catch marks the run failed, so a partial read never completes a day.
+export class PagingWithDetailError extends Error {
+  readonly code: string;
+  constructor(code: string, detail?: string) {
+    super(detail ? `${code}: ${detail}` : code);
+    this.name = "PagingWithDetailError";
+    this.code = code;
+  }
+}
+
+// FromDate/ToDate in the "+07:00" form verified by the 2026-11-05 read-only probe.
+export function toCukcukLocalDateTime(value: string) {
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) throw new PagingWithDetailError("paging_with_detail_invalid_window");
+  return `${new Date(time + 7 * 3600_000).toISOString().slice(0, 19)}+07:00`;
+}
+
+// One call returns receipts with SAInvoiceDetails/SAInvoicePayments, replacing the
+// list + per-receipt detail reads. Collects every page implied by Total and rejects
+// a changed Total, short/long pages, missing or duplicate RefIds and missing lines.
+export async function fetchSaInvoicesPagingWithDetail(params: {
+  accessToken: string;
+  companyCode: string;
+  branchId: string;
+  fromDate: string;
+  toDate: string;
+  limit: number;
+  maxPages?: number;
+  retryDelayMs?: number;
+}) {
+  const { limit } = params;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new PagingWithDetailError("paging_with_detail_invalid_limit");
+  const fromDate = toCukcukLocalDateTime(params.fromDate);
+  const toDate = toCukcukLocalDateTime(params.toDate);
+  if (Date.parse(fromDate) >= Date.parse(toDate)) throw new PagingWithDetailError("paging_with_detail_invalid_window");
+  const maxPages = params.maxPages ?? 200;
+  const retryDelayMs = params.retryDelayMs ?? 1500;
+  const invoices: CukcukInvoice[] = [];
+  const seen = new Set<string>();
+  let total: number | null = null;
+  let pages = 0;
+
+  for (let page = 1; ; page++) {
+    if (page > maxPages) throw new PagingWithDetailError("paging_with_detail_page_bound");
+    let response: Response | null = null;
+    let json: JsonObject | null = null;
+    // Code/ErrorType 102 is CUKCUK's documented concurrent-request rejection: back off serially, bounded.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      response = await fetch(`${CUKCUK_BASE_URL}${SAINVOICES_PAGING_WITH_DETAIL_ENDPOINT}`, {
+        method: "POST",
+        headers: buildCukcukHeaders(params.accessToken, params.companyCode),
+        body: JSON.stringify({ Page: page, Limit: limit, BranchId: params.branchId, FromDate: fromDate, ToDate: toDate }),
+        cache: "no-store",
+      });
+      json = (await response.json().catch(() => null)) as JsonObject | null;
+      if (json?.Code !== 102 && json?.ErrorType !== 102) break;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+    }
+    if (!response?.ok || !json || json.Success !== true || !Array.isArray(json.Data)) {
+      throw new PagingWithDetailError("paging_with_detail_failed",
+        `page ${page} HTTP ${response?.status ?? "none"} Code ${String(json?.Code ?? "none")} ErrorType ${String(json?.ErrorType ?? "none")}`);
+    }
+    const pageTotal = json.Total;
+    if (typeof pageTotal !== "number" || !Number.isSafeInteger(pageTotal) || pageTotal < 0) {
+      throw new PagingWithDetailError("paging_with_detail_total_missing");
+    }
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) throw new PagingWithDetailError("paging_with_detail_total_changed");
+    const expected = Math.min(limit, Math.max(0, total - (page - 1) * limit));
+    if (json.Data.length !== expected) {
+      throw new PagingWithDetailError("paging_with_detail_page_count_mismatch", `page ${page} expected ${expected} got ${json.Data.length}`);
+    }
+    pages++;
+    for (const invoice of json.Data as unknown[]) {
+      if (!invoice || typeof invoice !== "object" || Array.isArray(invoice)) throw new PagingWithDetailError("paging_with_detail_invalid_invoice");
+      const key = getInvoiceRefId(invoice as CukcukInvoice).trim().toLowerCase();
+      if (!key || seen.has(key)) throw new PagingWithDetailError("paging_with_detail_duplicate_or_missing_ref_id");
+      seen.add(key);
+      const hasLines = ["SAInvoiceDetails", "saInvoiceDetails", "Details", "details", "InvoiceDetails", "invoiceDetails"]
+        .some((field) => Array.isArray((invoice as JsonObject)[field]));
+      if (!hasLines) throw new PagingWithDetailError("paging_with_detail_lines_missing");
+      invoices.push(invoice as CukcukInvoice);
+    }
+    if (invoices.length >= total) break;
+  }
+  if (invoices.length !== total) throw new PagingWithDetailError("paging_with_detail_count_mismatch");
+  return { invoices, total, pages };
+}
+
 export function buildReceiptRow(params: {
   invoice: CukcukInvoice;
   detailPayload: JsonObject;

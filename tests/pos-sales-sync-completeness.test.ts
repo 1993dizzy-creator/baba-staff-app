@@ -21,7 +21,8 @@ test('failed, unproven and error-bearing completions cannot store true',()=>{
 });
 test('route uses explicit raw response limit evidence and enforces completion writes',()=>{
   const route=readFileSync('app/api/pos/cukcuk/sainvoices/sync-to-sales/route.ts','utf8');
-  assert.match(route,/const limitReached = invoices\.length >= limit/);
+  // Legacy single-page read keeps the limit evidence; Total-driven paging-with-detail cannot be truncated.
+  assert.match(route,/const limitReached = !usePagingWithDetail && invoices\.length >= limit/);
   assert.match(route,/sourceComplete: isSalesSyncSourceComplete\(/);
   assert.match(route,/await loadPosBusinessDaySource\(businessDate\)/);
   assert.match(route,/syncRunCompletionEvidence\(params.status, params.sourceComplete, params.errorMessage\)/);

@@ -129,9 +129,20 @@ async function harness(invoices, options, work) {
   const previousSecret = process.env.POS_ADMIN_SECRET;
   process.env.POS_ADMIN_SECRET = 'local-test-secret';
   console.warn = (...args) => warnings.push(args); console.log = () => {}; console.error = () => {};
+  const pagingWithDetailBodies = [], detailCalls = [];
+  const previousPagingWithDetail = process.env.POS_CUKCUK_PAGING_WITH_DETAIL;
+  if (options.pagingWithDetail) process.env.POS_CUKCUK_PAGING_WITH_DETAIL = 'enabled';
+  else delete process.env.POS_CUKCUK_PAGING_WITH_DETAIL;
   globalThis.fetch = async (url, init) => {
     const path = new URL(url).pathname;
     if (path.endsWith('/sync-to-sales')) return route.POST(new Request(url, init));
+    if (path.endsWith('/paging-with-detail')) {
+      assert.ok(options.pagingWithDetail, 'paging-with-detail must stay off unless enabled');
+      const body = JSON.parse(init.body); pagingWithDetailBodies.push(body);
+      const reply = options.pagingWithDetail(body);
+      return reply instanceof Response ? reply : Response.json(reply);
+    }
+    if (!path.endsWith('/paging')) detailCalls.push(path);
     if (path.endsWith('/paging')) return Response.json({ Success: true, Data: invoices });
     if (detailFailure) return Response.json({ Success: false }, { status: 500 });
     const detail = invoices.find(row => row.RefID === decodeURIComponent(path.split('/').at(-1)));
@@ -154,9 +165,11 @@ async function harness(invoices, options, work) {
   });
   try {
     await work({ sync, manual, final, getRun: () => run, source: () => sourceApi.loadPosBusinessDaySource(businessDate),
-      receipts, getPayments: () => payments, warnings, reconciliationSnapshots, pages });
+      receipts, getPayments: () => payments, warnings, reconciliationSnapshots, pages, pagingWithDetailBodies, detailCalls });
   } finally {
     globalThis.fetch = originalFetch; console.warn = originalWarn; console.log = originalLog; console.error = originalError;
+    if (previousPagingWithDetail === undefined) delete process.env.POS_CUKCUK_PAGING_WITH_DETAIL;
+    else process.env.POS_CUKCUK_PAGING_WITH_DETAIL = previousPagingWithDetail;
     if (previousSecret === undefined) delete process.env.POS_ADMIN_SECRET; else process.env.POS_ADMIN_SECRET = previousSecret;
   }
 }
@@ -306,5 +319,71 @@ test('malformed detail payments preserve old rows and report partial incomplete 
     assert.equal(h.getRun().source_complete,false);assert.equal(h.reconciliationSnapshots.length,0);assert.equal(h.getPayments().length,1);
     assert.ok(h.warnings.some(([code,detail])=>code==='[SALES_SYNC_PAYMENT_SNAPSHOT_UNAVAILABLE]'&&detail.syncRunId===1&&detail.businessDate==='2026-10-06'));
     await assert.rejects(h.manual(),/POS_CLOSE_SOURCE_INVALID/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// paging-with-detail collection (POS_CUKCUK_PAGING_WITH_DETAIL=enabled, default off)
+// ---------------------------------------------------------------------------
+const withLines = row => ({ ...row, BranchId: 'c39228ba-a452-4cf9-bf34-424ffb151fb8', SAInvoiceDetails: [] });
+const pagesOf = (rows, total = rows.length) => body =>
+  ({ Success: true, Code: 200, Total: total, Data: rows.slice((body.Page - 1) * body.Limit, body.Page * body.Limit) });
+
+test('paging-with-detail: one list read replaces per-receipt detail reads and keeps close completeness', async () => {
+  const rows = [withLines(invoice('paid')), withLines(invoice('canceled', 500_000, 4, null)),
+    withLines({ ...invoice('outside'), RefDate: '2026-10-07T05:00:00+07:00' })];
+  await harness([], { pagingWithDetail: pagesOf(rows) }, async h => {
+    const data = await (await h.sync()).json();
+    assert.equal(data.ok, true); assert.equal(data.result.collectionSource, 'paging-with-detail');
+    assert.equal(h.pagingWithDetailBodies.length, 1); assert.deepEqual(h.detailCalls, []);
+    assert.deepEqual(h.pagingWithDetailBodies[0], { Page: 1, Limit: 100, BranchId: 'c39228ba-a452-4cf9-bf34-424ffb151fb8',
+      FromDate: '2026-10-06T16:00:00+07:00', ToDate: '2026-10-07T03:00:00+07:00' });
+    assert.equal(data.result.fetchedInvoiceCount, 3); assert.equal(data.result.invoiceCount, 2); // 03:00 business-day filter kept
+    assert.equal(data.result.paymentSnapshotUnavailableCount, 0); assert.equal(h.getRun().source_complete, true);
+    assert.equal((await h.manual()).status, 'closed'); assert.equal((await h.source()).receiptTotal, 1_000_000);
+  });
+});
+
+test('paging-with-detail: collects every page implied by Total, including more than 100 receipts', async () => {
+  const rows = Array.from({ length: 205 }, (_, index) => withLines(invoice('r' + index, 1_000)));
+  await harness([], { pagingWithDetail: pagesOf(rows) }, async h => {
+    const data = await (await h.sync()).json();
+    assert.deepEqual(h.pagingWithDetailBodies.map(body => body.Page), [1, 2, 3]);
+    assert.equal(data.result.invoiceCount, 205); assert.equal(data.warning, undefined);
+    assert.equal(h.getRun().source_complete, true); assert.equal((await h.source()).receiptTotal, 205_000);
+  });
+});
+
+for (const [name, reply, code] of [
+  ['changed Total', body => ({ ...pagesOf([withLines(invoice('a')), withLines(invoice('b'))])(body), Total: body.Page === 1 ? 2 : 3 }), 'paging_with_detail_total_changed'],
+  ['short page', body => ({ Success: true, Total: 2, Data: body.Page === 1 ? [withLines(invoice('a'))] : [] }), 'paging_with_detail_page_count_mismatch'],
+  ['duplicate RefId', pagesOf([withLines(invoice('a')), withLines(invoice('A'))]), 'paging_with_detail_duplicate_or_missing_ref_id'],
+  ['missing RefId', pagesOf([withLines({ ...invoice('a'), RefID: '' })]), 'paging_with_detail_duplicate_or_missing_ref_id'],
+  ['missing lines', pagesOf([invoice('a')]), 'paging_with_detail_lines_missing'],
+  ['missing Total', () => ({ Success: true, Data: [withLines(invoice('a'))] }), 'paging_with_detail_total_missing'],
+  ['provider failure', () => Response.json({ Success: false, Code: 500, ErrorType: 1 }, { status: 500 }), 'paging_with_detail_failed'],
+]) test(`paging-with-detail: ${name} fails the run without saving or completing the day`, async () => {
+  await harness([], { pagingWithDetail: reply, limit: 1 }, async h => {
+    const response = await h.sync(); const data = await response.json();
+    assert.equal(response.status, 500); assert.match(data.error, new RegExp(code));
+    assert.equal(h.getRun().status, 'failed'); assert.notEqual(h.getRun().source_complete, true);
+    assert.equal(h.receipts.size, 0); assert.equal(h.reconciliationSnapshots.length, 0);
+  });
+});
+
+test('paging-with-detail: 102 concurrency rejection is retried serially and bounded', async () => {
+  let calls = 0;
+  const rows = [withLines(invoice('paid'))];
+  await harness([], { pagingWithDetail: body => (++calls === 1 ? { Success: false, Code: 102, ErrorType: 102 } : pagesOf(rows)(body)) }, async h => {
+    const data = await (await h.sync()).json();
+    assert.equal(data.ok, true); assert.equal(calls, 2); assert.equal(h.getRun().source_complete, true);
+  });
+});
+
+test('legacy list + detail path stays the default when the flag is unset', async () => {
+  await harness([invoice('paid')], {}, async h => {
+    const data = await (await h.sync()).json();
+    assert.equal(data.result.collectionSource, 'paging+detail'); assert.equal(h.pagingWithDetailBodies.length, 0);
+    assert.equal(h.detailCalls.length, 1); assert.equal(h.getRun().source_complete, true);
   });
 });

@@ -16,6 +16,7 @@ import {
   CUKCUK_BASE_URL,
   buildCukcukHeaders,
   fetchSaInvoiceDetail,
+  fetchSaInvoicesPagingWithDetail,
   getInvoiceRefId,
   getInvoiceDate,
   getDetailsFromInvoicePayload,
@@ -592,15 +593,30 @@ export async function POST(req: Request) {
     const login = await loginCukcuk();
     markPhase("loginMs");
 
-    const invoices = await fetchSaInvoicesPaging({
-      accessToken: login.accessToken,
-      companyCode: login.companyCode,
-      branchId,
-      fromDate: filterFromDate,
-      limit,
-    });
+    // Off by default. "enabled" reads paging-with-detail (all pages by Total; any
+    // inconsistency throws and fails the run). Unset/any other value keeps the
+    // legacy list + per-receipt detail read below for immediate rollback.
+    const usePagingWithDetail = process.env.POS_CUKCUK_PAGING_WITH_DETAIL === "enabled";
+    const collectionSource = usePagingWithDetail ? "paging-with-detail" : "paging+detail";
+    const invoices = usePagingWithDetail
+      ? (await fetchSaInvoicesPagingWithDetail({
+          accessToken: login.accessToken,
+          companyCode: login.companyCode,
+          branchId,
+          fromDate: filterFromDate,
+          toDate: filterToDate,
+          limit,
+        })).invoices
+      : await fetchSaInvoicesPaging({
+          accessToken: login.accessToken,
+          companyCode: login.companyCode,
+          branchId,
+          fromDate: filterFromDate,
+          limit,
+        });
     markPhase("invoiceListMs");
-    const limitReached = invoices.length >= limit;
+    // Complete Total-driven paging cannot be truncated by the page limit.
+    const limitReached = !usePagingWithDetail && invoices.length >= limit;
     const warning = limitReached ? CUKCUK_LIMIT_REACHED_WARNING : undefined;
 
     const invoicesInRange = invoices.filter((invoice) =>
@@ -611,7 +627,16 @@ export async function POST(req: Request) {
       })
     );
 
-    const detailPayloads = await Promise.all(
+    const detailPayloads = usePagingWithDetail
+      // Each paging-with-detail receipt already carries its lines and payments,
+      // so it is both the list invoice and the detail payload for the unchanged builders.
+      ? invoicesInRange.map((invoice) => ({
+          invoice,
+          refId: getInvoiceRefId(invoice),
+          detailPayload: invoice as JsonObject | null,
+          error: null as string | null,
+        }))
+      : await Promise.all(
       invoicesInRange.map(async (invoice) => {
         const refId = getInvoiceRefId(invoice);
 
@@ -835,6 +860,7 @@ export async function POST(req: Request) {
         syncRunId,
         businessDate,
         branchId,
+        collectionSource,
         invoiceCount: receiptRows.length,
         lineCount: lineRows.length,
         totalMs: Date.now() - syncStartedAt,
@@ -868,6 +894,7 @@ export async function POST(req: Request) {
         noChange,
         ...(warning ? { warning } : {}),
         syncRunId,
+        collectionSource,
         fetchedInvoiceCount: invoices.length,
         invoiceCount: receiptRows.length,
         lineCount: lineRows.length,
