@@ -11,7 +11,7 @@ const rows = async (db, sql, args = []) => (await db.query(sql, args)).rows;
 
 // Minimal partner schema + the deployed v4 create/update/review RPCs (same setup as
 // business-partner-settlement-schedule-db.test.mjs), then this migration.
-async function fixture(partners = [['Thuỷ Nam', true], ['Old Shop', false], ['Other', true]]) {
+async function fixture(partners = [['Thuỷ Nam', true], ['Old Shop', false], ['Other', true], ['Chợ', true]]) {
   const db = new PGlite();
   await db.exec(`create role anon; create role authenticated; create role service_role;
     create table users(id bigint primary key,role text,is_active boolean,app_login_enabled boolean);
@@ -34,10 +34,13 @@ async function fixture(partners = [['Thuỷ Nam', true], ['Old Shop', false], ['
   await db.exec(read('20261001172556_support_unspecified_partner_payment_mode.sql'));
   await db.exec(read('202608240002_add_business_partner_subtypes.sql').match(/create function public\.business_partner_review_supplier_alias_v4\([\s\S]*?\n\$\$;/)[0]);
   await db.exec(read('20261103095812_support_partner_settlement_schedule.sql'));
+  // The deployed inventory supplier resolver (unchanged by this migration).
+  await db.exec(read('202608230002_add_supplier_alias_candidate_archive.sql').match(/create or replace function public\.business_partner_resolve_inventory_supplier_v1\([\s\S]*?\n\$\$;/)[0]);
   for (const [name, active] of partners) await db.query("insert into business_partners(name,partner_type,payment_mode,is_active) values($1,'food','postpaid',$2)", [name, active]);
   await db.exec(`insert into business_partner_audit_logs values(1,1,'created',null,'{"evidence":"unchanged"}');
     insert into business_partner_supplier_aliases(supplier_name,normalized_name,status,business_partner_id) values('Thuỷ Nam','thuỷ nam','linked',1);
-    insert into business_partner_supplier_aliases(supplier_name,normalized_name,status) values('THỦY NAM','thủy nam','pending'),('Đại Phát','đại phát','pending');
+    insert into business_partner_supplier_aliases(supplier_name,normalized_name,status,business_partner_id) values('THỦY NAM','thủy nam','linked',1);
+    insert into business_partner_supplier_aliases(supplier_name,normalized_name,status) values('Đại Phát','đại phát','pending'),('Xuân','xuân','pending');
     insert into inventory values(317,'Thuỷ Nam',1);`);
   return db;
 }
@@ -69,7 +72,7 @@ test('create, rename and 등록대기 approval are blocked by an existing partne
       audit: await rows(db, 'select * from business_partner_audit_logs order by 1'), inventory: await rows(db, 'select * from inventory') });
     await db.exec(migration);
     const before = await evidence();
-    assert.deepEqual(before.partners.map(row => row.id), [1, 2, 3], 'migration keeps every partner id');
+    assert.deepEqual(before.partners.map(row => row.id), [1, 2, 3, 4], 'migration keeps every partner id');
     for (const name of ['THỦY NAM', 'thuy  nam', 'Thuỷ Nam'.normalize('NFD'), 'OLD SHOP', 'öld shop']) {
       assert.equal((await call(db, 'business_partner_create_v4', partnerArgs(name))).status, 'duplicate_name', name);
     }
@@ -77,10 +80,11 @@ test('create, rename and 등록대기 approval are blocked by an existing partne
     assert.equal((await call(db, 'business_partner_update_v4', [3, ...partnerArgs('THỦY NAM')])).status, 'duplicate_name');
     assert.equal((await call(db, 'business_partner_update_v4', [1, ...partnerArgs('THỦY NAM')])).status, 'updated', 'own name variant');
     assert.equal((await rows(db, 'select name from business_partners where id=1'))[0].name, 'THỦY NAM');
-    // 등록대기 THỦY NAM (#2): a new partner is refused, linking the existing one works.
-    assert.equal((await review(db, 2, 'create_partner', 'THỦY NAM')).status, 'duplicate_name');
-    assert.equal((await rows(db, 'select status from business_partner_supplier_aliases where id=2'))[0].status, 'pending');
-    assert.deepEqual(await review(db, 2, 'link_existing', null, 1), { status: 'reviewed', partnerId: 1, inventoryLinkedCount: 0 });
+    // 등록대기 "Thuy Nam": a new partner is refused, linking the existing one works.
+    const { supplierAliasId } = await resolve(db, 'Thuy Nam');
+    assert.equal((await review(db, supplierAliasId, 'create_partner', 'Thuy Nam')).status, 'duplicate_name');
+    assert.equal((await rows(db, 'select status from business_partner_supplier_aliases where id=$1', [supplierAliasId]))[0].status, 'pending');
+    assert.deepEqual(await review(db, supplierAliasId, 'link_existing', null, 1), { status: 'reviewed', partnerId: 1, inventoryLinkedCount: 0 });
     // A genuinely different name is still a new partner.
     assert.equal((await call(db, 'business_partner_create_v4', partnerArgs('Thủy Nam 2'))).status, 'created');
     // Concurrent submits / retries: the unique index decides even without the RPC.
@@ -88,28 +92,47 @@ test('create, rename and 등록대기 approval are blocked by an existing partne
   } finally { await db.close(); }
 });
 
-test('inventory direct input resolves spelling variants to the existing partner or candidate instead of a new 등록대기', async () => {
+// Inventory direct input: automatic links only for an exact (case/trim) name or an admin-linked
+// alias; accent-only matches are suggested on screen and linked only when the staff picks them.
+test('inventory supplier input links exact names and approved aliases only; accent-only matches are suggested, never linked', async () => {
   const db = await fixture();
   try {
     await db.exec(migration);
-    const aliasCount = async () => (await rows(db, 'select count(*)::int n from business_partner_supplier_aliases'))[0].n;
-    const start = await aliasCount();
-    for (const name of ['THỦY NAM', 'thuy nam', 'Thuỷ Nam'.normalize('NFD')]) {
-      const result = await resolve(db, name);
-      assert.equal(result.supplierPartnerId, 1, name);assert.equal(result.supplierName, 'Thuỷ Nam');
-    }
-    const variant = await resolve(db, 'DAI PHAT');
-    assert.deepEqual([variant.supplierAliasId, variant.supplierName, variant.aliasStatus], [3, 'Đại Phát', 'pending']);
-    assert.equal(await aliasCount(), start, 'no second candidate for a variant');
-    // An inactive partner is never linked automatically; the candidate goes to review, where approval is blocked.
+    const partnersBefore = await rows(db, 'select * from business_partners order by id');
+    const inventoryBefore = await rows(db, 'select * from inventory');
+    const screenPartners = partnersBefore.filter(row => row.is_active).map(row => ({ id: Number(row.id), name: row.name, isActive: true }));
+    const screenAliases = (await rows(db, 'select id,supplier_name,status,business_partner_id from business_partner_supplier_aliases'))
+      .map(row => ({ id: Number(row.id), supplierName: row.supplier_name, status: row.status, businessPartnerId: row.business_partner_id === null ? null : Number(row.business_partner_id) }));
+    // 1. Exact name (and case/trim only) → existing partner.
+    for (const name of ['Thuỷ Nam', '  thuỷ nam ']) assert.equal((await resolve(db, name)).supplierPartnerId, 1, name);
+    // 2. THỦY NAM is the admin-linked alias (#2 → #1, like production #38 → #34).
+    assert.deepEqual(await resolve(db, 'THỦY NAM'), { status: 'resolved', supplierName: 'Thuỷ Nam', supplierPartnerId: 1, supplierAliasId: 2, aliasStatus: 'linked' });
+    // 3. Thuy Nam matches only without accents: not linked, kept for review; the screen suggests Thuỷ Nam.
+    const thuy = await resolve(db, 'Thuy Nam');
+    assert.deepEqual([thuy.supplierPartnerId, thuy.supplierName, thuy.aliasStatus], [null, 'Thuy Nam', 'pending']);
+    assert.deepEqual(matchExistingSupplier(screenPartners, screenAliases, 'Thuy Nam'), { kind: 'partner', id: 1, name: 'Thuỷ Nam' });
+    // 4. Cho is not linked to Chợ.
+    const cho = await resolve(db, 'Cho');
+    assert.deepEqual([cho.supplierPartnerId, cho.supplierName, cho.aliasStatus], [null, 'Cho', 'pending']);
+    assert.deepEqual(matchExistingSupplier(screenPartners, screenAliases, 'Cho'), { kind: 'partner', id: 4, name: 'Chợ' }, 'suggestion only');
+    // An unapproved alias with the same key is not reused either.
+    const dai = await resolve(db, 'DAI PHAT');
+    assert.notEqual(dai.supplierAliasId, 3);assert.equal(dai.supplierPartnerId, null);
+    // 5. The staff picks the suggested partner → saved under that id.
+    assert.deepEqual(await resolve(db, 'Thuy Nam', 1), { status: 'resolved', supplierName: 'Thuỷ Nam', supplierPartnerId: 1 });
+    // 6. An inactive partner is never linked, and approving its variant as a new partner is blocked.
     const inactive = await resolve(db, 'old shop');
-    assert.equal(inactive.supplierPartnerId, null);assert.equal(inactive.aliasStatus, 'pending');
+    assert.equal(inactive.supplierPartnerId, null);
+    assert.equal((await resolve(db, 'x', 2)).status, 'invalid_partner', 'inactive partner cannot be chosen');
     assert.equal((await review(db, inactive.supplierAliasId, 'create_partner', 'old shop')).status, 'duplicate_name');
-    // Different names stay separate.
-    const other = await resolve(db, 'Thủy Nam 2');
-    assert.equal(other.supplierPartnerId, null);assert.equal(other.aliasStatus, 'pending');
-    assert.equal(await aliasCount(), start + 2);
-    assert.equal((await resolve(db, 'whatever', 1)).supplierPartnerId, 1, 'explicit partner id unchanged');
+    assert.equal((await review(db, cho.supplierAliasId, 'create_partner', 'Cho')).status, 'duplicate_name');
+    // Nothing was merged or rewritten.
+    assert.deepEqual(await rows(db, 'select * from business_partners order by id'), partnersBefore);
+    assert.deepEqual(await rows(db, 'select * from inventory'), inventoryBefore);
+    assert.deepEqual(await rows(db, 'select id::int,status,business_partner_id::int from business_partner_supplier_aliases where id<=2 order by id'),
+      [{ id: 1, status: 'linked', business_partner_id: 1 }, { id: 2, status: 'linked', business_partner_id: 1 }]);
+    assert.match(readFileSync('lib/inventory/supplier-partners-server.ts', 'utf8'), /\.normalize\("NFC"\)/);
+    assert.doesNotMatch(migration.replace(/--.*$/gm, ''), /business_partner_resolve_inventory_supplier_v1/, 'resolver stays as deployed');
   } finally { await db.close(); }
 });
 
@@ -149,6 +172,9 @@ test('API routes check duplicates before the RPCs and answer with the existing p
   }
   assert.match(readFileSync('app/api/admin/partners/[id]/route.ts', 'utf8'), /findDuplicatePartnerByName\(input\.name, id\)/);
   for (const path of ['components/inventory/InventoryPageContent.tsx', 'components/inventory/InventoryItemEditor.tsx']) {
-    assert.match(readFileSync(path, 'utf8'), /<SupplierDuplicateHint /, path);
+    assert.match(readFileSync(path, 'utf8'), /<SupplierDuplicateHint [^]*?setSupplierPartnerId\(match\.kind === "partner" \? match\.id : null\)/, path);
   }
+  const hint = readFileSync('components/inventory/SupplierDuplicateHint.tsx', 'utf8');
+  assert.match(hint, /유사한 이름의 거래처가 이미 등록되어 있습니다: \$\{match\.name\}/);
+  assert.match(hint, /기존 거래처 사용/);
 });

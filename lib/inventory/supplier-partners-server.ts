@@ -28,7 +28,8 @@ export async function resolveInventorySupplier(params: {
     throw new Error("invalid_supplier_partner");
   }
   const supplierName = typeof params.payload.supplier === "string"
-    ? params.payload.supplier.replace(/\s+/g, " ").trim()
+    // NFC: the same visible text typed with combining marks matches the stored name exactly.
+    ? params.payload.supplier.normalize("NFC").replace(/\s+/g, " ").trim()
     : null;
 
   const { data, error } = await params.supabase.rpc(

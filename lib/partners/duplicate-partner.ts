@@ -19,9 +19,10 @@ export function findDuplicatePartner(partners: readonly PartnerRow[], name: unkn
   return row ? { id: Number(row.id), name: String(row.name ?? ""), isActive: (row.isActive ?? row.is_active) !== false } : null;
 }
 
-// Inventory 직접 입력: an active partner (directly, or through a linked candidate) or a pending
-// 등록대기 candidate already registered under the typed name. The typed text itself is excluded
-// once it equals the existing name exactly, so the hint disappears after "기존 거래처 사용".
+// Inventory 직접 입력 suggestion only: an active partner (directly, or through a linked
+// candidate) or a pending 등록대기 candidate with the same name key. It is never applied
+// automatically; "기존 거래처 사용" sends the chosen partner id. The server's own automatic link
+// stays limited to exact (case/trim) names and admin-linked candidates.
 export function matchExistingSupplier(partners: readonly PartnerRow[], aliases: readonly AliasRow[], name: unknown):
   { kind: "partner"; id: number; name: string } | { kind: "alias"; id: number; name: string } | null {
   const key = partnerNameKey(name);
