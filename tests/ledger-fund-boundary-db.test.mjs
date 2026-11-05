@@ -61,7 +61,10 @@ test('existing seven DB sums isolate July, preserve cash/rows/snapshot hashes, A
    create function ledger_month_is_closed_v1(date) returns boolean language sql as $$select exists(select 1 from public.ledger_month_closures where month=$1 and status='closed')$$;
    create function ledger_assert_month_open_v1(date) returns void language plpgsql as $$begin if ledger_month_is_closed_v1($1) then raise exception 'LEDGER_MONTH_CLOSED';end if;end$$;
   `);
-  for(const [file,name] of definitions)await db.exec(definition(file,name));
+  for(const [index,[file,name]] of definitions.entries()) {
+   const sql=definition(file,name);
+   await db.exec(index%2 ? sql.replaceAll('\n','\r\n') : sql);
+  }
   await db.exec('create trigger owner_fund_guard before insert on ledger_movements for each row execute function ledger_owner_payment_fund_guard_v1();');
   await db.exec('grant execute on function ledger_owner_financial_capacity_v1(date) to service_role;');
   const cash=[95_479_906,191_189_037,59_922_781,1_245_710];
@@ -84,6 +87,20 @@ test('existing seven DB sums isolate July, preserve cash/rows/snapshot hashes, A
   const capacity=async()=>[await call(db,'ledger_owner_financial_capacity_v1',['2026-11-01']),await call(db,'ledger_owner_recovery_capacity_v1')];
   const before=await fingerprints(),expected=await capacity();
   const attributes=await db.query("select oid,proowner,proacl,prosecdef,proconfig from pg_proc where proname in(select unnest($1::text[])) order by oid",[definitions.map(([,name])=>name)]);
+  const bodies=async()=>(await db.query("select oid,prosrc from pg_proc where proname=any($1::text[]) order by oid",[definitions.map(([,name])=>name)])).rows;
+  const originalBodies=await bodies();
+  // Simulate a server whose function-definition rendering changes after CREATE.
+  // The extra newline is outside the body; prosrc remains the correct comparison.
+  await db.exec(`create function public.boundary_test_functiondef(oid) returns text language sql as $$
+   select pg_catalog.pg_get_functiondef($1) || case when position('2026-08-01' in
+    (select prosrc from pg_proc where oid=$1))>0 then E'\n' else '' end $$;`);
+  await db.exec(migration.replaceAll('pg_get_functiondef(v_oid)','public.boundary_test_functiondef(v_oid)').replace('COMMIT;','ROLLBACK;'));
+  assert.deepEqual(await bodies(),originalBodies,'header rendering differences and mixed CRLF/LF do not reject correct bodies');
+  // A genuine body mismatch must still roll back every function replacement.
+  await assert.rejects(db.exec(migration.replace('EXECUTE v_patched;',"EXECUTE replace(v_patched,'begin',E'begin\\n-- injected body drift');")),/Boundary post-definition mismatch/);
+  await db.exec('ROLLBACK');
+  assert.deepEqual(await bodies(),originalBodies,'body verification failure is atomic');
+  assert.deepEqual(await fingerprints(),before);
   await db.exec(migration);
   assert.deepEqual(await fingerprints(),before,'migration has zero row DML, including three exact close hashes/revisions');
   assert.deepEqual(await capacity(),expected,'unchanged current movement set: zero cash/capacity impact');

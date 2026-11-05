@@ -14,6 +14,9 @@ DECLARE
   v_oid regprocedure;
   v_definition text;
   v_patched text;
+  v_original_body text;
+  v_expected_body text;
+  v_actual_body text;
 BEGIN
   FOR r IN SELECT * FROM (VALUES
     ('public.ledger_owner_financial_capacity_v1(date)', $anchor$and f.type in ('cash', 'bank', 'personal_custody');$anchor$, $replacement$and f.type in ('cash', 'bank', 'personal_custody')
@@ -41,9 +44,14 @@ BEGIN
     IF (length(v_definition)-length(replace(v_definition,r.anchor,'')))<>length(r.anchor) THEN
       RAISE EXCEPTION 'Ambiguous/missing boundary sum: %', r.signature;
     END IF;
+    SELECT replace(prosrc,E'\r\n',E'\n') INTO STRICT v_original_body
+      FROM pg_proc WHERE oid=v_oid;
+    v_expected_body := replace(v_original_body,r.anchor,r.replacement);
     v_patched := replace(v_definition,r.anchor,r.replacement);
     EXECUTE v_patched;
-    IF replace(pg_get_functiondef(v_oid),E'\r\n',E'\n') IS DISTINCT FROM v_patched THEN
+    SELECT replace(prosrc,E'\r\n',E'\n') INTO STRICT v_actual_body
+      FROM pg_proc WHERE oid=v_oid;
+    IF v_actual_body IS DISTINCT FROM v_expected_body THEN
       RAISE EXCEPTION 'Boundary post-definition mismatch: %', r.signature;
     END IF;
   END LOOP;
