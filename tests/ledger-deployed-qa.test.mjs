@@ -69,6 +69,7 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   deps['@/components/ledger/InventoryPurchaseCaseSummary']={default:()=>null};
   deps['@/components/ledger/PayablePaymentRecovery']={default:()=>null,PayablePaymentRefreshButton:()=>null};
   deps['@/components/ledger/PurchaseSettlementDetails']={default:()=>null};
+  deps['@/components/ledger/SettlementPeriodSummary']={default:()=>null};
   deps['@/lib/inventory/purchase-case-display']=transpiled('lib/inventory/purchase-case-display.ts',{'./purchase-repair-contract':require('../lib/inventory/purchase-repair-contract.ts')});
   deps['@/lib/ledger/inventory-entry-focus']=transpiled('lib/ledger/inventory-entry-focus.ts',{});
   deps['@/lib/ledger/payable-payment-client']=transpiled('lib/ledger/payable-payment-client.ts',{});

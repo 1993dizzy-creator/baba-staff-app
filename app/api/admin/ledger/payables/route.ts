@@ -3,6 +3,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay } from "@/lib/ledger/inventory-display";
 import { calculatePayableBalances, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, payableDisplayAsOf, payableMonthBounds, sumPayableAmounts, type PayablePayment } from "@/lib/ledger/payables";
 import { buildPaymentVerificationItems, isPaymentVerification } from "@/lib/ledger/payment-verification";
+import { buildSettlementPeriods, type SettlementPolicyValue } from "@/lib/ledger/settlement-periods";
+import { getBusinessDate } from "@/lib/common/business-time";
 
 async function loadAll<T>(query:(from:number,to:number)=>PromiseLike<{data:T[]|null;error:unknown}>){
   const rows:T[]=[];
@@ -28,7 +30,7 @@ export async function GET(request: Request) {
     loadAll((from,to)=>supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,payment:ledger_transactions!inner(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))").eq("payment.status","confirmed").order("id").range(from,to)),
     historyPartyId!==null?emptyRows:loadAll((from,to)=>{let query=supabaseServer.from("ledger_transactions").select("id,party_id,business_date").eq("type","payable_payment").eq("status","confirmed");if(bounds)query=query.lt("business_date",bounds.nextMonthStart);return query.order("business_date",{ascending:false}).order("id").range(from,to)}),
     historyPartyId!==null?emptyRows:loadAll((from,to)=>supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id").order("ledger_party_id").range(from,to)),
-    historyPartyId!==null?emptyRows:loadAll((from,to)=>supabaseServer.from("business_partners").select("id,partner_type").order("id").range(from,to))]);
+    historyPartyId!==null?emptyRows:loadAll((from,to)=>supabaseServer.from("business_partners").select("id,partner_type,payment_mode,settlement_mode,settlement_rule,settlement_days,default_payment_term_days").order("id").range(from,to))]);
   const loadError=payableResult.error??allocationResult.error??paymentResult.error??bridgeResult.error??partnerResult.error;
   if(loadError){console.error("[LEDGER_PAYABLES_GET_FAILED]",loadError);return ledgerJson({ok:false,code:"PAYABLES_LOAD_FAILED"},500)}
   // Supabase's untyped client infers embedded many-to-one relations as arrays.
@@ -74,5 +76,20 @@ export async function GET(request: Request) {
     const metadata=map.get(summary.partyId)??{partyId:summary.partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(summary.partyId)??null};
     return {...metadata,...summary,outstandingAmount:summary.closingOutstanding};
   });
-  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary}:{}),payables,parties:parties.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
+  // Read-only settlement-period view (P0-2B): the linked partner terms group this party's
+  // ordinary payables by 정산 기준 period, with the same as-of allocations as above. Payment
+  // verification items stay excluded; nothing is written and due_date is never derived.
+  const policyByBusinessPartner=new Map((partnerResult.data??[]).map(row=>[Number(row.id),{paymentMode:row.payment_mode,settlementMode:row.settlement_mode??null,settlementRule:row.settlement_rule??null,settlementDays:Array.isArray(row.settlement_days)?row.settlement_days.map(Number):null,defaultPaymentTermDays:row.default_payment_term_days==null?null:Number(row.default_payment_term_days)} satisfies SettlementPolicyValue]));
+  const asOfDate=bounds?new Date(Date.parse(bounds.nextMonthStart+"T00:00:00Z")-86400000).toISOString().slice(0,10):getBusinessDate();
+  const allocationsByPayable=new Map<number,typeof asOfAllocations>();
+  for(const allocation of asOfAllocations){const list=allocationsByPayable.get(Number(allocation.payable_id))??[];list.push(allocation);allocationsByPayable.set(Number(allocation.payable_id),list)}
+  const sourcesByParty=new Map<number,typeof ordinarySources>();
+  for(const row of ordinarySources){if(row.status==="cancelled"||row.expense?.status!=="confirmed"||(bounds&&row.expense.business_date>=bounds.nextMonthStart))continue;const list=sourcesByParty.get(Number(row.party_id))??[];list.push(row);sourcesByParty.set(Number(row.party_id),list)}
+  const withSettlement=parties.map(party=>{
+    const businessPartnerId=businessPartnerByLedgerParty.get(party.partyId);
+    const settlementPolicy=businessPartnerId===undefined?null:policyByBusinessPartner.get(businessPartnerId)??null;
+    const settlementPeriods=buildSettlementPeriods(settlementPolicy,(sourcesByParty.get(party.partyId)??[]).map(row=>({id:row.id,businessDate:row.expense?.business_date??null,originalAmount:row.original_amount,settlement:calculatePurchaseSettlement(row.original_amount,allocationsByPayable.get(Number(row.id))??[],{payableId:row.id,transactionId:row.expense?.id})})),asOfDate);
+    return {...party,settlementPolicy,settlementPeriods,settlementAsOf:asOfDate};
+  });
+  return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary}:{}),payables,parties:withSettlement.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
 }

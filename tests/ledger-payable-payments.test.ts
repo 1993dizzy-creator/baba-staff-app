@@ -3,6 +3,8 @@ import{buildOldestFirstAllocations,calculatePayableBalances,payableMonthBounds,s
 import ts from "typescript";
 import * as payableFunctions from "../lib/ledger/payables.ts";
 import * as paymentVerificationFunctions from "../lib/ledger/payment-verification.ts";
+import * as settlementPeriodFunctions from "../lib/ledger/settlement-periods.ts";
+import * as businessTimeFunctions from "../lib/common/business-time.ts";
 import{groupPayablesForDisplay}from"../lib/ledger/payable-display-groups.ts";
 const read=(p:string)=>readFileSync(join(process.cwd(),p),"utf8"),migration=read("supabase/migrations/202608210004_add_ledger_payable_payments.sql"),pay=read("app/api/admin/ledger/payables/pay/route.ts"),dashboard=read("app/api/admin/ledger/payables/route.ts"),detail=read("app/api/admin/ledger/payables/[partyId]/route.ts"),party=read("app/api/admin/ledger/parties/route.ts"),page=read("app/(protected)/admin/ledger/payables/page.tsx"),entries=read("app/(protected)/admin/ledger/entries/page.tsx"),partialPlan=read("lib/ledger/partial-payable-payment.ts"),ledger=read("app/api/admin/ledger/route.ts"),inventoryMigration=read("supabase/migrations/202608210003_add_inventory_purchase_candidates.sql"),pos=read("lib/sales/payment-summary.ts");
 test("unpaid payable can be fully paid",()=>assert.match(migration,/least\(v_remaining,v_outstanding\)/));
@@ -81,14 +83,14 @@ test("no month calculates current allocations and preserves partial-payment olde
 
 // Execute the actual GET handler with an in-memory Supabase query double.
 // No environment files, credentials, network or production DB are used.
-function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof allocation>[],denied=false){
-  const tables:Record<string,unknown[]>={ledger_payables:rows.map(row=>({...row,party:{name:`Party ${row.party_id}`},due_date:null})),ledger_payable_allocations:payments,ledger_transactions:payments.filter(row=>row.payment.status==="confirmed").map(row=>({party_id:10,business_date:row.payment.business_date,status:"confirmed"})),business_partner_ledger_parties:[],business_partners:[]};
+function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof allocation>[],denied=false,partnerTables:{business_partner_ledger_parties?:unknown[];business_partners?:unknown[]}={}){
+  const tables:Record<string,unknown[]>={ledger_payables:rows.map(row=>({...row,party:{name:`Party ${row.party_id}`},due_date:null})),ledger_payable_allocations:payments,ledger_transactions:payments.filter(row=>row.payment.status==="confirmed").map(row=>({party_id:10,business_date:row.payment.business_date,status:"confirmed"})),business_partner_ledger_parties:partnerTables.business_partner_ledger_parties??[],business_partners:partnerTables.business_partners??[]};
   const calls:string[]=[];
   const supabase={from(table:string){calls.push(table);let from=0,to=999;const filters:Array<(row:Record<string,unknown>)=>boolean>=[];
     const field=(row:Record<string,unknown>,name:string)=>name.split(".").reduce<unknown>((value,key)=>(value as Record<string,unknown>)?.[key],row);
     const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
-  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
+  const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/settlement-periods":settlementPeriodFunctions,"@/lib/common/business-time":businessTimeFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
   const testModule={exports:{} as {GET:(request:Request)=>Promise<Response>}};
   const code=ts.transpileModule(dashboard,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","module","exports",code)((name:string)=>{assert.ok(name in dependencies);return dependencies[name]},testModule,testModule.exports);
@@ -271,4 +273,23 @@ test("month view no longer builds every party's history; the per-party read keep
   assert.deepEqual(party10.historyPayables.map((row:{id:number;settlementStatus:string})=>[row.id,row.settlementStatus]),[[1,"paid"]]);
   assert.equal((await api.get("?historyPartyId=10")).status,400);
   assert.equal((await api.get("?month=2026-08&historyPartyId=abc")).status,400);
+});
+
+// P0-2B: the actual GET attaches a read-only settlement-period view per linked partner.
+test("actual GET groups a linked postpaid partner by settlement period, as of the month end, excluding verification items",async()=>{
+  const partnerTables={business_partner_ledger_parties:[{business_partner_id:1,ledger_party_id:10}],
+    business_partners:[{id:1,partner_type:"food",payment_mode:"postpaid",settlement_mode:"scheduled",settlement_rule:"monthly_twice",settlement_days:[15,0],default_payment_term_days:null}]};
+  const special={...source(9,"2026-10-03",777000),expense:{...source(9,"2026-10-03").expense,source_snapshot:{item_name:"x",paymentVerification:"pending"}}};
+  const rows=[source(1,"2026-10-05",1000000,"paid"),source(2,"2026-10-20",2000000,"partially_paid"),source(3,"2026-10-25",300000),special];
+  const api=payableApi(rows,[allocation("2026-10-20",1000000,1),allocation("2026-10-31",500000,2),allocation("2026-11-03",1500000,2)],false,partnerTables);
+  const october=await (await api.get("?month=2026-10")).json();
+  const party=october.parties.find((row:{partyId:number})=>row.partyId===10);
+  assert.equal(party.settlementAsOf,"2026-10-31");
+  assert.equal(party.settlementPolicy.settlementRule,"monthly_twice");
+  // 10/1~15 fully paid on 10/20 is omitted; 10/16~31 keeps the 11/3 payment out (as of 10/31).
+  assert.deepEqual(party.settlementPeriods.map((p:{key:string;purchaseAmount:number;paidAmount:number;remainingAmount:number;lastPaymentDate:string|null})=>[p.key,p.purchaseAmount,p.paidAmount,p.remainingAmount,p.lastPaymentDate]),
+    [["2026-10-16~2026-10-31",2300000,500000,1800000,"2026-10-31"]]);
+  assert.equal(october.totalOutstanding,1800000); // existing totals unchanged; verification item stays separate
+  const unlinked=await (await payableApi([source(1,"2026-10-05",1000)],[]).get("?month=2026-10")).json();
+  assert.equal(unlinked.parties[0].settlementPolicy,null); assert.equal(unlinked.parties[0].settlementPeriods,null);
 });
