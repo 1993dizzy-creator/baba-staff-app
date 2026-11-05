@@ -83,6 +83,8 @@ function inventory(db, authenticated = true) {
     '@/lib/supabase/server': { supabaseServer: db },
     '@/lib/inventory/log-sync-server': {}, '@/lib/ledger/inventory-projection': {},
     '@/lib/inventory/supplier-partners-server': {}, '@/lib/inventory/price-logs': {},
+    // Display-only current-name enrichment (235d3a1d): pass-through, so this test keeps measuring the log query alone.
+    '@/lib/inventory/current-item-names-server': { withCurrentInventoryNames: async (_supabase, rows) => [...rows] },
   });
 }
 
