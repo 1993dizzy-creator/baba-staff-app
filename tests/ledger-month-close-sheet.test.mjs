@@ -75,7 +75,7 @@ test("opening the sheet gets fresh preflight, renders localized warnings, and se
   const ready = fixture.render();
   assert.match(ready.html, /aria-label="8월 재마감"/);
   assert.match(ready.html, /마감 점검/);
-  assert.match(ready.html, /미납금<\/span><strong>67\.759\.028 ₫/);
+  assert.match(ready.html, /당월 거래처 미납금<\/span><strong>67\.759\.028 ₫/);
   assert.match(ready.html, /잔액 조정 기록<\/span><strong>8건/);
   assert.match(ready.html, /임대료 준비금 미충족<\/span><strong>1건/);
   assert.match(ready.html, /1차 마감본은 이력으로 보존됩니다/);
@@ -202,5 +202,32 @@ test("a failed preflight load hides the spinner and offers a retry", async () =>
 
 test('pending card fees display a warning and permit close without a fee-confirmation action',async()=>{
  const fixture=sheetFixture({replies:[{body:check({warnings:[{code:'CARD_FEE_PENDING',amount:6926797}]})}]});fixture.render().effects[0]();await flush();const ready=fixture.render();
- assert.match(ready.html,/6\.926\.797/);assert.match(ready.html,/\uCE74\uB4DC\uC218\uC218\uB8CC \uBBF8\uD655\uC815/);assert.equal(ready.buttons.find(b=>b.props.children==='\uB9C8\uAC10 \uC644\uB8CC').props.disabled,false);
+ assert.match(ready.html,/6\.926\.797/);assert.match(ready.html,/당월 미정산 카드금액/);assert.equal(ready.buttons.find(b=>b.props.children==='\uB9C8\uAC10 \uC644\uB8CC').props.disabled,false);
+});
+
+test('verified unpaid, later-paid and reserve warnings allow close; earlier reopened months still block in both languages', async () => {
+  for (const vi of [false, true]) {
+    const warnings = [
+      { code: 'PAYABLE_OUTSTANDING', amount: 1_410_000 },
+      { code: 'PAYMENT_VERIFICATION_LATER_PAID', count: 1, amount: 1_101_600 },
+      { code: 'RESERVE_SHORTFALL', count: 1 },
+      { code: 'CARD_FEE_PENDING', amount: 6_926_797 },
+    ];
+    for (const earlierReopened of [false, true]) {
+      const fixture = sheetFixture({ vi, replies: [{ body: check({ warnings,
+        canClose: !earlierReopened, blockers: earlierReopened ? [{ code: 'EARLIER_MONTH_REOPENED' }] : [],
+      }) }] });
+      fixture.render().effects[0](); await flush();
+      const ready = fixture.render();
+      for (const amount of [/1\.410\.000 ₫/, /1\.101\.600 ₫/]) assert.match(ready.html, amount);
+      assert.match(ready.html, vi ? /Công nợ nhà cung cấp trong tháng/ : /당월 거래처 미납금/);
+      assert.match(ready.html, vi ? /Chưa thanh toán cuối tháng · Đã thanh toán sau đó/ : /월말 미지급 · 이후 지급완료/);
+      assert.match(ready.html, vi ? /Doanh thu thẻ chưa được đối soát trong tháng/ : /당월 미정산 카드금액/);
+      assert.match(ready.html, vi ? /Chưa đủ quỹ dự phòng tiền thuê/ : /임대료 준비금 미충족/);
+      const button = ready.buttons.find(b => b.props.children === (vi ? 'Hoàn tất chốt sổ' : '마감 완료'));
+      assert.equal(button.props.disabled, earlierReopened);
+      if (earlierReopened) { button.props.onClick(); await flush(); }
+      assert.equal(fixture.calls.length, 1, 'no close request during warning/guard display verification');
+    }
+  }
 });

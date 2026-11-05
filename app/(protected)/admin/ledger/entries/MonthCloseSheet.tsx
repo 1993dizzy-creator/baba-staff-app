@@ -10,8 +10,8 @@ type Check = { month?: string; state: "open" | "closed" | "reopened"; preflight?
 
 const issueNames: Record<string, [string, string]> = {
   PAYMENT_VERIFICATION_UNRESOLVED: ["결제 미확인 입고", "Hàng nhập chưa xác minh thanh toán"],
-  PAYMENT_VERIFICATION_LATER_PAID: ["월말 결제 미확인 입고", "Hàng nhập chưa xác minh thanh toán cuối tháng"],
-  PAYABLE_OUTSTANDING: ["미납금", "Công nợ chưa thanh toán"],
+  PAYMENT_VERIFICATION_LATER_PAID: ["월말 미지급 · 이후 지급완료", "Chưa thanh toán cuối tháng · Đã thanh toán sau đó"],
+  PAYABLE_OUTSTANDING: ["당월 거래처 미납금", "Công nợ nhà cung cấp trong tháng"],
   BALANCE_ADJUSTMENT: ["잔액 조정 기록", "Điều chỉnh số dư"],
   RESERVE_SHORTFALL: ["임대료 준비금 미충족", "Chưa đủ quỹ dự phòng tiền thuê"],
   EARLIER_MONTH_REOPENED: ["이전 월의 재검토가 진행 중", "Tháng trước đang được kiểm tra lại"],
@@ -26,7 +26,7 @@ const issueNames: Record<string, [string, string]> = {
   PAYABLE_OVERALLOCATED: ["미납금 지급액 초과", "Phân bổ thanh toán vượt công nợ"],
   CARD_OVERALLOCATED: ["카드 정산액 초과", "Phân bổ đối soát thẻ vượt mức"],
   CARD_UNMATCHED: ["미확인 카드 정산", "Đối soát thẻ chưa khớp"],
-  CARD_FEE_PENDING: ["카드수수료 미확정 · 카드 정산대기", "Phí thẻ chưa xác nhận · Doanh thu thẻ còn lại"],
+  CARD_FEE_PENDING: ["당월 미정산 카드금액", "Doanh thu thẻ chưa được đối soát trong tháng"],
   CARD_CLEARING_NEGATIVE: ["카드 정산대기 음수 잔액", "Số dư thẻ chờ quyết toán âm"],
   CARD_ALLOCATION_MISMATCH: ["카드입금 배분액 불일치", "Phân bổ tiền thẻ không khớp"],
   CARD_FEE_ALLOCATION_MISMATCH: ["카드수수료 배분액 불일치", "Phân bổ phí thẻ không khớp"],

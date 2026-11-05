@@ -6,6 +6,76 @@ import { database } from './helpers/inventory-ledger-fixture.mjs';
 
 const migration = readFileSync('supabase/migrations/20260921170100_add_inventory_payment_verification.sql', 'utf8');
 const samePartyMetadataMigration = readFileSync('supabase/migrations/202609250001_allow_same_party_inventory_supplier_metadata_enrichment.sql', 'utf8');
+const milanCorrection = readFileSync('scripts/ledger/milan-food-3239-confirm-unpaid-20261105-ONE-OFF.sql', 'utf8');
+const milanBaseline = JSON.parse(readFileSync('scripts/ledger/evidence/20261105-milan-food-3239-before-READONLY.json', 'utf8').replace(/^\uFEFF/, ''));
+
+for (const scenario of ['apply_and_retry', 'baseline_mismatch', 'audit_failure', 'closed_month']) test(`Milan Food one-off SQL: ${scenario}, metadata only and atomic audit`, async () => {
+  const db = await verificationDatabase();
+  try {
+    await db.exec(`insert into users values(8,'staff',true,true);
+      insert into ledger_parties(id,name,type) values(4,'Milan Food','supplier');
+      insert into ledger_categories(id,name,kind) values(42,'육류','expense');
+      insert into inventory(id,supplier_partner_id) values(293,4);
+      update inventory_logs set id=14240,item_id=293,business_date='2026-10-27',new_supplier='Milan Food';
+      insert into ledger_month_closures(month,status) values('2026-08-01','reopened'),('2026-09-01','reopened');`);
+    const columns = (await db.query("select column_name from information_schema.columns where table_schema='public' and table_name='ledger_transactions'")).rows.map(r => r.column_name);
+    const original = Object.fromEntries(Object.entries(milanBaseline.transaction).filter(([name]) => columns.includes(name)));
+    const insert = async transaction => {
+      const names = Object.keys(transaction);
+      await db.query(`insert into ledger_transactions(${names.join(',')}) values(${names.map((_,i)=>`$${i+1}`).join(',')})`,
+        names.map(name => typeof transaction[name] === 'object' && transaction[name] !== null ? JSON.stringify(transaction[name]) : transaction[name]));
+    };
+    await insert(original);
+    await insert({ ...original, id:3307, business_date:'2026-10-28', amount:1_101_600, source_key:'candidate:late-paid-fixture' });
+    await db.exec(`insert into ledger_payables(id,expense_transaction_id,party_id,original_amount,status)
+      values(1614,3239,4,1410000,'unpaid'),(1631,3307,4,1101600,'unpaid');`);
+    const payment = (await db.query("select ledger_pay_payables_v1(4,2,'2026-11-03T12:00:00+07:00',1101600,$1::jsonb,'existing later payment',2) as result",
+      [JSON.stringify([{ payableId:1631, allocatedAmount:1_101_600 }])])).rows[0].result;
+    assert.equal(payment.status,'paid');
+    const preflight = async () => (await db.query("select ledger_close_preflight_v1('2026-10-01',2) as result")).rows[0].result;
+    const protectedState = async () => {
+      const state = {};
+      for (const table of ['ledger_movements','ledger_payables','ledger_payable_allocations','inventory','inventory_logs','ledger_candidates','ledger_month_closures'])
+        state[table]=(await db.query(`select * from ${table} order by 1`)).rows;
+      state.otherTransactions=(await db.query('select * from ledger_transactions where id<>3239 order by id')).rows;
+      return JSON.stringify(state);
+    };
+    if (scenario === 'baseline_mismatch') await db.exec('update ledger_payables set original_amount=1410001 where id=1614');
+    if (scenario === 'closed_month') await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+    if (scenario === 'audit_failure') await db.exec(`create function reject_correction_audit() returns trigger language plpgsql as $$begin raise exception 'injected audit failure';end$$;
+      create trigger reject_correction_audit before insert on ledger_audit_logs for each row execute function reject_correction_audit();`);
+    const beforeProtected=await protectedState();
+    const before=(await db.query('select * from ledger_transactions where id=3239')).rows[0];
+    const beforeAudit=(await db.query('select * from ledger_audit_logs order by id')).rows;
+    const sql=milanCorrection.replaceAll('__ACTOR_USER_ID__','2');
+    if (scenario !== 'apply_and_retry') {
+      await assert.rejects(db.exec(sql), scenario === 'baseline_mismatch' ? /baseline mismatch/ : scenario === 'closed_month' ? /LEDGER_MONTH_CLOSED/ : /injected audit failure/);
+      await db.exec('ROLLBACK');
+      assert.deepEqual((await db.query('select * from ledger_transactions where id=3239')).rows[0],before);
+      assert.deepEqual((await db.query('select * from ledger_audit_logs order by id')).rows,beforeAudit);
+    } else {
+      const pending=await preflight();
+      assert.deepEqual(pending.blockers,[{code:'PAYMENT_VERIFICATION_UNRESOLVED',count:1,amount:1_410_000}]);
+      await db.exec(sql);
+      const after=(await db.query('select * from ledger_transactions where id=3239')).rows[0];
+      const {paymentVerification,...expectedSnapshot}=before.source_snapshot;
+      assert.equal(paymentVerification,'pending');
+      assert.deepEqual(after,{...before,source_snapshot:expectedSnapshot});
+      const result=await preflight();
+      assert.deepEqual(result.blockers,[]);
+      assert.deepEqual(result.warnings,[{code:'PAYABLE_OUTSTANDING',amount:1_410_000},{code:'PAYMENT_VERIFICATION_LATER_PAID',count:1,amount:1_101_600}]);
+      const audit=(await db.query("select * from ledger_audit_logs where action='payment_verification_confirmed_unpaid'")).rows;
+      assert.equal(audit.length,1);
+      assert.equal(audit[0].before_snapshot.transaction.source_snapshot.paymentVerification,'pending');
+      assert.equal(audit[0].after_snapshot.transaction.source_snapshot.paymentVerification,undefined);
+      assert.deepEqual(audit[0].before_snapshot.payable,audit[0].after_snapshot.payable);
+      await db.exec(sql);
+      assert.deepEqual((await db.query('select * from ledger_transactions where id=3239')).rows[0],after);
+      assert.deepEqual((await db.query("select * from ledger_audit_logs where action='payment_verification_confirmed_unpaid'")).rows,audit);
+    }
+    assert.equal(await protectedState(),beforeProtected,'all payment, allocation, inventory and month states stay intact');
+  } finally { await db.close(); }
+});
 
 async function verificationDatabase({ legacyImmediate = false, initialPostpaid = false } = {}) {
   const db = await database(undefined, true, false);
