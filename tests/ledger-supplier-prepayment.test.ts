@@ -116,3 +116,59 @@ test("manual expense suggests 💸 선결제 for goods suppliers but never conve
   assert.equal((page.match(/setCategoryId\(SUPPLIER_PREPAYMENT_MANUAL_ACTION\)/g) ?? []).length, 1);
   assert.doesNotMatch(page, /useEffect\([^)]*SUPPLIER_PREPAYMENT_MANUAL_ACTION/);
 });
+
+// ---------------------------------------------------------------------------
+// Monthly payable totals: 10/31 prepayment 1,000,000 → 11/2 receipt linked
+// ---------------------------------------------------------------------------
+import { calculatePayableBalances } from "../lib/ledger/payables.ts";
+import { computeActualCashOutflow } from "../lib/ledger/cash-outflow.ts";
+
+const receiptSource = { id: 1, party_id: 20, original_amount: 1_000_000, status: "paid", expense: { id: 11, business_date: "2026-11-02", status: "confirmed" } };
+const prepaymentPayment = { id: 99, type: "payable_payment", business_date: "2026-10-31", status: "confirmed", source_snapshot: { prepayment: true, allocationMode: "prepayment" } };
+const prepaymentLink = { payable_id: 1, allocated_amount: 1_000_000, payment: prepaymentPayment };
+
+test("October: one outflow, no payable; November: purchase 1,000,000 = prepayment applied 1,000,000, closing 0", () => {
+  const cash = (month: string) => computeActualCashOutflow([{ ...prepaymentPayment, amount: 1_000_000, movements: [{ amount: -1_000_000, fund_account: { id: 2 } }] }] as never, new Set([2]), month);
+  assert.equal(cash("2026-10"), 1_000_000, "October has the single outflow");
+  assert.equal(cash("2026-11"), 0, "applying the prepayment in November is not a new outflow");
+  const october = calculatePayableBalances([receiptSource], [prepaymentLink], "2026-10");
+  assert.deepEqual(october.summary, { openingOutstanding: 0, periodPurchases: 0, periodPayments: 0, closingOutstanding: 0 });
+  assert.deepEqual(october.partySummaries, []);
+  const november = calculatePayableBalances([receiptSource], [prepaymentLink], "2026-11");
+  assert.deepEqual(november.summary, { openingOutstanding: 0, periodPurchases: 1_000_000, periodPayments: 0, periodPrepaymentApplied: 1_000_000, closingOutstanding: 0 });
+  assert.deepEqual(november.partySummaries, [{ partyId: 20, openingOutstanding: 0, periodPurchases: 1_000_000, periodPayments: 0, periodPrepaymentApplied: 1_000_000, closingOutstanding: 0 }]);
+  const s = november.summary!;
+  assert.equal(s.openingOutstanding + s.periodPurchases - s.periodPayments - (s.periodPrepaymentApplied ?? 0), s.closingOutstanding);
+  assert.equal(november.totalOutstanding, 0);
+  // December: nothing carried, nothing re-counted
+  assert.deepEqual(calculatePayableBalances([receiptSource], [prepaymentLink], "2026-12").summary, { openingOutstanding: 0, periodPurchases: 0, periodPayments: 0, closingOutstanding: 0 });
+});
+
+test("partial prepayment: November closing keeps the unpaid rest; a December cash payment stays a payment", () => {
+  const source = { ...receiptSource, original_amount: 1_500_000, status: "partially_paid" };
+  const cashPay = { payable_id: 1, allocated_amount: 500_000, payment: { id: 100, type: "payable_payment", business_date: "2026-12-03", status: "confirmed", source_snapshot: { allocationMode: "custom" } } };
+  assert.deepEqual(calculatePayableBalances([source], [prepaymentLink, cashPay], "2026-11").summary,
+    { openingOutstanding: 0, periodPurchases: 1_500_000, periodPayments: 0, periodPrepaymentApplied: 1_000_000, closingOutstanding: 500_000 });
+  assert.deepEqual(calculatePayableBalances([source], [prepaymentLink, cashPay], "2026-12").summary,
+    { openingOutstanding: 500_000, periodPurchases: 0, periodPayments: 500_000, closingOutstanding: 0 });
+});
+
+test("ordinary payable payments are aggregated exactly as before (payment business_date, no new field)", () => {
+  const source = { id: 2, party_id: 10, original_amount: 1000, status: "partially_paid", expense: { id: 12, business_date: "2026-08-10", status: "confirmed" } };
+  const payments = [
+    { payable_id: 2, allocated_amount: 400, payment: { business_date: "2026-08-20", status: "confirmed" } },
+    { payable_id: 2, allocated_amount: 100, payment: { business_date: "2026-09-05", status: "confirmed", source_snapshot: { allocationMode: "custom" } } },
+  ];
+  assert.deepEqual(calculatePayableBalances([source], payments, "2026-08").summary, { openingOutstanding: 0, periodPurchases: 1000, periodPayments: 400, closingOutstanding: 600 });
+  assert.deepEqual(calculatePayableBalances([source], payments, "2026-09").summary, { openingOutstanding: 600, periodPurchases: 0, periodPayments: 100, closingOutstanding: 500 });
+  // an ordinary payment dated before its receipt keeps its own (payment) date, unlike a prepayment
+  const early = [{ payable_id: 1, allocated_amount: 1_000_000, payment: { business_date: "2026-10-31", status: "confirmed" } }];
+  assert.deepEqual(calculatePayableBalances([receiptSource], early, "2026-11").summary, { openingOutstanding: 0, periodPurchases: 1_000_000, periodPayments: 0, closingOutstanding: 0 });
+});
+
+test("month totals show 🔁 선결제 충당 separately and never as 💸 당월 지급", () => {
+  const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+  assert.match(page, /prepaymentApplied>0\?<div key="periodPrepaymentApplied"><dt>\{vi\?"🔁 Bù từ trả trước":"🔁 선결제 충당"\}<\/dt>/);
+  assert.match(page, /\["periodPayments",vi\?"💸 Thanh toán tháng":"💸 당월 지급"\]/);
+  assert.match(page, /party\.periodPrepaymentApplied \? <> · \{vi \? "Bù trả trước" : "선결제 충당"\}/);
+});

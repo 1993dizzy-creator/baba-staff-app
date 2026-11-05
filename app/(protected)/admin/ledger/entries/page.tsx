@@ -1129,7 +1129,7 @@ function LedgerEntriesContent() {
               {payableDisplay.parties.length || payableDisplay.other ? (
                 <div className={styles.payableParties} id="payable-parties-list">{payableDisplay.parties.map((party) => <button type="button" key={party.partyId} onClick={() => setPayableParty({...party,viewMonth:month})}>
                   <span className={styles.payablePartyMain}><span className={styles.payablePartyEmoji} role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{ledgerPartyEmoji(partnerByLedgerParty.get(party.partyId)?.emoji,party.partnerType)}</span><span className={styles.payablePartyName}>{party.partyName}</span>
-                    <small className={styles.payablePartyPeriod}>{vi ? `Phát sinh T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 외상`}: {payableNumber(party.periodPurchases)} · {vi ? `Thanh toán T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 지급`}: {payableNumber(party.periodPayments)}</small>
+                    <small className={styles.payablePartyPeriod}>{vi ? `Phát sinh T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 외상`}: {payableNumber(party.periodPurchases)} · {vi ? `Thanh toán T${Number(month.slice(5,7))}` : `${Number(month.slice(5,7))}월 지급`}: {payableNumber(party.periodPayments)}{party.periodPrepaymentApplied ? <> · {vi ? "Bù trả trước" : "선결제 충당"}: {payableNumber(party.periodPrepaymentApplied)}</> : null}</small>
                   </span><strong aria-label={vi ? "Công nợ cuối tháng" : "월말 미납"}>{money(party.closingOutstanding)}</strong><small>{party.openCount}{vi ? " khoản" : "건"}</small><i aria-hidden>›</i>
                 </button>)}
                 {payableDisplay.other ? <PaymentVerificationSection
@@ -2088,7 +2088,10 @@ function ConfirmedInventoryEditor({lang,draft,setDraft,accounts,categories,savin
 
 function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boolean}) {
   const fields = [["openingOutstanding",vi?"↪️ Nợ chuyển tháng trước":"↪️ 전월 이월 미납"],["periodPurchases",vi?"📦 Phát sinh tháng":"📦 당월 외상 발생"],["periodPayments",vi?"💸 Thanh toán tháng":"💸 당월 지급"],["closingOutstanding",vi?"🧾 Công nợ cuối tháng":"🧾 월말 미납"]] as const;
-  return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}</dl>;
+  // 선결제 충당: earlier-paid prepayments applied this month — not a new outflow, so never
+  // folded into 💸 당월 지급. Shown only when present; the four cards stay as before.
+  const prepaymentApplied = summary?.periodPrepaymentApplied ?? 0;
+  return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}{prepaymentApplied>0?<div key="periodPrepaymentApplied"><dt>{vi?"🔁 Bù từ trả trước":"🔁 선결제 충당"}</dt><dd>{money(prepaymentApplied)}</dd></div>:null}</dl>;
 }
 
 // Optional settlement grouping (정기정산 only): the same date rows sit under period headers in

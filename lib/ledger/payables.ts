@@ -72,46 +72,58 @@ export function payableDisplayAsOf(originalAmount:number|string,allocations:read
   }
   return {status,paidAmount,remainingAmount,accountName:accounts.size>1?"복수계정":accounts.values().next().value??null};
 }
-export type PayablePeriodSummary={openingOutstanding:number;periodPurchases:number;periodPayments:number;closingOutstanding:number};
+// periodPayments = cash payments in the month. periodPrepaymentApplied = earlier-paid supplier
+// prepayments (선결제) applied to this month's purchases: no new outflow. Identity:
+// opening + purchases - payments - prepaymentApplied = closing.
+export type PayablePeriodSummary={openingOutstanding:number;periodPurchases:number;periodPayments:number;periodPrepaymentApplied?:number;closingOutstanding:number};
+// A supplier prepayment counts toward a payable on its application date = greatest(prepayment
+// date, receipt date). Every other allocation keeps its payment business_date.
+function allocationPeriodDate(allocation:Pick<DatedPayableAllocation,"payment">,receiptDate:string){
+  const paymentDate=allocation.payment!.business_date;
+  return allocation.payment?.source_snapshot?.prepayment===true&&receiptDate>paymentDate?receiptDate:paymentDate;
+}
 export function calculatePayableBalances<T extends PayableBalanceSource>(sources:readonly T[],allocations:readonly DatedPayableAllocation[],month?:string){
   const bounds=month===undefined?null:payableMonthBounds(month);
   const byPayable=new Map<number,DatedPayableAllocation[]>();
   for(const allocation of confirmedAllocationsThroughMonth(allocations,month)){
     const items=byPayable.get(allocation.payable_id)??[];items.push(allocation);byPayable.set(allocation.payable_id,items);
   }
-  let opening=BigInt(0),purchases=BigInt(0),payments=BigInt(0),closing=BigInt(0);
-  const partyTotals=new Map<number,{opening:bigint;purchases:bigint;payments:bigint;closing:bigint}>();
+  let opening=BigInt(0),purchases=BigInt(0),payments=BigInt(0),prepaymentApplied=BigInt(0),closing=BigInt(0);
+  const partyTotals=new Map<number,{opening:bigint;purchases:bigint;payments:bigint;prepaymentApplied:bigint;closing:bigint}>();
   const payables:Array<T & {allocatedAmount:number;outstandingAmount:number}>=[];
   for(const source of sources){
     if(source.status==="cancelled"||source.expense?.status!=="confirmed")continue;
     const date=source.expense.business_date;
     if(bounds&&date>=bounds.nextMonthStart)continue;
     const original=amountUnits(source.original_amount);
-    let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0),periodAdjustment=BigInt(0);
+    let before=BigInt(0),through=BigInt(0),inPeriod=BigInt(0),periodAdjustment=BigInt(0),inPeriodPrepayment=BigInt(0);
     for(const allocation of byPayable.get(source.id)??[]){
-      const paymentDate=allocation.payment!.business_date,amount=amountUnits(allocation.allocated_amount);
+      const paymentDate=allocationPeriodDate(allocation,date),amount=amountUnits(allocation.allocated_amount);
       through+=amount;
       if(bounds&&paymentDate<bounds.monthStart)before+=amount;
       if(bounds&&paymentDate>=bounds.monthStart&&paymentDate<bounds.nextMonthStart){
         if(isPayableNonCashAdjustment(allocation,source.original_amount,{payableId:source.id,transactionId:source.expense?.id}))periodAdjustment-=amount;
+        else if(allocation.payment?.source_snapshot?.prepayment===true)inPeriodPrepayment+=amount;
         else inPeriod+=amount;
       }
     }
     const outstanding=original>through?original-through:BigInt(0);
     closing+=outstanding;
     if(bounds){
-      const party=partyTotals.get(Number(source.party_id))??{opening:BigInt(0),purchases:BigInt(0),payments:BigInt(0),closing:BigInt(0)};
+      const party=partyTotals.get(Number(source.party_id))??{opening:BigInt(0),purchases:BigInt(0),payments:BigInt(0),prepaymentApplied:BigInt(0),closing:BigInt(0)};
       if(date<bounds.monthStart){const balance=original>before?original-before:BigInt(0);opening+=balance;party.opening+=balance}
       else {purchases+=original;party.purchases+=original}
       purchases+=periodAdjustment;party.purchases+=periodAdjustment;
-      payments+=inPeriod;
-      party.payments+=inPeriod;party.closing+=outstanding;
+      payments+=inPeriod;prepaymentApplied+=inPeriodPrepayment;
+      party.payments+=inPeriod;party.prepaymentApplied+=inPeriodPrepayment;party.closing+=outstanding;
       partyTotals.set(Number(source.party_id),party);
     }
     if(outstanding>BigInt(0))payables.push({...source,allocatedAmount:amountValue(through),outstandingAmount:amountValue(outstanding)});
   }
-  const partySummaries=[...partyTotals].filter(([,row])=>row.opening>BigInt(0)||row.purchases>BigInt(0)||row.payments>BigInt(0)||row.closing>BigInt(0)).map(([partyId,row])=>({partyId,openingOutstanding:amountValue(row.opening),periodPurchases:amountValue(row.purchases),periodPayments:amountValue(row.payments),closingOutstanding:amountValue(row.closing)}));
-  return {payables,totalOutstanding:amountValue(closing),...(bounds?{summary:{openingOutstanding:amountValue(opening),periodPurchases:amountValue(purchases),periodPayments:amountValue(payments),closingOutstanding:amountValue(closing)},partySummaries}:{})};
+  // periodPrepaymentApplied is only present when nonzero, so existing summaries are unchanged.
+  const prepaymentField=(value:bigint)=>value>BigInt(0)?{periodPrepaymentApplied:amountValue(value)}:{};
+  const partySummaries=[...partyTotals].filter(([,row])=>row.opening>BigInt(0)||row.purchases>BigInt(0)||row.payments>BigInt(0)||row.prepaymentApplied>BigInt(0)||row.closing>BigInt(0)).map(([partyId,row])=>({partyId,openingOutstanding:amountValue(row.opening),periodPurchases:amountValue(row.purchases),periodPayments:amountValue(row.payments),...prepaymentField(row.prepaymentApplied),closingOutstanding:amountValue(row.closing)}));
+  return {payables,totalOutstanding:amountValue(closing),...(bounds?{summary:{openingOutstanding:amountValue(opening),periodPurchases:amountValue(purchases),periodPayments:amountValue(payments),...prepaymentField(prepaymentApplied),closingOutstanding:amountValue(closing)},partySummaries}:{})};
 }
 export type PayableAllocation={payableId:number;allocatedAmount:number};
 export function buildOldestFirstAllocations(payables:OutstandingPayable[],amount:number){let remaining=amount;const allocations:PayableAllocation[]=[];for(const payable of [...payables].sort((a,b)=>a.businessDate.localeCompare(b.businessDate)||a.id-b.id)){if(remaining<=0)break;const allocatedAmount=Math.min(remaining,payable.outstandingAmount);if(allocatedAmount>0)allocations.push({payableId:payable.id,allocatedAmount});remaining=Math.round((remaining-allocatedAmount)*1000)/1000}return{allocations,unallocatedAmount:remaining}}
