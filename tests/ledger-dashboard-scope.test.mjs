@@ -7,6 +7,37 @@ import {buildDashboardReport} from '../lib/ledger/dashboard-report.ts';
 import {buildDashboardDetailEmoji} from '../lib/ledger/dashboard-detail-emoji.ts';
 import {buildProvisionalOperatingProfit} from '../lib/ledger/provisional-operating-profit.ts';
 const body=async(api,month,scope='')=>{const response=await api.get(month,scope);assert.equal(response.status,200);return response.json();};
+
+test('July cash reconstruction changes historical views only, including live November and every ledger API scope', async () => {
+ const tables=dashboardTables();
+ tables.ledger_fund_accounts[1].code='baba_corporate_bank';
+ tables.ledger_fund_accounts.push(...[{id:4,code:'cho_personal_custody'},{id:5,code:'vuong_personal_custody'}].map(a=>({...a,type:'personal_custody',is_active:true,is_business_fund:true})));
+ const snapshot=JSON.stringify(tables);
+ const months=['2026-08','2026-09','2026-10','2026-11'];
+ for(const closed of [true,false]) {
+  const original=structuredClone(tables);
+  if(!closed) original.ledger_month_closures=[];
+  const withHistory=structuredClone(original);
+  const beforeJuly=await body(dashboardApi(original,{businessDate:'2026-11-15'}),'2026-07','&scope=accounts');
+  for(const id of [1,2,4,5]) {
+   const transaction={id:9000+id,type:'expense',status:'confirmed',business_date:'2026-07-20',recognition_month:'2026-07-01',occurred_at:'2026-07-20T12:00:00+07:00',source_type:'manual',category:{id:4},amount:1_234_567,source_snapshot:{},movements:[{amount:-1_234_567,fund_account:{id}}]};
+   withHistory.ledger_transactions.push(transaction);
+   withHistory.ledger_movements.push({id:9000+id,fund_account_id:id,amount:-1_234_567,transaction:{type:'expense',status:'confirmed',business_date:transaction.business_date,occurred_at:transaction.occurred_at}});
+  }
+  for(const month of months) for(const scope of ['','&scope=accounts','&scope=dashboard']) {
+   const before=await body(dashboardApi(original,{businessDate:'2026-11-15'}),month,scope);
+   const after=await body(dashboardApi(withHistory,{businessDate:'2026-11-15'}),month,scope);
+   assert.deepEqual(after.accounts,before.accounts,`${month} ${scope} cash impact = 0`);
+   if(scope!=='&scope=accounts') {assert.deepEqual(after.summary,before.summary);assert.deepEqual(after.cashReport,before.cashReport);}
+  }
+  const afterJuly=await body(dashboardApi(withHistory,{businessDate:'2026-11-15'}),'2026-07','&scope=accounts');
+  for(const id of [1,2,4,5]) assert.equal(afterJuly.accounts.find(a=>a.id===id).balance,beforeJuly.accounts.find(a=>a.id===id).balance-1_234_567);
+  assert.equal(JSON.stringify(original),JSON.stringify({...tables,...(!closed?{ledger_month_closures:[]}: {})}));
+  assert.deepEqual(withHistory.ledger_payable_allocations,original.ledger_payable_allocations);
+  assert.deepEqual(withHistory.ledger_month_closures,original.ledger_month_closures);
+ }
+ assert.equal(JSON.stringify(tables),snapshot);
+});
 for(const month of ['2026-08','2026-09','2026-10'])test(`${month}: full/dashboard report, details, cash, balances, estimates and revision 3 agree`,async()=>{
  const tables=dashboardTables(),snapshot=JSON.stringify(tables),full=dashboardApi(tables),light=dashboardApi(tables);
  const previous=`2026-${String(Number(month.slice(5))-1).padStart(2,'0')}`;

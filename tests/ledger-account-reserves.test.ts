@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createRequire } from "node:module";
+import ts from "typescript";
 import { reserveCurrentAmount, reservesByFundAccount } from "../lib/ledger/reserve-balances.ts";
 
 const migration = readFileSync("supabase/migrations/202608270001_link_reserve_plans_to_fund_accounts.sql", "utf8");
@@ -9,6 +11,32 @@ const ledgerApi = readFileSync("app/api/admin/ledger/route.ts", "utf8");
 const fundAccountView = readFileSync("lib/ledger/fund-account-view.ts", "utf8");
 const reserveApi = readFileSync("app/api/admin/ledger/reserves/route.ts", "utf8");
 const page = readFileSync("app/(protected)/admin/ledger/entries/page.tsx", "utf8");
+
+test("live reserve cash and free cash ignore July reconstruction across every movement page", async () => {
+  const require=createRequire(import.meta.url);
+  const tables:Record<string,Array<Record<string,unknown>>>={
+    ledger_fund_accounts:[{id:1,code:"store_cash",type:"cash",is_active:true,is_business_fund:true},{id:4,code:"card_clearing",type:"card_clearing",is_active:true,is_business_fund:false}],
+    ledger_movements:Array.from({length:1001},(_,i)=>({id:i+1,fund_account_id:1,amount:1,transaction:{status:"confirmed",business_date:"2026-11-01"}})),
+    ledger_reserve_plans:[{id:1,name:"Rent",is_active:true,fund_account_id:1,target_amount:100,entries:[{entry_type:"allocate",amount:20}]}],
+  };
+  const db={from(table:string){let from=0,to=999;const q={select(){return q;},eq(){return q;},order(){return q;},limit(){return q;},range(a:number,b:number){from=a;to=b;return q;},then(resolve: (value:unknown)=>unknown){return Promise.resolve({data:(tables[table]??[]).slice(from,Math.min(to+1,from+1000)),error:null}).then(resolve);}};return q;}};
+  const deps:Record<string,unknown>={
+    "@/lib/supabase/server":{supabaseServer:db},
+    "@/lib/ledger/server":{requireLedgerActor:async()=>({actor:{id:1}}),ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})},
+    "@/lib/ledger/reserve-balances":require("../lib/ledger/reserve-balances.ts"),
+    "@/lib/ledger/fund-account-view":require("../lib/ledger/fund-account-view.ts"),
+    "@/lib/common/business-time":{getBusinessDate:()=>"2026-11-05"},
+    "@/lib/ledger/card-settlements":require("../lib/ledger/card-settlements.ts"),
+  };
+  const load=(path:string)=>{const module={exports:{} as Record<string, (...args:unknown[])=>Promise<Response>>};new Function("require","module","exports",ts.transpileModule(readFileSync(path,"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)((name:string)=>deps[name],module,module.exports);return module.exports;};
+  deps["@/lib/ledger/card-settlement-data"]=load("lib/ledger/card-settlement-data.ts");
+  const api=load("app/api/admin/ledger/reserves/route.ts");
+  const before=await (await api.GET()).json();
+  assert.equal(before.liquidFunds,1001);assert.equal(before.freeCash,981);
+  tables.ledger_movements.push(...Array.from({length:1001},(_,i)=>({id:2000+i,fund_account_id:1,amount:999999,transaction:{status:"confirmed",business_date:"2026-07-20"}})),
+    {id:4000,fund_account_id:4,amount:3694200,transaction:{status:"confirmed",business_date:"2026-07-31"}});
+  assert.deepEqual(await (await api.GET()).json(),before);
+});
 
 test("reserve entry signs preserve allocate, release, consume and adjustment semantics", () => {
   assert.equal(reserveCurrentAmount([

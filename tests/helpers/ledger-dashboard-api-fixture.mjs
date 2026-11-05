@@ -27,7 +27,7 @@ function queryKind(table, columns, filters) {
 
 // Read-only Supabase double. The default cap, inclusive ranges, filters and
 // multi-column ordering are enforced; shuffled input cannot accidentally pass.
-export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false } = {}) {
+export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false, businessDate = '2026-10-19' } = {}) {
   const routeCode = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const spies = { inventoryDisplay:0, inventoryIssues:0, entries:0, reserveEntries:0 };
   const entriesModule = require('../../lib/ledger/entries.ts');
@@ -98,7 +98,7 @@ export function dashboardApi(tables, { failKind, source = readFileSync('app/api/
     '@/lib/ledger/card-settlement-data': cardModule.exports,
     '@/lib/ledger/card-settlements': cardFunctions,
     '@/lib/common/business-time': {
-      getBusinessDate: () => '2026-10-19',
+      getBusinessDate: () => businessDate,
       getBusinessMonthEndBoundary(month) {
         const date = new Date(month + '-01T00:00:00Z'); date.setUTCMonth(date.getUTCMonth() + 1);
         const businessDateExclusive = date.toISOString().slice(0, 10);

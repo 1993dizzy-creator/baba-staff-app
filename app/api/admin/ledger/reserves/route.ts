@@ -1,5 +1,8 @@
 import { isReserveEligibleFundAccount, reserveCurrentAmount } from "@/lib/ledger/reserve-balances";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
+import { fundMovementInScope } from "@/lib/ledger/fund-account-view";
+import { getBusinessDate } from "@/lib/common/business-time";
+import { loadCardRows } from "@/lib/ledger/card-settlement-data";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +16,10 @@ export async function GET() {
         .select("id,name,target_amount,target_date,is_active,memo,linked_recurring_plan_id,fund_account_id,recurring_monthly_amount,recurring_day,recurring_start_month,recurring_end_month,recurring_auto_generate,entries:ledger_reserve_entries(id,entry_type,amount,occurred_at,memo,allocation_kind,restores_entry_id,attribution_month)")
         .eq("is_active", true).order("id"),
       supabaseServer.from("ledger_fund_accounts").select("id,type,code,display_name,is_active,is_business_fund,sort_order").eq("is_active", true).order("sort_order"),
-      supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status)").eq("transaction.status", "confirmed"),
+      loadCardRows((from, to) => supabaseServer.from("ledger_movements")
+        .select("id,fund_account_id,amount,transaction:ledger_transactions!inner(status,business_date)")
+        .eq("transaction.status", "confirmed").order("id").range(from, to))
+        .then(data => ({ data, error: null })),
       supabaseServer.from("ledger_reserve_scheduled_allocations")
         .select("id,reserve_plan_id,scheduled_month,scheduled_date,planned_amount,status,skip_reason,reserve_entry_id,resolved_at")
         .order("scheduled_month", { ascending: false }).order("id", { ascending: false }).limit(120),
@@ -71,8 +77,13 @@ export async function GET() {
     const liquidIds = new Set((accountResult.data ?? [])
       .filter((account) => ["cash", "bank", "personal_custody"].includes(account.type) && account.is_business_fund && account.code !== "card_clearing")
       .map((account) => Number(account.id)));
+    const currentMonth = getBusinessDate().slice(0, 7);
     const liquidFunds = (movementResult.data ?? [])
-      .filter((movement) => liquidIds.has(Number(movement.fund_account_id)))
+      .filter((movement) => liquidIds.has(Number(movement.fund_account_id)) && fundMovementInScope(
+        accountById.get(Number(movement.fund_account_id))?.code,
+        (movement.transaction as unknown as { business_date: string }).business_date,
+        currentMonth,
+      ))
       .reduce((sum, movement) => sum + Number(movement.amount), 0);
     const activeReserve = plans.reduce((sum, plan) => sum + plan.currentAmount, 0);
     return ledgerJson({ ok: true, plans, eligibleAccounts, liquidFunds, activeReserve, freeCash: liquidFunds - activeReserve });
