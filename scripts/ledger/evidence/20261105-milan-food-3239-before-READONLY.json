@@ -1,0 +1,112 @@
+{
+  "status": "READ_ONLY_BASELINE_NOT_APPLIED",
+  "capturedAt": "2026-11-05T11:42:41.775Z",
+  "source": "Production Data API SELECT only; no writes or close RPC",
+  "transaction": {
+    "id": 3239,
+    "operation_id": "8bdbe639-e073-4743-a81c-8ab9e281a03c",
+    "type": "expense",
+    "occurred_at": "2026-10-26T20:00:00+00:00",
+    "business_date": "2026-10-27",
+    "recognition_month": "2026-10-01",
+    "amount": 1410000,
+    "category_id": 42,
+    "party_id": 4,
+    "status": "confirmed",
+    "source_type": "inventory_purchase_candidate",
+    "source_key": "candidate:2122",
+    "source_snapshot": {
+      "unit": "Kg",
+      "reason": "purchase",
+      "source": "quick_save",
+      "item_id": 293,
+      "category": "육류",
+      "supplier": "Milan Food",
+      "item_name": "닭다리살",
+      "category_vi": "Thịt",
+      "item_name_vi": "má rút",
+      "business_date": "2026-10-27",
+      "purchase_price": 94000,
+      "change_quantity": 15,
+      "purchase_amount": 1410000,
+      "inventory_log_id": 14240,
+      "paymentVerification": "pending",
+      "inventory_log_created_at": "2026-10-27T09:30:12.901329+00:00",
+      "purchase_supplier_partner_id": 4
+    },
+    "correction_of_id": null,
+    "memo": null,
+    "created_by": 8,
+    "confirmed_by": 8,
+    "created_at": "2026-10-27T09:30:13.173206+00:00",
+    "updated_at": "2026-10-27T09:30:13.173206+00:00",
+    "source_fingerprint": "0078320ef4906bc8701d9d8d998d2b920e3c2976e3bebc683830f32f341f6800",
+    "source_synced_at": "2026-10-27T09:30:13.173206+00:00",
+    "economic_effect_sign": 1,
+    "display_snapshot": {}
+  },
+  "payable": {
+    "id": 1614,
+    "expense_transaction_id": 3239,
+    "party_id": 4,
+    "original_amount": 1410000,
+    "due_date": null,
+    "status": "unpaid",
+    "created_at": "2026-10-27T09:30:13.173206+00:00",
+    "updated_at": "2026-10-27T09:30:13.173206+00:00",
+    "party": {
+      "id": 4,
+      "name": "Milan Food"
+    },
+    "allocations": []
+  },
+  "movements": [],
+  "closures": [
+    {
+      "id": 1,
+      "month": "2026-08-01",
+      "status": "reopened",
+      "revision": 4
+    },
+    {
+      "id": 2,
+      "month": "2026-09-01",
+      "status": "reopened",
+      "revision": 4
+    }
+  ],
+  "laterPaid": {
+    "id": 1631,
+    "party_id": 29,
+    "original_amount": 1101600,
+    "status": "paid",
+    "expense": {
+      "id": 3307,
+      "status": "confirmed",
+      "business_date": "2026-10-22",
+      "source_snapshot": {
+        "paymentVerification": "pending"
+      }
+    },
+    "allocations": [
+      {
+        "id": 1818,
+        "payment": {
+          "id": 3726,
+          "type": "payable_payment",
+          "status": "confirmed",
+          "movements": [
+            {
+              "id": 1815,
+              "amount": -1101600,
+              "fund_account_id": 2
+            }
+          ],
+          "business_date": "2026-11-03"
+        },
+        "allocated_amount": 1101600,
+        "payment_transaction_id": 3726
+      }
+    ]
+  }
+}
