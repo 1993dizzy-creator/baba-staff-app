@@ -35,6 +35,7 @@ BEGIN
     and not exists (select 1 from public.ledger_fund_accounts boundary_account where boundary_account.id=m.fund_account_id and not (boundary_account.code not in ('store_cash','baba_corporate_bank','cho_personal_custody','vuong_personal_custody') or ((v_date >= date '2026-08-01' and t.business_date >= date '2026-08-01') or (v_date < date '2026-08-01' and t.business_date < date '2026-08-01'))));$replacement$)
   ) AS patch(signature, anchor, replacement)
   LOOP
+    r.replacement := replace(r.replacement,E'\r\n',E'\n');
     v_oid := to_regprocedure(r.signature);
     IF v_oid IS NULL THEN RAISE EXCEPTION 'Missing boundary target: %', r.signature; END IF;
     v_definition := replace(pg_get_functiondef(v_oid), E'\r\n', E'\n');

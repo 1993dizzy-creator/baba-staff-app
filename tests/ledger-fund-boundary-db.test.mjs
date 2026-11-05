@@ -5,7 +5,7 @@ import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 
 const read=name=>readFileSync('supabase/migrations/'+name,'utf8').replaceAll('\r\n','\n');
-const migration=read('20261105153442_protect_august_opening_fund_boundary.sql');
+const migrationFile=readFileSync('supabase/migrations/20261105153442_protect_august_opening_fund_boundary.sql','utf8');
 const definitions=[
  ['20260916161512_add_ledger_month_reopen.sql','ledger_owner_financial_capacity_v1'],
  ['20260916150709_separate_owner_capital_recovery.sql','ledger_owner_recovery_capacity_v1'],
@@ -19,7 +19,8 @@ function definition(file,name){const sql=read(file),match=sql.match(new RegExp(`
 const one=async(db,sql,args=[]) => (await db.query(sql,args)).rows[0];
 const call=async(db,name,args=[]) => (await one(db,`select ${name}(${args.map((_,i)=>'$'+(i+1)).join(',')}) result`,args)).result;
 
-test('existing seven DB sums isolate July, preserve cash/rows/snapshot hashes, ACLs and payment limits',async()=>{
+for(const lineEnding of ['LF','CRLF']) test(`${lineEnding}: existing seven DB sums isolate July, preserve cash/rows/snapshot hashes, ACLs and payment limits`,async()=>{
+ const migration=migrationFile.replaceAll('\r\n','\n').replaceAll('\n',lineEnding==='CRLF'?'\r\n':'\n');
  const db=new PGlite();
  try {
   await db.exec(`create role service_role;
