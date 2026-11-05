@@ -305,14 +305,18 @@ function CollapsibleDetailSection({ icon, title, summary, summaryReview = false,
   const bodyId = useId();
   return (
     <section style={{ ...s.detailSection, ...(first ? s.firstDetailSection : {}) }}>
-      <button type="button" style={s.collapsibleHeader} aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(value => !value)}>
-        <span style={s.sectionTitle}><span aria-hidden="true" style={s.sectionIcon}>{icon}</span>{title}</span>
-        <span style={s.collapsibleSummary}>
-          <b style={{ ...s.collapsibleSummaryValue, ...(summaryReview ? s.amountStripReview : {}) }}>{summary}</b>
-          <span aria-hidden="true" style={s.collapsibleChevron}>{open ? "⌃" : "⌄"}</span>
-        </span>
-      </button>
-      {open && <div id={bodyId} style={s.sectionRows}>{children}</div>}
+      <div style={{ ...s.collapsibleGroup, ...(open ? s.collapsibleGroupOpen : {}) }}>
+        <button type="button" style={{ ...s.collapsibleHeader, ...(open ? s.collapsibleHeaderOpen : {}) }} aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(value => !value)}>
+          <span style={s.sectionTitle}>
+            <span aria-hidden="true" style={s.collapsibleChevron}>{open ? "⌄" : "›"}</span>
+            <span aria-hidden="true" style={s.sectionIcon}>{icon}</span>{title}
+          </span>
+          <span style={s.collapsibleSummary}>
+            <b style={{ ...s.collapsibleSummaryValue, ...(summaryReview ? s.amountStripReview : {}) }}>{summary}</b>
+          </span>
+        </button>
+        {open && <div id={bodyId} style={{ ...s.sectionRows, ...s.collapsibleBody }}>{children}</div>}
+      </div>
     </section>
   );
 }
@@ -1123,10 +1127,15 @@ const s = {
   reviewProblemBadgeStatic: { cursor:"default" },
   reviewMoreButton: { minHeight:24, padding:"2px 7px", border:"1px solid #e5e7eb", borderRadius:999, background:"#f3f4f6", color:"#4b5563", fontSize:10.5, fontWeight:800, cursor:"pointer" },
   reviewMoreList: { gridColumn:"1 / -1", display:"flex", flexWrap:"wrap", justifyContent:"flex-end", gap:4, minWidth:0 },
-  collapsibleHeader: { width:"100%", display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:8, minHeight:34, padding:"2px 0", border:0, background:"transparent", textAlign:"left", cursor:"pointer", minWidth:0 },
+  // 접힘: 기존 배경·정렬 유지(투명 테두리로 펼칠 때 레이아웃 흔들림 방지). 펼침: 연회색 헤더 + 구분선 + 상세 여백으로 한 그룹.
+  collapsibleGroup: { margin:"0 -6px", border:"1px solid transparent", borderRadius:8, overflow:"hidden", minWidth:0 },
+  collapsibleGroupOpen: { borderColor:"#e5e7eb" },
+  collapsibleHeader: { width:"100%", display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:8, minHeight:34, padding:"2px 5px", border:0, background:"transparent", textAlign:"left", cursor:"pointer", minWidth:0, boxSizing:"border-box" },
+  collapsibleHeaderOpen: { background:"#f3f4f6" },
+  collapsibleBody: { borderTop:"1px solid #e5e7eb", padding:"8px 10px 10px" },
   collapsibleSummary: { display:"inline-flex", alignItems:"center", gap:6, minWidth:0 },
   collapsibleSummaryValue: { color:"#111827", fontSize:12.5, fontWeight:900, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" },
-  collapsibleChevron: { color:"#94a3b8", fontSize:12 },
+  collapsibleChevron: { width:12, flex:"0 0 12px", display:"inline-flex", alignItems:"center", justifyContent:"center", color:"#64748b", fontSize:14, lineHeight:1, fontWeight:900 },
   reviewReasonActions: { display:"flex", flexWrap:"wrap", gap:6, marginTop:4 },
   reviewReasonAction: { display:"inline-flex", alignItems:"center", minHeight:30, padding:"4px 10px", border:"1px solid #fca5a5", borderRadius:8, background:"#fff", color:"#991b1b", fontSize:11.5, fontWeight:800, textDecoration:"none", cursor:"pointer" },
   extraWorkAnchor: { scrollMarginTop:72, minWidth:0 },

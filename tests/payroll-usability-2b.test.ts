@@ -129,7 +129,14 @@ test("salary composition and month application are independent collapsed banners
   const section = card.slice(card.indexOf("function CollapsibleDetailSection("), card.indexOf("function ReviewReasonActions("));
   assert.match(section, /const \[open, setOpen\] = useState\(false\);/);
   assert.match(section, /aria-expanded=\{open\}/);
-  assert.match(section, /\{open && <div id=\{bodyId\} style=\{s\.sectionRows\}>\{children\}<\/div>\}/);
+  assert.match(section, /\{open && <div id=\{bodyId\} style=\{\{ \.\.\.s\.sectionRows, \.\.\.s\.collapsibleBody \}\}>\{children\}<\/div>\}/);
+  // 펼침 상태 시각 구분: 제목 왼쪽 화살표(› / ⌄), 연회색 헤더, 상세 구분선
+  assert.match(section, /\{open \? "⌄" : "›"\}/);
+  assert.match(section, /open \? s\.collapsibleHeaderOpen/);
+  assert.match(section, /open \? s\.collapsibleGroupOpen/);
+  assert.ok(section.indexOf("collapsibleChevron") < section.indexOf("{title}"), "chevron sits left of the title");
+  assert.match(card, /collapsibleHeaderOpen: \{ background:"#f3f4f6" \}/);
+  assert.match(card, /collapsibleBody: \{ borderTop:"1px solid #e5e7eb"/);
   assert.match(card, /<CollapsibleDetailSection icon="💰" title=\{detailText\.salaryComposition\} summary=\{formatContractRate\(combined, employee\.contract\.payType, lang\)\} first>/);
   assert.match(card, /<CollapsibleDetailSection icon="📅" title=\{detailText\.monthApplication\} summary=\{employee\.amounts\.workAppliedAmount === null \? \(lang === "vi" \? "Cần kiểm tra" : "확인 필요"\) : formatVnd\(employee\.amounts\.workAppliedAmount\)\}/);
   // 다른 섹션은 기존 DetailSection 유지
