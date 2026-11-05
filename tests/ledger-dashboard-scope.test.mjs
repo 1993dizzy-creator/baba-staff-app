@@ -19,6 +19,9 @@ for(const month of ['2026-08','2026-09','2026-10'])test(`${month}: full/dashboar
   assert.deepEqual(buildProvisionalOperatingProfit({...sources,summary:d.summary}),buildProvisionalOperatingProfit({...sources,summary:f.summary}));
  }
  const report=buildDashboardReport(f,p),fd=buildDashboardDetailEmoji(f),dd=buildDashboardDetailEmoji(d);for(const row of report.income)for(const detail of row.details)assert.equal(dd(detail,'income',row.id),fd(detail,'income',row.id));
+ assert.equal(report.kpis.expense,21200); // payment movements, including August's legacy-snapshot month
+ assert.equal(report.expenses.reduce((sum,row)=>sum+row.amount,0),report.kpis.expense);
+ assert.equal(d.cashReport.actualCashOutflowMovement,report.kpis.expense);
  assert.deepEqual(light.spies,{inventoryDisplay:0,inventoryIssues:0,entries:0,reserveEntries:0});
  assert.ok(!light.calls.some(c=>['ledger_candidates','ledger_parties'].includes(c.table)));
  assert.ok(!light.calls.some(c=>['paidRoots','paidCorrections','recognition'].includes(c.kind)));

@@ -90,19 +90,9 @@ export function listActualCashOutflowItems(
   transactions: readonly CashOutflowTransaction[],
   businessFundAccountIds: ReadonlySet<number>,
   month: string,
-  useLegacySnapshot = true,
 ): ActualCashOutflowItem[] {
-  const legacy = transactions.find((row) =>
-    row.source_key === `legacy_sheet_expense_reconciliation:${month}` &&
-    row.source_snapshot?.sheetCashOutflow != null,
-  );
-  const sheetCashOutflow = legacy?.source_snapshot?.sheetCashOutflow;
-  if (
-    useLegacySnapshot &&
-    (typeof sheetCashOutflow === "number" || (typeof sheetCashOutflow === "string" && sheetCashOutflow.trim() !== "")) &&
-    Number.isFinite(Number(sheetCashOutflow)) && Number(sheetCashOutflow) >= 0
-  ) return [{ transaction: legacy!, amount: Number(sheetCashOutflow) }];
-
+  // Cash KPIs and category breakdowns share the same payment movements in every
+  // month. Legacy sheet totals are non-cash evidence, never payment overrides.
   const start = `${month}-01`;
   const endDate = new Date(`${start}T00:00:00Z`);
   endDate.setUTCMonth(endDate.getUTCMonth() + 1);
