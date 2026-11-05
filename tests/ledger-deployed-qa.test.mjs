@@ -77,6 +77,15 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
   deps['@/lib/partners/select-options']=require('../lib/partners/select-options.ts');
   deps['@/components/partners/PartnerOptionGroups']=transpiled('components/partners/PartnerOptionGroups.tsx',deps);
   deps['./PartnerSelect']=transpiled('app/(protected)/admin/ledger/entries/PartnerSelect.tsx',deps);
+  // Manual transaction form module imported by the entries page since da98e6ff.
+  deps['@/lib/ledger/manual-transaction-form']=require('../lib/ledger/manual-transaction-form.ts');
+  deps['./ManualTransactionForm']=transpiled('app/(protected)/admin/ledger/entries/ManualTransactionForm.tsx',deps);
+  // Card deposit form imported by the entries page since 32f83a81.
+  deps['../card-settlements/CardDepositForm']=transpiled('app/(protected)/admin/ledger/card-settlements/CardDepositForm.tsx',deps);
+  deps['./CancelledManualTransactions']=transpiled('app/(protected)/admin/ledger/entries/CancelledManualTransactions.tsx',deps);
+  deps['@/lib/ledger/inventory-purchase-status']=require('../lib/ledger/inventory-purchase-status.ts');
+  deps['@/components/ledger/InventoryPurchaseCaseDetails']={default:()=>null};
+  deps['./EntryStatusSections']=transpiled('app/(protected)/admin/ledger/entries/EntryStatusSections.tsx',deps);
   deps['@/components/ledger/InventoryProjectionResolution']=transpiled('components/ledger/InventoryProjectionResolution.tsx',deps);
   const testModule={exports:{}};
   const code=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
@@ -257,7 +266,10 @@ test('a drilldown selected in another month cannot expose payment controls after
 });
 test('current-month operational detail retains its payment form',()=>{
   const month=nowMonth(),payables=payableFixture('2026-09');payables.month=month;
-  const state=entriesFixture(month,{selected:true,payables});assert.match(state.html,/선택 일자 0건 결제/);assert.match(state.html,/출금 계정/);
+  const state=entriesFixture(month,{selected:true,payables});assert.match(state.html,/선택 일자 0건 결제/);
+  // P0-2 follow-up: 결제 정보(출금 계정·결제일시·메모) starts collapsed behind a toggle so the date list keeps the space.
+  assert.match(state.html,/결제 정보 입력/);assert.match(state.html,/aria-expanded="false" aria-controls="payable-payment-info"/);
+  assert.doesNotMatch(state.html,/출금 계정|id="payable-payment-info"/);assert.doesNotMatch(state.html,/🤝/);
 });
 test('zero reconciliations retain compact collapsed sales and entry button without displaying a deposit form',()=>{
   const sale=(id,date,amount)=>({id,business_date:date,amount,allocatedGrossAmount:0,outstandingGrossAmount:amount});

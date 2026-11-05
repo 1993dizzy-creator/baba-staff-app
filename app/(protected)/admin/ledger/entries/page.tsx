@@ -1536,7 +1536,7 @@ function LedgerEntriesContent() {
         ) : null}
         {payableParty && data && payables?.month === month && payableParty.viewMonth === month ? (
           month === currentMonth()
-            ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { if (!await load()) throw new Error("PAYMENT_REFRESH_FAILED"); setPayableParty(null); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
+            ? <PayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} party={payableParty} partyEmoji={ledgerPartyEmoji(partnerByLedgerParty.get(payableParty.partyId)?.emoji,payableParty.partnerType)} accounts={businessAccounts} onClose={() => setPayableParty(null)} onPaid={async () => { if (!await load()) throw new Error("PAYMENT_REFRESH_FAILED"); setPayableParty(null); setNotice(vi ? "Đã thanh toán các ngày đã chọn." : "선택 일자의 미납금을 결제했습니다."); }} />
             : <HistoricalPayablePartySheet key={`${month}:${payableParty.partyId}`} lang={lang} month={month} party={payableParty} onClose={() => setPayableParty(null)} />
         ) : null}
       </main>
@@ -2155,13 +2155,16 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
   </BarSheet>;
 }
 
-function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
-  lang:"ko"|"vi"; party:PayableParty; accounts:Account[]; onClose:()=>void; onPaid:()=>Promise<void>;
+function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid }: {
+  lang:"ko"|"vi"; party:PayableParty; partyEmoji:string; accounts:Account[]; onClose:()=>void; onPaid:()=>Promise<void>;
 }) {
   const vi=lang==="vi", initial=localTime();
   const [detail,setDetail]=useState<PayableDetail|null>(null),[selectedDates,setSelectedDates]=useState<Set<string>>(()=>new Set()),[accountId,setAccountId]=useState(""),[date,setDate]=useState(initial.slice(0,10)),[time,setTime]=useState(initial.slice(11,16)),[memo,setMemo]=useState(""),[saving,setSaving]=useState(false),[error,setError]=useState("");
   // Added after the existing hooks so hook order stays stable for the rendering harness in tests/ledger-deployed-qa.
   const [mode,setMode]=useState<"dates"|"partial"|"history">("dates"),[partialAmount,setPartialAmount]=useState("");
+  // 결제 정보(출금 계정·결제일시·메모) starts collapsed so the date list keeps the vertical space;
+  // selecting dates never opens it, so the list scroll position and checks stay put.
+  const [paymentInfoOpen,setPaymentInfoOpen]=useState(false);
   const loadDetail=useCallback(async()=>{setError("");try{const response=await fetch(`/api/admin/ledger/payables/${party.partyId}`,{cache:"no-store"}),body=await response.json();if(!response.ok)throw new Error(body.code);setDetail(body)}catch{setError(vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다.")}},[party.partyId,vi]);
   useEffect(()=>{void loadDetail()},[loadDetail]);
   const groups=useMemo(()=>groupPayableRows(detail?.payables??[]),[detail]);
@@ -2178,7 +2181,7 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
   return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}>{mode==="history"?null:<button type="button" disabled={saving||!accountId||!canPay} onClick={()=>void (mode==="dates"?pay():payPartial())} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):mode==="dates"?(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`):(vi?`Thanh toán một phần ${money(partialPlan.error===null?partialPlan.amount:0)}`:`부분 지급 ${money(partialPlan.error===null?partialPlan.amount:0)}`)}</button>}<button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
     <div className={styles.payableSheetBody}>
     <PayablePaymentRecovery partyId={party.partyId} vi={vi} accounts={accounts} onConfirmed={onPaid}/>
-    <div className={styles.payableDetailHeader}><strong>🤝 {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
+    <div className={styles.payableDetailHeader}><strong><span role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{partyEmoji}</span> {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
     <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods}/>
     {error?<p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p>:null}
@@ -2195,7 +2198,13 @@ function PayablePartySheet({ lang, party, accounts, onClose, onPaid }: {
       </div>}
     {!detail&&!error?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải chi tiết công nợ…":"미납 상세를 불러오는 중…"} />:null}
     {detail&&mode!=="history"&&!groups.length&&!error?<p className={styles.payableEmpty}>{vi?"Không có công nợ chưa thanh toán.":"미납금이 없습니다."}</p>:null}
-    {mode==="history"?null:<div className={styles.paymentForm}>{mode==="dates"?<div className={styles.selectedTotal}><span>{vi?"Công nợ đã chọn":"선택 미납금"}</span><strong>{money(selectedTotal)}</strong></div>:null}<div className={styles.manualSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={accountId} setValue={setAccountId} accounts={accounts}/></div><div className={styles.manualRow}><BarField label={`📅 ${vi?"Ngày thanh toán":"결제일"}`} required compact>{({id})=><input id={id} type="date" value={date} onChange={event=>setDate(event.target.value)} style={keepingInputStyle}/>}</BarField><BarField label={`🕒 ${vi?"Thời gian":"시간"}`} required compact>{({id})=><input id={id} type="time" value={time} onChange={event=>setTime(event.target.value)} style={keepingInputStyle}/>}</BarField></div><BarField label={`📝 ${vi?"Ghi chú":"메모"}`} compact>{({id})=><input id={id} value={memo} onChange={event=>setMemo(event.target.value)} style={keepingInputStyle}/>}</BarField></div>}
+    {mode==="history"?null:<div className={styles.paymentForm}>{mode==="dates"?<div className={styles.selectedTotal}><span>{vi?"Công nợ đã chọn":"선택 미납금"}</span><strong>{money(selectedTotal)}</strong></div>:null}
+      <button type="button" className={styles.paymentInfoToggle} aria-expanded={paymentInfoOpen} aria-controls="payable-payment-info" disabled={saving||(mode==="dates"&&!paymentInfoOpen&&!selectedDates.size)} onClick={()=>setPaymentInfoOpen(open=>!open)}>
+        <span>💳 {vi?"Thông tin thanh toán":"결제 정보 입력"}</span>
+        <small>{accountId?(accounts.find(account=>String(account.id)===accountId)?.display_name??""):mode==="dates"&&!selectedDates.size?(vi?"Chọn ngày trước":"날짜를 먼저 선택"):(vi?"Cần chọn tài khoản chi":"출금 계정 선택 필요")}</small>
+        <i aria-hidden>{paymentInfoOpen?"⌄":"›"}</i>
+      </button>
+      {paymentInfoOpen?<div id="payable-payment-info" className={styles.paymentInfoFields}><div className={styles.manualSingle}><AccountField lang={lang} label={`🏦 ${vi?"Tài khoản chi":"출금 계정"}`} value={accountId} setValue={setAccountId} accounts={accounts}/></div><div className={styles.manualRow}><BarField label={`📅 ${vi?"Ngày thanh toán":"결제일"}`} required compact>{({id})=><input id={id} type="date" value={date} onChange={event=>setDate(event.target.value)} style={keepingInputStyle}/>}</BarField><BarField label={`🕒 ${vi?"Thời gian":"시간"}`} required compact>{({id})=><input id={id} type="time" value={time} onChange={event=>setTime(event.target.value)} style={keepingInputStyle}/>}</BarField></div><BarField label={`📝 ${vi?"Ghi chú":"메모"}`} compact>{({id})=><input id={id} value={memo} onChange={event=>setMemo(event.target.value)} style={keepingInputStyle}/>}</BarField></div>:null}</div>}
     </div>
   </BarSheet>
 }

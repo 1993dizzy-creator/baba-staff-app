@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
+import ts from "typescript";
+import * as partnerTextModule from "../lib/partners/text.ts";
 import { calculatePurchaseSettlement } from "../lib/ledger/payables.ts";
 import { buildSettlementPeriods, settlementPeriodFor, type SettlementPolicyValue } from "../lib/ledger/settlement-periods.ts";
 
@@ -134,8 +137,65 @@ test("both payable sheets show the read-only summary; payment controls are uncha
   assert.match(page, /선택 일자 \$\{selectedDates\.size\}건 결제/);
   assert.match(page, /부분 지급/);
   const component = read("components/ledger/SettlementPeriodSummary.tsx");
-  assert.doesNotMatch(component, /onClick|fetch\(|method:/);
-  assert.match(component, /실제 지급일이나 연체 확정이 아닙니다/);
-  assert.match(component, /ngày chốt|Ngày chốt/);
-  assert.match(component, /lastPaid/);
+  // display-only: the only interaction is the local 상세 toggle
+  assert.doesNotMatch(component, /fetch\(|method:|onPaid|setSelected/);
+});
+
+// Render the real component (KO/VI) with React; module CSS resolves to class names.
+function renderSummary(props: Record<string, unknown>) {
+  const require = createRequire(import.meta.url);
+  const React = require("react"), runtime = require("react/jsx-runtime"), { renderToStaticMarkup } = require("react-dom/server");
+  const code = ts.transpileModule(read("components/ledger/SettlementPeriodSummary.tsx"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const mod = { exports: {} as { default: (p: unknown) => unknown } };
+  const deps: Record<string, unknown> = { react: React, "react/jsx-runtime": runtime, "@/lib/partners/text": partnerTextModule, "./SettlementPeriodSummary.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) } };
+  new Function("require", "module", "exports", code)((name: string) => { assert.ok(name in deps, name); return deps[name]; }, mod, mod.exports);
+  return renderToStaticMarkup(React.createElement(mod.exports.default, props)) as string;
+}
+const strip = (html: string) => html.replace(/<[^>]+>/g, "");
+
+test("compact summary: Phương single period is one line with range and 기준일, no badges or amounts", () => {
+  const periods = buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 9_394_000), payable(2, "2026-11-05", 1_298_000)], "2026-11-30")!;
+  const ko = renderSummary({ lang: "ko", policy: phuong, periods });
+  assert.equal(strip(ko), "📅 매월 15일·말일 정산 · 11/1~11/15 거래분 · 기준일 11/15(일)");
+  assert.doesNotMatch(ko, /기준일 지남|진행 중|₫|<button|연체/);
+  const vi = renderSummary({ lang: "vi", policy: phuong, periods });
+  assert.equal(strip(vi), "📅 Chốt ngày 15 và cuối tháng hằng tháng · 11/1~11/15 giao dịch · chốt 11/15(CN)");
+});
+
+test("compact summary: several periods show a count and an on-demand detail toggle", () => {
+  const periods = buildSettlementPeriods(okMart, [payable(1, "2026-10-28", 4_144_500), payable(2, "2026-11-01", 939_000), payable(3, "2026-11-02", 10_922_000)], "2026-11-05")!;
+  const ko = renderSummary({ lang: "ko", policy: okMart, periods });
+  assert.equal(strip(ko), "📅 매주 화요일 지급 기준 · 미지급 정산기간 2개상세›");
+  assert.match(ko, /aria-expanded="false"/);
+  assert.doesNotMatch(ko, /<ul|₫|기준일 지남/);
+  assert.equal(strip(renderSummary({ lang: "vi", policy: okMart, periods })), "📅 Thứ Ba hằng tuần (mốc thanh toán) · 2 kỳ còn nợChi tiết›");
+});
+
+test("compact summary: non-period terms show the term only; non-postpaid renders nothing", () => {
+  const adHoc = { paymentMode: "postpaid", settlementMode: "ad_hoc", settlementRule: null, settlementDays: null, defaultPaymentTermDays: null };
+  assert.equal(strip(renderSummary({ lang: "ko", policy: adHoc, periods: null })), "📅 비정기 정산");
+  assert.equal(renderSummary({ lang: "ko", policy: { ...adHoc, paymentMode: "immediate", settlementMode: null }, periods: null }), "");
+});
+
+test("Phương 11/15 showed 기준일 지남 on 11/5: the month view passes the month end as the as-of date", () => {
+  // The entries page always loads ?month=YYYY-MM, so the API as-of is the month end (11/30), not today.
+  assert.match(read("app/api/admin/ledger/payables/route.ts"), /const asOfDate=bounds\?new Date\(Date\.parse\(bounds\.nextMonthStart\+"T00:00:00Z"\)-86400000\)/);
+  assert.match(read("app/(protected)/admin/ledger/entries/page.tsx"), /fetch\(`\/api\/admin\/ledger\/payables\?month=\$\{requestedMonth\}`/);
+  const asOfMonthEnd = buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 1)], "2026-11-30")![0];
+  assert.equal(asOfMonthEnd.position, "reference_passed");
+  // The period dates themselves are correct; only the as-of date differs.
+  assert.deepEqual([asOfMonthEnd.start, asOfMonthEnd.end, asOfMonthEnd.referenceDate], ["2026-11-01", "2026-11-15", "2026-11-15"]);
+  assert.equal(buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 1)], "2026-11-05")![0].position, "open");
+  // The compact UI no longer renders any position badge.
+  assert.doesNotMatch(read("components/ledger/SettlementPeriodSummary.tsx"), /position/);
+});
+
+test("payable sheet header uses the shared partner category emoji and a collapsed payment-info toggle", () => {
+  const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+  assert.match(page, /partyEmoji=\{ledgerPartyEmoji\(partnerByLedgerParty\.get\(payableParty\.partyId\)\?\.emoji,payableParty\.partnerType\)\}/);
+  assert.doesNotMatch(page, /<strong>🤝 \{party\.partyName\}/);
+  assert.match(page, /const \[paymentInfoOpen,setPaymentInfoOpen\]=useState\(false\);/);
+  // selecting a date never toggles the payment info panel
+  assert.doesNotMatch(page, /onSelectDate=\{date=>\{?[^}]*setPaymentInfoOpen/);
+  assert.match(read("app/(protected)/admin/ledger/entries/entries.module.css"), /\.payableSheetBody>\.payableDates\{min-height:min\(184px,42vh\)\}/);
 });

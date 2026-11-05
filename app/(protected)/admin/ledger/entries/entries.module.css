@@ -266,3 +266,11 @@
 .incomeModeButton{display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:60px;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;font-size:13px;font-weight:800;line-height:1.3;text-align:center;overflow-wrap:anywhere;cursor:pointer}
 .incomeModeButton[aria-pressed="true"]{border-color:#111827;background:#111827;color:#fff}
 .incomeModeButton:disabled{opacity:.45;cursor:default}.incomeModeButton:focus-visible{outline:2px solid #64748b;outline-offset:2px}
+/* P0-2 follow-up: payable sheet keeps vertical space for the date list; 결제 정보 is collapsible. */
+.paymentInfoToggle{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;min-height:36px;padding:6px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;font-size:12px;font-weight:800;text-align:left}
+.paymentInfoToggle small{min-width:0;overflow:hidden;color:#6b7280;font-size:11px;font-weight:600;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.paymentInfoToggle i{font-style:normal;color:#6b7280}
+.paymentInfoToggle[aria-expanded=true]{border-color:#9ca3af;background:#f3f4f6}
+.paymentInfoToggle:disabled{opacity:.55}
+.paymentInfoFields{display:grid;gap:8px}
+.payableSheetBody>.payableDates{min-height:min(184px,42vh)}
