@@ -57,7 +57,8 @@ test("supply item rows show category, name, right-aligned price, and never the r
 // 23: no duplicated "기본정보 수정" heading -- PartnerForm flows directly after identity
 test("no duplicate edit-panel heading; PartnerForm's own first section is not `first` since identity precedes it", () => {
   assert.doesNotMatch(partnerDetail, /기본정보 수정|<h2>{t\.edit}/);
-  assert.match(partnerDetail, /<PartnerForm key={`\${partner\.id}-\${partner\.name}-\${partner\.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} \/>/);
+  // P0-2: the key also carries the payment policy so the form remounts from reloaded values after save.
+  assert.match(partnerDetail, /<PartnerForm key={`\${partner\.id}-\${partner\.name}-\${partner\.isActive}-\${partner\.paymentMode}-[^`]*\${partner\.defaultFundAccountId}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} \/>/);
   assert.match(partnerForm, /first\?: boolean/);
   assert.match(partnerForm, /first = true/);
   assert.match(partnerForm, /<BarSection title={sectionLabels\.basic} icon="📌" first={first} compact={slim}>/);

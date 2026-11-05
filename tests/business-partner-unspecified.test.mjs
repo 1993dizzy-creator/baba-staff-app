@@ -25,12 +25,13 @@ function load(path,deps){const mod={exports:{}};const code=ts.transpileModule(re
 function segments(element){if(!element||typeof element!=='object')return [];if(Array.isArray(element))return element.flatMap(segments);if(typeof element.type==='function')return segments(element.type(element.props));return [element,...segments(element.props?.children)];}
 test('partner payment UI renders three choices and clears policy on unspecified',()=>{
  const stub=props=>({type:'segmented',props});
- const Fields=load('components/PartnerSettlementFields.tsx',{'react/jsx-runtime':runtime,'@/lib/partners/policy':{SETTLEMENT_RULES},'@/components/bar/keeping/KeepingUi':{BarSegmentedControl:stub,keepingInputStyle:{}},'@/lib/partners/text':{partnerText,formatPartnerFundAccount:()=>''}});
+ const Fields=load('components/PartnerSettlementFields.tsx',{'react/jsx-runtime':runtime,'@/lib/partners/policy':{SETTLEMENT_RULES},'@/components/bar/keeping/KeepingUi':{BarSegmentedControl:stub,keepingInputStyle:{}},'@/lib/partners/text':{partnerText,formatPartnerFundAccount:()=>'',formatPartnerPolicySummary:()=>'summary'}});
  for(const lang of ['ko','vi'])for(const paymentMode of PAYMENT_MODES){
  let changed;const value={...base,paymentMode,settlementMode:paymentMode==='postpaid'?'scheduled':null,settlementRule:paymentMode==='postpaid'?'net_days':null,defaultPaymentTermDays:paymentMode==='postpaid'?30:null};
  const tree=segments(Fields({lang,value,fundAccounts:[],onChange:next=>{changed=next;}}));const segmented=tree.find(node=>node.type==='segmented');
  assert.equal(segmented.props.value,paymentMode);assert.deepEqual(segmented.props.options.map(option=>option.value),[...PAYMENT_MODES]);
- assert.equal(segmented.props.options[0].label,partnerText[lang].unspecified);
+ assert.equal(segmented.props.options[0].label.replace(/^✓ /,''),partnerText[lang].unspecified);
+ assert.ok(segmented.props.options.every(option=>option.label.startsWith('✓ ')===(option.value===paymentMode)),'selected option is marked by text, not color only');
  segmented.props.onChange('unspecified');assert.equal(changed.paymentMode,'unspecified');for(const key of ['settlementMode','settlementRule','defaultPaymentTermDays'])assert.equal(changed[key],null);
  assert.equal(tree.filter(node=>node.type==='select').length,paymentMode==='postpaid'?2:1);
  }
@@ -49,27 +50,27 @@ test('new PartnerForm defaults unspecified and existing values/party bridge roun
 
 test('KO/VI shared settlement UI restores exact dates, accepts manual selections and clears only on mode changes',()=>{
  const stub=props=>({type:'segmented',props});
- const Fields=load('components/PartnerSettlementFields.tsx',{'react/jsx-runtime':runtime,'@/lib/partners/policy':{SETTLEMENT_RULES},'@/components/bar/keeping/KeepingUi':{BarSegmentedControl:stub,keepingInputStyle:{}},'@/lib/partners/text':{partnerText,formatPartnerFundAccount:()=>''}});
+ const Fields=load('components/PartnerSettlementFields.tsx',{'react/jsx-runtime':runtime,'@/lib/partners/policy':{SETTLEMENT_RULES},'@/components/bar/keeping/KeepingUi':{BarSegmentedControl:stub,keepingInputStyle:{}},'@/lib/partners/text':{partnerText,formatPartnerFundAccount:()=>'',formatPartnerPolicySummary:()=>'summary'}});
  for(const lang of ['ko','vi']) {
   const render=value=>{let changed;return {tree:segments(Fields({lang,value,fundAccounts:[],onChange:next=>{changed=next;}})),get changed(){return changed;}};};
   const weekly={...base,paymentMode:'postpaid',settlementMode:'scheduled',settlementRule:'weekly',settlementDays:[2],defaultPaymentTermDays:null};
   let view=render(weekly);
   const selects=view.tree.filter(node=>node.type==='select');
-  assert.equal(selects[1].props.value,'weekly');assert.equal(selects[2].props.value,2);
-  selects[2].props.onChange({target:{value:'3'}});assert.deepEqual(view.changed.settlementDays,[3]);
+  assert.equal(selects[0].props.value,'weekly');assert.equal(selects[1].props.value,2);
+  selects[1].props.onChange({target:{value:'3'}});assert.deepEqual(view.changed.settlementDays,[3]);
   const segment=view.tree.find(node=>node.type==='segmented');
   segment.props.onChange('postpaid');assert.deepEqual(view.changed,weekly,'same-mode event must not erase policy');
   segment.props.onChange('immediate');assert.equal(view.changed.settlementRule,null);assert.equal(view.changed.settlementDays,null);
-  selects[1].props.onChange({target:{value:'monthly_twice'}});assert.deepEqual(view.changed.settlementDays,[],'no inferred monthly dates');
+  selects[0].props.onChange({target:{value:'monthly_twice'}});assert.deepEqual(view.changed.settlementDays,[],'no inferred monthly dates');
   view=render({...weekly,settlementRule:'monthly_twice',settlementDays:[15,0]});
   const monthly=view.tree.filter(node=>node.type==='select');
-  assert.deepEqual(monthly.slice(2).map(node=>node.props.value),[15,0]);
-  assert.equal(monthly[2].props.required,true);
-  monthly[3].props.onChange({target:{value:'20'}});assert.deepEqual(view.changed.settlementDays,[15,20]);
+  assert.deepEqual(monthly.slice(1,3).map(node=>node.props.value),[15,0]);
+  assert.equal(monthly[1].props.required,true);
+  monthly[2].props.onChange({target:{value:'20'}});assert.deepEqual(view.changed.settlementDays,[15,20]);
   view=render({...weekly,settlementRule:'net_days',settlementDays:null,defaultPaymentTermDays:7});
   const input=view.tree.find(node=>node.type==='input');assert.equal(input.props.value,7);
   input.props.onChange({target:{value:'14'}});assert.equal(view.changed.defaultPaymentTermDays,14);
   view=render({...weekly,settlementRule:'monthly_once',settlementDays:null});
-  assert.equal(view.tree.filter(node=>node.type==='select')[2].props.required,false,'legacy undated terms stay editable');
+  assert.equal(view.tree.filter(node=>node.type==='select')[1].props.required,false,'legacy undated terms stay editable');
  }
 });

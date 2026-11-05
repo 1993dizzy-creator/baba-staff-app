@@ -123,7 +123,7 @@ export default function PartnerDetailPage() {
         </div>}
       </BarSection>
       {duplicate ? <DuplicatePartnerNotice lang={lang} partner={duplicate.partner} /> : null}
-      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} />
+      <PartnerForm key={`${partner.id}-${partner.name}-${partner.isActive}-${partner.paymentMode}-${partner.settlementMode}-${partner.settlementRule}-${(partner.settlementDays ?? []).join(",")}-${partner.defaultPaymentTermDays}-${partner.defaultFundAccountId}`} lang={lang} initial={partner} fundAccounts={fundAccounts} partnerSubtypes={partnerSubtypes} first={false} slim onSubmit={update} />
       <BarSection title={tagLabels.title} icon="🏷️">
         <div style={{ display: "flex", gap: 8 }}>
           <input value={tagInput} maxLength={30} placeholder={tagLabels.placeholder} onChange={event => setTagInput(event.target.value)} style={{ ...keepingInputStyle, flex: 1 }} />

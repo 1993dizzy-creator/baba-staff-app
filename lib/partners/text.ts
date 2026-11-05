@@ -44,6 +44,69 @@ export function formatPartnerPaymentSummary(value: { paymentMode: string; defaul
   return `${fund}(${mode})`;
 }
 
+type PartnerPolicyValue = {
+  paymentMode: string;
+  settlementMode?: string | null;
+  settlementRule?: string | null;
+  settlementDays?: number[] | null;
+  defaultPaymentTermDays?: number | null;
+  defaultFundAccountCode?: string | null;
+};
+
+const WEEKDAY_LABELS = {
+  ko: ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"],
+  vi: ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"],
+} as const;
+
+// Monthly day 0 is the month end ("말일"); it is listed after numbered days.
+function formatMonthDays(days: number[], lang: "ko" | "vi") {
+  const sorted = [...days].sort((a, b) => (a === 0 ? 32 : a) - (b === 0 ? 32 : b));
+  return sorted.map(day => day === 0 ? (lang === "vi" ? "cuối tháng" : "말일") : (lang === "vi" ? `ngày ${day}` : `${day}일`)).join(lang === "vi" ? " và " : "·");
+}
+
+// Settlement term of a postpaid partner as a settlement reference (정산 기준), never a
+// confirmed payment/overdue date. Returns null for non-postpaid partners.
+export function formatPartnerSettlementTerm(value: PartnerPolicyValue, lang: "ko" | "vi"): string | null {
+  if (value.paymentMode !== "postpaid") return null;
+  const vi = lang === "vi";
+  if (value.settlementMode === "ad_hoc") return vi ? "Thanh toán không định kỳ" : "비정기 정산";
+  if (value.settlementMode !== "scheduled" || !value.settlementRule) return vi ? "Chưa đặt chu kỳ thanh toán" : "정산주기 미지정";
+  const days = Array.isArray(value.settlementDays) ? value.settlementDays.filter(day => Number.isInteger(day)) : [];
+  switch (value.settlementRule) {
+    case "weekly": {
+      const label = days.length !== 1 || days[0] < 1 || days[0] > 7 ? null : WEEKDAY_LABELS[lang][days[0] - 1];
+      if (!label) return vi ? "Hàng tuần (chưa chọn thứ)" : "주간 정산(요일 미지정)";
+      return vi ? `${label} hằng tuần (mốc thanh toán)` : `매주 ${label} 지급 기준`;
+    }
+    case "monthly_once":
+      if (days.length !== 1) return vi ? "Mỗi tháng 1 lần (chưa chọn ngày)" : "월 1회 정산(날짜 미지정)";
+      return vi ? `Chốt ${formatMonthDays(days, lang)} hằng tháng` : `매월 ${formatMonthDays(days, lang)} 정산`;
+    case "monthly_twice":
+      if (days.length !== 2) return vi ? "Mỗi tháng 2 lần (chưa chọn ngày)" : "월 2회 정산(날짜 미지정)";
+      return vi ? `Chốt ${formatMonthDays(days, lang)} hằng tháng` : `매월 ${formatMonthDays(days, lang)} 정산`;
+    case "net_days":
+      return value.defaultPaymentTermDays == null
+        ? (vi ? "Trả sau N ngày (chưa nhập)" : "매입 후 N일(일수 미지정)")
+        : (vi ? `Trả sau ${value.defaultPaymentTermDays} ngày kể từ khi mua` : `매입 후 ${value.defaultPaymentTermDays}일 지급`);
+    default:
+      return vi ? "Chưa đặt chu kỳ thanh toán" : "정산주기 미지정";
+  }
+}
+
+// One-line policy summary for partner lists and the settings form preview, e.g.
+// "후불 · 매월 15일·말일 정산 · 법인 기본" / "선불/즉시 성향 · 법인 기본". The fund account is a
+// suggested default only; nothing here claims an actual payment.
+export function formatPartnerPolicySummary(value: PartnerPolicyValue, lang: "ko" | "vi") {
+  const vi = lang === "vi";
+  const mode = value.paymentMode === "immediate" ? (vi ? "Trả trước/ngay" : "선불/즉시 성향")
+    : value.paymentMode === "postpaid" ? (vi ? "Trả sau" : "후불")
+    : (vi ? "Chưa chọn cách thanh toán" : "결제방식 미지정");
+  const fund = value.defaultFundAccountCode
+    ? (vi ? `Mặc định: ${formatPartnerFundAccount(value.defaultFundAccountCode, lang, "compact")}` : `${formatPartnerFundAccount(value.defaultFundAccountCode, lang, "compact")} 기본`)
+    : (vi ? "Chưa chọn tài khoản" : "계좌 미지정");
+  return [mode, formatPartnerSettlementTerm(value, lang), fund].filter(Boolean).join(" · ");
+}
+
 const PARTNER_SUBTYPE_UNCLASSIFIED = { ko: "미분류", vi: "Chưa phân loại" };
 
 // Same KO/VI fallback shape as keepingLiquorName (lib/bar/keeping-types.ts) and the

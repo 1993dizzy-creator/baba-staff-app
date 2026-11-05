@@ -11,7 +11,7 @@ import { findDuplicatePartner, type DuplicatePartner } from "@/lib/partners/dupl
 import { formatInventoryItemCount, type InventoryCategoryGroup } from "@/lib/inventory/category-groups";
 import { groupPartnersByTypeAndSubtype } from "@/lib/partners/policy";
 import { effectivePartnerEmoji, partnerTypeEmoji } from "@/lib/partners/emoji";
-import { formatPartnerPaymentSummary, formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
+import { formatPartnerPolicySummary, formatPartnerSubtypeName, partnerText, partnerTypeLabels } from "@/lib/partners/text";
 import { PARTNER_SETTINGS_VIEWS, partnerSettingsText, type PartnerSettingsView } from "@/lib/partners/settings-view";
 import styles from "@/app/(protected)/admin/partners/partners.module.css";
 
@@ -25,14 +25,19 @@ type Partner = PartnerFormValue & { partnerSubtype: PartnerSubtype | null; id: n
 
 const ADD_FORM_ID = "partner-add-form";
 
+// Name (+tag) on the first line; 결제방식 · 정산주기 · 기본 계좌 on a second line that may wrap,
+// with the existing item count kept at the right.
 function PartnerRow({ partner, lang }: { partner: Partner; lang: "ko" | "vi" }) {
-  const payment = formatPartnerPaymentSummary(partner, lang);
+  const policy = formatPartnerPolicySummary(partner, lang);
   return <Link className={`${styles.compactRow} ${styles.partnerInfoRow}`} href={`/admin/partners/${partner.id}`}>
-    <span className={styles.rowNameGroup}>
-      <strong className={styles.rowName}>{effectivePartnerEmoji(partner.partnerType, partner.partnerSubtype)} {partner.name}</strong>
-      {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
+    <span className={styles.partnerRowMain}>
+      <span className={styles.rowNameGroup}>
+        <strong className={styles.rowName}>{effectivePartnerEmoji(partner.partnerType, partner.partnerSubtype)} {partner.name}</strong>
+        {partner.displayTag ? <span className={styles.tagBadge}>{partner.displayTag}</span> : null}
+      </span>
+      <span className={styles.partnerPolicy} data-testid="partner-policy-summary">{policy}</span>
     </span>
-    <span className={styles.rowMeta}>{payment} · {formatInventoryItemCount(partner.inventoryCount, partner.activeInventoryCount, lang)}</span>
+    <span className={styles.rowMeta}>{formatInventoryItemCount(partner.inventoryCount, partner.activeInventoryCount, lang)}</span>
     <span className={styles.chevron} aria-hidden="true">›</span>
   </Link>;
 }

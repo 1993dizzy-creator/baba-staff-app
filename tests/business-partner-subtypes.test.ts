@@ -326,7 +326,7 @@ test("26: info page renders the group -> subtype-divider -> row structure with t
   assert.match(infoPage, /<h3 className={styles\.subtypeDivider}>{partnerTypeEmoji\[group\.type\]} {formatPartnerSubtypeName\(null, lang\)}<\/h3>/);
   // 30/31: tag badge and payment summary formatting stay exactly as before
   assert.match(infoPage, /partner\.displayTag \? <span className={styles\.tagBadge}>{partner\.displayTag}<\/span> : null/);
-  assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
+  assert.match(infoPage, /formatPartnerPolicySummary\(partner, lang\)/);
   assert.match(infoPage, /formatInventoryItemCount\(partner\.inventoryCount, partner\.activeInventoryCount, lang\)/);
 });
 

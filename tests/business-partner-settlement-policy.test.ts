@@ -129,5 +129,5 @@ test("both forms expose the shared settlement controls", () => {
 
 test("candidate defaults to unspecified and list formatter is wired", () => {
   assert.match(read("app/(protected)/admin/partners/candidates/[id]/page.tsx"), /paymentMode: "unspecified", settlementMode: null, settlementRule: null, defaultPaymentTermDays: null/);
-  assert.match(infoPage, /formatPartnerPaymentSummary\(partner, lang\)/);
+  assert.match(infoPage, /formatPartnerPolicySummary\(partner, lang\)/);
 });

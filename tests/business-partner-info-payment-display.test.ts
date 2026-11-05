@@ -51,11 +51,13 @@ test("row name/tag group is overflow-safe: flex + min-width:0 wrapper, name elli
   assert.match(styles, /@media\(max-width:640px\)\{[\s\S]*\.tagBadge\{max-width:68px/);
 });
 
-// B9: fund account renders before payment mode in the shared control
-test("fund account select renders before the payment mode segmented control", () => {
-  const fundIdx = settlementFields.indexOf("t.defaultFundAccount");
+// B9 (P0-2): 결제방식 -> 정산조건 -> 기본 계좌(추천값) -> 현재 설정 요약
+test("payment mode, settlement terms, fund account and summary render in P0-2 order", () => {
   const modeIdx = settlementFields.indexOf("PolicySegmentedField compact={compact} label={t.paymentMode}");
-  assert.ok(fundIdx >= 0 && modeIdx >= 0 && fundIdx < modeIdx);
+  const ruleIdx = settlementFields.indexOf("{labels.title}<select");
+  const fundIdx = settlementFields.indexOf("t.defaultFundAccount}</span>");
+  const summaryIdx = settlementFields.indexOf('data-testid="partner-policy-summary"');
+  assert.ok(modeIdx >= 0 && modeIdx < ruleIdx && ruleIdx < fundIdx && fundIdx < summaryIdx);
 });
 
 // B10/B11/B12/B13: backend value unchanged, KO/VI full+compact labels
