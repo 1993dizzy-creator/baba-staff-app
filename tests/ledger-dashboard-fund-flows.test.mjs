@@ -57,9 +57,9 @@ test('non-cash records, cancelled transactions and opening entries cannot inflat
   assert.equal(classified(flow([row(1,100,{movements:[]}),row(2,999,{status:'cancelled'}),row(3,500,{type:'opening'})])),0);
 });
 
-test('legacy expense KPI snapshot is preserved while actual cash payments are classified only once',()=>{
+test('legacy expense snapshot is ignored by both KPI and actual fund flows',()=>{
   const rows=[row(1,-100,{type:'expense',business_date:'2026-08-02'}),row(2,0,{business_date:'2026-08-31',source_key:'legacy_sheet_expense_reconciliation:2026-08',source_snapshot:{sheetCashOutflow:200,fundMovementApplied:false}}),row(3,10,{business_date:'2026-08-31',source_type:'technical_adjustment'})];
-  assert.equal(computeActualCashOutflow(rows,ids,'2026-08'),200);
+  assert.equal(computeActualCashOutflow(rows,ids,'2026-08'),100);
   const result=computeDashboardFundFlows(rows,ids,'2026-08');assert.equal(result.actualCashOutflowMovement,100);assert.equal(result.otherFundAdjustment,10);assert.equal(classified(result),-90);
 });
 
@@ -74,8 +74,8 @@ test('September opening, flows and closing reconcile; expense KPI and profit rem
 });
 
 test('August non-cash sales correction remains a visible difference rather than an invented movement',()=>{
-  const current=fixture('2026-08',300353642,327538240,706109063,778924465,{actualCashOutflowMovement:521514025.5,investmentCashFlow:100000000,otherFundAdjustment:-255444639.5,operatingIncomeMovement:704143263});
-  const result=buildDashboardReport(current,current);assert.equal(result.kpis.expense,778924465);assert.equal(result.cashFlow.actualCashOutflow,521514025.5);
+  const current=fixture('2026-08',300353642,327538240,706109063,521514025.5,{actualCashOutflowMovement:521514025.5,investmentCashFlow:100000000,otherFundAdjustment:-255444639.5,operatingIncomeMovement:704143263});
+  const result=buildDashboardReport(current,current);assert.equal(result.kpis.expense,521514025.5);assert.equal(result.cashFlow.actualCashOutflow,521514025.5);
   assert.equal(result.cashFlow.reconciliationDifference,-1965800);
 });
 

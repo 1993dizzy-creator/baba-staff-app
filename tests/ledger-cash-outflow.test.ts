@@ -18,7 +18,7 @@ const payment = (type: string, amount: number, businessDate = "2026-09-10", over
   ...overrides,
 });
 
-test("legacy month uses its sheet cash outflow snapshot as the authoritative value", () => {
+test("legacy sheet snapshot never overrides actual payment movements", () => {
   const rows = [
     payment("expense", 10, "2026-08-03"),
     payment("balance_adjustment", 0, "2026-08-31", {
@@ -26,7 +26,8 @@ test("legacy month uses its sheet cash outflow snapshot as the authoritative val
       source_snapshot: { sheetCashOutflow: 778_924_465 },
     }),
   ];
-  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-08"), 778_924_465);
+  assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-08"), 10);
+  assert.equal(computeActualCashOutflow(rows.slice(1), businessFunds, "2026-08"), 0);
 });
 
 test("normal month sums external net outflow of business funds in the payment month", () => {
@@ -183,7 +184,7 @@ test("card clearing and settlement difference do not add a second cash outflow",
   assert.equal(computeActualCashOutflow(rows, businessFunds, "2026-09"), 25);
 });
 
-test("August reference amounts reconcile opening cash to closing cash", () => {
+test("August sheet reference is non-cash evidence and cannot manufacture payment movements", () => {
   const salesIncome = 734_634_810;
   const otherIncome = 51_743;
   const actualCardDeposits = 197_348_230;
@@ -198,9 +199,11 @@ test("August reference amounts reconcile opening cash to closing cash", () => {
   assert.equal(receivedIncome, 706_109_063);
   const actualSalesDeposits = receivedIncome - otherIncome;
   assert.equal(actualSalesDeposits, 706_057_320);
-  assert.equal(cashOutflow, 778_924_465);
+  assert.equal(cashOutflow, 0);
   assert.equal(cardSettlementDifference, 4_338_130);
-  assert.equal(300_353_642 + actualSalesDeposits + otherIncome + 100_000_000 - cashOutflow, 327_538_240);
+  // The historical sheet equation is evidence only; balances are read from the
+  // ledger, never repaired by treating this snapshot as an actual payment.
+  assert.equal(300_353_642 + actualSalesDeposits + otherIncome + 100_000_000 - 778_924_465, 327_538_240);
 });
 
 test("ledger route exposes cash outflow alongside unchanged accounting summary fields", () => {

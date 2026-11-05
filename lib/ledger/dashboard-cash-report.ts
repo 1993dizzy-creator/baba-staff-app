@@ -180,9 +180,7 @@ export function computeDashboardFundFlows(
 ) {
   const start = `${month}-01`;
   const end = monthEnd(month);
-  // The flow uses actual movements, even when a legacy expense KPI is backed
-  // by a non-cash sheet snapshot. Its represented payments must not count twice.
-  const outflows = listActualCashOutflowItems(transactions, businessFundAccountIds, month, false);
+  const outflows = listActualCashOutflowItems(transactions, businessFundAccountIds, month);
   const outflowTransactions = new Set(outflows.map(item => item.transaction));
   let investmentCashFlow = 0;
   let otherFundAdjustment = 0;

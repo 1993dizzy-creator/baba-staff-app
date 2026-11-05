@@ -360,7 +360,7 @@ test("dashboard UI: KPI amount colors, adjacent detail button, shared category c
   assert.match(dashboardStylesCompact, /\.rowChange\{flex-shrink:0;color:#9ca3af;font-size:9px;/);
 });
 
-test("every actual-cash expense row equals the sum of its details; payroll_payment appears as 급여 지급", () => {
+for (const month of ["2026-08", "2026-09", "2026-10"]) test(`${month} actual-cash categories and details equal payments despite legacy snapshots and unpaid costs`, () => {
   const cats = [
     { id: 20, name: "매입비", kind: "expense" as const, parent_id: null },
     { id: 21, name: "식자재 매입", kind: "expense" as const, parent_id: 20 },
@@ -377,7 +377,7 @@ test("every actual-cash expense row equals the sum of its details; payroll_payme
   ];
   let id = 0;
   const out = (type: string, amount: number, extra: Record<string, unknown> = {}) => ({
-    id: ++id, type, status: "confirmed", business_date: "2026-09-10", source_type: "manual",
+    id: ++id, type, status: "confirmed", business_date: `${month}-10`, source_type: "manual",
     movements: [{ amount: -amount, fund_account: { id: 1 } }], ...extra,
   });
   const transactions = [
@@ -396,13 +396,16 @@ test("every actual-cash expense row equals the sum of its details; payroll_payme
     out("balance_adjustment", 30, { source_key: "sheet-balance-adjustment:1" }),
     out("expense", 20, { source_type: "ledger_correction", source_snapshot: { adjustmentType: "employee_meal" } }),
     out("expense", 10),
+    out("expense", 0, { source_type: "ledger_correction", source_key: `legacy_sheet_expense_reconciliation:${month}`, source_snapshot: { sheetCashOutflow: 778_924_465 }, category: { id: 70 } }),
+    out("expense_recognition", 0, { amount: 10_000_000, category: { id: 21 } }),
+    out("balance_adjustment", 0, { movements: [{ amount: -500, fund_account: { id: 1 } }, { amount: 500, fund_account: { id: 1 } }] }),
   ];
   const report = buildDashboardCashReport(transactions, cats, [
     { paymentTransactionId: 6, allocatedAmount: 600, expenseCategoryId: 21 },
     { paymentTransactionId: 6, allocatedAmount: 300, expenseCategoryId: 22 },
-  ], new Set([1]), "2026-09");
+  ], new Set([1]), month);
   const rows = report.expenseBreakdown;
-  const total = transactions.reduce((sum, row) => sum + Number(row.movements[0].amount) * -1, 0);
+  const total = transactions.reduce((sum, row) => sum - row.movements.reduce((net, movement) => net + Number(movement.amount), 0), 0);
   assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), total, "rows still total actual cash outflow");
   for (const row of rows) {
     assert.ok(row.details.length > 0, `${row.name} has details`);
