@@ -4,8 +4,9 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import ts from "typescript";
 import * as partnerTextModule from "../lib/partners/text.ts";
+import * as settlementPeriodsModule from "../lib/ledger/settlement-periods.ts";
 import { calculatePurchaseSettlement } from "../lib/ledger/payables.ts";
-import { buildSettlementPeriods, settlementPeriodFor, type SettlementPolicyValue } from "../lib/ledger/settlement-periods.ts";
+import { buildSettlementPeriods, groupDatesBySettlementPeriod, periodSelectionState, setDatesSelected, settlementPeriodFor, type SettlementPolicyValue } from "../lib/ledger/settlement-periods.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const policy = (settlementRule: string, settlementDays: number[] | null): SettlementPolicyValue =>
@@ -133,11 +134,11 @@ test("payables API attaches read-only settlement periods without writes or due-d
 
 test("both payable sheets show the read-only summary; payment controls are unchanged", () => {
   const page = read("app/(protected)/admin/ledger/entries/page.tsx");
-  assert.equal((page.match(/<SettlementPeriodSummary lang=\{lang\} policy=\{party\.settlementPolicy\} periods=\{party\.settlementPeriods\}\/>/g) ?? []).length, 2);
+  assert.equal((page.match(/<SettlementPeriodSummary lang=\{lang\} policy=\{party\.settlementPolicy\} periods=\{party\.settlementPeriods\} viewMonth=/g) ?? []).length, 2);
   assert.match(page, /선택 일자 \$\{selectedDates\.size\}건 결제/);
   assert.match(page, /부분 지급/);
   const component = read("components/ledger/SettlementPeriodSummary.tsx");
-  // display-only: the only interaction is the local 상세 toggle
+  // display-only: local 상세 toggle and the optional jump callback; no payment or selection writes
   assert.doesNotMatch(component, /fetch\(|method:|onPaid|setSelected/);
 });
 
@@ -147,7 +148,7 @@ function renderSummary(props: Record<string, unknown>) {
   const React = require("react"), runtime = require("react/jsx-runtime"), { renderToStaticMarkup } = require("react-dom/server");
   const code = ts.transpileModule(read("components/ledger/SettlementPeriodSummary.tsx"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const mod = { exports: {} as { default: (p: unknown) => unknown } };
-  const deps: Record<string, unknown> = { react: React, "react/jsx-runtime": runtime, "@/lib/partners/text": partnerTextModule, "./SettlementPeriodSummary.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) } };
+  const deps: Record<string, unknown> = { react: React, "react/jsx-runtime": runtime, "@/lib/partners/text": partnerTextModule, "@/lib/ledger/settlement-periods": settlementPeriodsModule, "./SettlementPeriodSummary.module.css": { default: new Proxy({}, { get: (_, key) => String(key) }) } };
   new Function("require", "module", "exports", code)((name: string) => { assert.ok(name in deps, name); return deps[name]; }, mod, mod.exports);
   return renderToStaticMarkup(React.createElement(mod.exports.default, props)) as string;
 }
@@ -198,4 +199,100 @@ test("payable sheet header uses the shared partner category emoji and a collapse
   // selecting a date never toggles the payment info panel
   assert.doesNotMatch(page, /onSelectDate=\{date=>\{?[^}]*setPaymentInfoOpen/);
   assert.match(read("app/(protected)/admin/ledger/entries/entries.module.css"), /\.payableSheetBody>\.payableDates\{min-height:min\(184px,42vh\)\}/);
+});
+
+// ---------------------------------------------------------------------------
+// Selected-date list grouped by settlement period (P0-2 follow-up 2)
+// ---------------------------------------------------------------------------
+const dateGroup = (businessDate: string, total: number, count = 1) => ({ businessDate, total, rows: Array.from({ length: count }, (_, i) => ({ id: i })) });
+
+test("Phương monthly twice: dates group under 1~15 / 16~end with the summary's period totals", () => {
+  const rows = [payable(1, "2026-10-20", 500_000), payable(2, "2026-11-02", 9_394_000), payable(3, "2026-11-03", 1_306_000), payable(4, "2026-11-05", 1_298_000)];
+  const periods = buildSettlementPeriods(phuong, rows, "2026-11-30")!;
+  const groups = groupDatesBySettlementPeriod(phuong, [dateGroup("2026-10-20", 500_000), dateGroup("2026-11-02", 9_394_000, 2), dateGroup("2026-11-03", 1_306_000, 2), dateGroup("2026-11-05", 1_298_000)], periods, "2026-11")!;
+  assert.deepEqual(groups.map(g => [g.key, g.referenceDate, g.carriedFromMonth, g.dates.map(d => d.businessDate)]), [
+    ["2026-10-16~2026-10-31", "2026-10-31", "2026-10", ["2026-10-20"]],
+    ["2026-11-01~2026-11-15", "2026-11-15", null, ["2026-11-02", "2026-11-03", "2026-11-05"]],
+  ]);
+  // header amount/count are the same numbers as the summary rows
+  for (const group of groups) {
+    const period = periods.find(p => p.key === group.key)!;
+    assert.deepEqual([group.remainingAmount, group.payableCount], [period.remainingAmount, period.payableCount]);
+  }
+  assert.equal(groups[1].remainingAmount, 11_998_000);
+});
+
+test("Ok Mart weekly Tuesday: the 10/26~11/1 week is marked as carrying October", () => {
+  const rows = [payable(1, "2026-10-28", 4_144_500), payable(2, "2026-11-01", 939_000), payable(3, "2026-11-02", 2_901_000), payable(4, "2026-11-05", 8_021_000)];
+  const periods = buildSettlementPeriods(okMart, rows, "2026-11-30")!;
+  const groups = groupDatesBySettlementPeriod(okMart, [dateGroup("2026-10-28", 4_144_500), dateGroup("2026-11-01", 939_000), dateGroup("2026-11-02", 2_901_000), dateGroup("2026-11-05", 8_021_000)], periods, "2026-11")!;
+  assert.deepEqual(groups.map(g => [g.start, g.end, g.referenceDate, g.carriedFromMonth, g.remainingAmount]), [
+    ["2026-10-26", "2026-11-01", "2026-11-03", "2026-10", 5_083_500],
+    ["2026-11-02", "2026-11-08", "2026-11-10", null, 10_922_000],
+  ]);
+});
+
+test("ad hoc / unspecified partners keep the plain date list; undated dates trail in their own group", () => {
+  const adHoc = { paymentMode: "postpaid", settlementMode: "ad_hoc", settlementRule: null, settlementDays: null, defaultPaymentTermDays: null };
+  assert.equal(groupDatesBySettlementPeriod(adHoc, [dateGroup("2026-11-02", 1)], [], "2026-11"), null);
+  assert.equal(groupDatesBySettlementPeriod(null, [dateGroup("2026-11-02", 1)], [], "2026-11"), null);
+  const groups = groupDatesBySettlementPeriod(phuong, [dateGroup("", 300), dateGroup("2026-11-02", 100)], [], "2026-11")!;
+  assert.deepEqual(groups.map(g => [g.kind, g.remainingAmount, g.payableCount]), [["period", 100, 1], ["undated", 300, 1]]);
+});
+
+test("period header select-all adds or clears only that period's dates and reports all/some/none", () => {
+  const week1 = ["2026-10-28", "2026-11-01"], week2 = ["2026-11-02", "2026-11-05"];
+  let selected: ReadonlySet<string> = new Set(["2026-11-05"]);
+  assert.equal(periodSelectionState(week2, selected), "some");
+  selected = setDatesSelected(selected, week1, true);
+  assert.deepEqual([...selected].sort(), ["2026-10-28", "2026-11-01", "2026-11-05"]);
+  assert.equal(periodSelectionState(week1, selected), "all");
+  selected = setDatesSelected(selected, week2, true);
+  assert.equal(periodSelectionState(week2, selected), "all");
+  selected = setDatesSelected(selected, week1, false);
+  assert.deepEqual([...selected].sort(), week2);
+  assert.equal(periodSelectionState(week1, selected), "none");
+  assert.equal(periodSelectionState([], selected), "none");
+});
+
+// Renders the summary with its 상세 list open (first useState seeded true).
+function renderOpenSummary(props: Record<string, unknown>) {
+  const React = createRequire(import.meta.url)("react");
+  const original = React.useState;
+  let first = true;
+  React.useState = (initial: unknown) => { if (first) { first = false; return original(true); } return original(initial); };
+  try { return renderSummary(props); } finally { React.useState = original; }
+}
+
+test("summary detail rows are compact period rows with 기준일, count, remaining and carry-over; click jumps to the group", () => {
+  const periods = buildSettlementPeriods(okMart, [payable(1, "2026-10-28", 4_144_500), payable(2, "2026-11-01", 939_000), payable(3, "2026-11-02", 10_922_000)], "2026-11-30")!;
+  const ko = renderOpenSummary({ lang: "ko", policy: okMart, periods, viewMonth: "2026-11", onSelectPeriod: () => {} });
+  const text = strip(ko);
+  assert.match(text, /10\/26~11\/1 거래분기준일 11\/3\(화\) · 2건 · 10월 이월 포함5\.083\.500 ₫›/);
+  assert.match(text, /11\/2~11\/8 거래분기준일 11\/10\(화\) · 1건10\.922\.000 ₫›/);
+  assert.equal((ko.match(/<button type="button" class="row"/g) ?? []).length, 2);
+  assert.match(ko, /class="carried"/);
+  assert.doesNotMatch(ko, /지급 \d|기준일 지남|장부 집계 기준/); // no paid-amount repeat, badge or long note
+  const vi = strip(renderOpenSummary({ lang: "vi", policy: okMart, periods, viewMonth: "2026-11", onSelectPeriod: () => {} }));
+  assert.match(vi, /10\/26~11\/1 giao dịchchốt 11\/3\(T3\) · 2 khoản · gồm nợ T10/);
+  // without a jump target (historical sheet) rows are plain, not buttons
+  assert.doesNotMatch(renderOpenSummary({ lang: "ko", policy: okMart, periods, viewMonth: "2026-11" }), /<button type="button" class="row"/);
+});
+
+test("selected-date list renders period headers only for 정기정산, with select-all, collapse and the same totals", () => {
+  const page = read("app/(protected)/admin/ledger/entries/page.tsx");
+  assert.match(page, /settlement&&selectable\?groupDatesBySettlementPeriod\(settlement\.policy,groups,settlement\.periods,settlement\.viewMonth\):null/);
+  assert.match(page, /\{periodGroups&&settlement\?periodGroups\.map\(period=>\{/);
+  assert.match(page, /\}\):groups\.map\(renderDate\)\}<\/div>;/); // non-period partners: unchanged list
+  assert.match(page, /onChange=\{\(\)=>settlement\.onSetDates\(dates,!allSelected\)\}/);
+  assert.match(page, /onSetDates:\(dates,checked\)=>setSelectedDates\(current=>setDatesSelected\(current,dates,checked\)\)/);
+  assert.match(page, /<b>\{money\(period\.remainingAmount\)\}<\/b>/);
+  assert.match(page, /id=\{`payable-period-\$\{period\.key\}`\}/);
+  assert.match(page, /document\.getElementById\(`payable-period-\$\{key\}`\)\?\.scrollIntoView\(\{block:"start"/);
+  assert.match(page, /onSelectPeriod=\{focusPeriod\}/);
+  // the historical (read-only) sheet gets no grouping or jump
+  assert.match(page, /viewMonth=\{\(party\.settlementAsOf\?\?""\)\.slice\(0,7\)\}\/>/);
+  // payment paths unchanged
+  assert.match(page, /allocations:selectedPayables\.map\(row=>\(\{payableId:row\.id,allocatedAmount:row\.outstandingAmount\}\)\)/);
+  assert.match(page, /planPartialPayablePayment\(partialRows,parseLedgerAmount\(partialAmount\)\?\?0\)/);
 });

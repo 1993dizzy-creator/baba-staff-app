@@ -73,7 +73,7 @@ import { findInventoryLedgerFocus, ledgerHrefWithoutInventoryFocus, parseInvento
 import PayablePaymentRecovery, { PayablePaymentRefreshButton } from "@/components/ledger/PayablePaymentRecovery";
 import PurchaseSettlementDetails from "@/components/ledger/PurchaseSettlementDetails";
 import SettlementPeriodSummary from "@/components/ledger/SettlementPeriodSummary";
-import type { SettlementPeriod, SettlementPolicyValue } from "@/lib/ledger/settlement-periods";
+import { groupDatesBySettlementPeriod, periodSelectionState, setDatesSelected, type SettlementPeriod, type SettlementPolicyValue } from "@/lib/ledger/settlement-periods";
 import { purchaseCaseReasonSummary } from "@/lib/inventory/purchase-case-display";
 import { entryStatusReason } from "@/lib/ledger/entry-status-reason";
 import MonthCloseSheet from "./MonthCloseSheet";
@@ -197,7 +197,7 @@ type DateGroup = {
   // Prepaid allocations listed that day: monthly P&L only, never in 지출.
   allocation: number;
 };
-type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null };
+type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null; settlementAsOf?:string };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; verification?:Verification };
 type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
@@ -2089,12 +2089,17 @@ function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boole
   return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}</dl>;
 }
 
-function PayableDateGroups({rows,lang,selectedDates,onSelectDate}:{rows:readonly PayableRow[];lang:"ko"|"vi";selectedDates?:ReadonlySet<string>;onSelectDate?:(date:string)=>void}) {
+// Optional settlement grouping (정기정산 only): the same date rows sit under period headers in
+// the one scroll container, so date checks, expanded rows and scroll position are unchanged.
+// Header amount/count reuse the summary's buildSettlementPeriods result.
+type PayableSettlementGrouping={policy:SettlementPolicyValue|null|undefined;periods:SettlementPeriod[]|null|undefined;viewMonth:string;collapsed:ReadonlySet<string>;onToggle:(key:string)=>void;onSetDates:(dates:string[],checked:boolean)=>void};
+function PayableDateGroups({rows,lang,selectedDates,onSelectDate,settlement}:{rows:readonly PayableRow[];lang:"ko"|"vi";selectedDates?:ReadonlySet<string>;onSelectDate?:(date:string)=>void;settlement?:PayableSettlementGrouping}) {
   const [expanded,setExpanded]=useState<Set<string>>(()=>new Set());
   const selectable=Boolean(onSelectDate);
   const groups=useMemo(()=>groupPayableRows(rows,!selectable),[rows,selectable]);
+  const periodGroups=useMemo(()=>settlement&&selectable?groupDatesBySettlementPeriod(settlement.policy,groups,settlement.periods,settlement.viewMonth):null,[settlement,selectable,groups]);
   const vi=lang==="vi";
-  return <div className={`${styles.payableDates} ${!selectable ? styles.payableDatesReadOnly : ""}`}>{groups.map(group=>{
+  const renderDate=(group:(typeof groups)[number])=>{
     const open=expanded.has(group.businessDate);
     const paidReadOnly=!selectable&&group.settlementStatus==="paid";
     return <article key={group.businessDate}><div className={`${styles.payableDateRow} ${!selectable ? styles.payableDateRowReadOnly : ""}`}>
@@ -2102,8 +2107,26 @@ function PayableDateGroups({rows,lang,selectedDates,onSelectDate}:{rows:readonly
       <button type="button" aria-expanded={open} onClick={()=>setExpanded(current=>{const next=new Set(current);if(next.has(group.businessDate))next.delete(group.businessDate);else next.add(group.businessDate);return next})}>
         <span className={styles.payableDateLabel}><span>📅 {formatDate(group.businessDate,lang)}</span>{paidReadOnly?<em className={styles.payablePaidBadge}>{vi?"Đã thanh toán":"결제완료"}</em>:null}</span><small>{group.rows.length}{vi?" khoản":"건"}</small>{paidReadOnly?null:<strong>{money(group.total)}</strong>}<i aria-hidden>⌄</i>
       </button>
-    </div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>↳ {payableItemLabel(row,vi)}</em>{paidReadOnly?null:<b>{money(row.outstandingAmount)}</b>}</span>)}</div>:null}</article>
-  })}</div>;
+    </div>{open?<div className={styles.payableItems}>{group.rows.map(row=><span key={row.id}><em>↳ {payableItemLabel(row,vi)}</em>{paidReadOnly?null:<b>{money(row.outstandingAmount)}</b>}</span>)}</div>:null}</article>;
+  };
+  return <div className={`${styles.payableDates} ${!selectable ? styles.payableDatesReadOnly : ""}`}>{periodGroups&&settlement?periodGroups.map(period=>{
+    const dates=period.dates.map(group=>group.businessDate);
+    const selection=periodSelectionState(dates,selectedDates);
+    const allSelected=selection==="all";
+    const collapsed=settlement.collapsed.has(period.key);
+    const label=period.kind==="undated"?(vi?"Mua không rõ ngày":"날짜 없는 매입"):`${shortMonthDay(period.start!)}~${shortMonthDay(period.end!)} ${vi?"giao dịch":"거래분"}`;
+    const meta=[period.referenceDate?`${vi?"Dự kiến chốt":"예상 기준일"} ${shortMonthDay(period.referenceDate)}(${weekdayShort(period.referenceDate,lang)})`:null,`${period.payableCount}${vi?" khoản":"건"}`,period.carriedFromMonth?(vi?`gồm nợ T${Number(period.carriedFromMonth.slice(5))}`:`${Number(period.carriedFromMonth.slice(5))}월 이월 포함`):null].filter(Boolean).join(" · ");
+    return <section key={period.key} id={`payable-period-${period.key}`} className={`${styles.payablePeriodGroup} ${period.carriedFromMonth?styles.payablePeriodCarried:""}`} data-period-key={period.key}>
+      <div className={styles.payablePeriodHeader}>
+        <input type="checkbox" checked={allSelected} aria-checked={allSelected?"true":selection==="some"?"mixed":"false"} aria-label={`${label} ${vi?"chọn tất cả":"전체 선택"}`} onChange={()=>settlement.onSetDates(dates,!allSelected)}/>
+        <button type="button" aria-expanded={!collapsed} onClick={()=>settlement.onToggle(period.key)}>
+          <span className={styles.payablePeriodLabel}><strong>{label}</strong><small>{meta}</small></span>
+          <b>{money(period.remainingAmount)}</b><i aria-hidden>{collapsed?"›":"⌄"}</i>
+        </button>
+      </div>
+      {collapsed?null:period.dates.map(renderDate)}
+    </section>;
+  }):groups.map(renderDate)}</div>;
 }
 
 // Month accordion around the existing read-only date accordion. Months run
@@ -2148,7 +2171,7 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods}/>
+    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={(party.settlementAsOf??"").slice(0,7)}/>
     {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
       :rows===null?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải…":"불러오는 중…"} />
       :<><PayableMonthGroups rows={rows} lang={lang}/>{!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}</>}
@@ -2165,6 +2188,13 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
   // 결제 정보(출금 계정·결제일시·메모) starts collapsed so the date list keeps the vertical space;
   // selecting dates never opens it, so the list scroll position and checks stay put.
   const [paymentInfoOpen,setPaymentInfoOpen]=useState(false);
+  // 정산기간 groups in the date list: all open by default; the summary rows jump to a group.
+  const [collapsedPeriods,setCollapsedPeriods]=useState<Set<string>>(()=>new Set());
+  const viewMonth=(party.settlementAsOf??"").slice(0,7);
+  const settlementGrouping=useMemo<PayableSettlementGrouping>(()=>({policy:party.settlementPolicy,periods:party.settlementPeriods,viewMonth,collapsed:collapsedPeriods,
+    onToggle:key=>setCollapsedPeriods(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next}),
+    onSetDates:(dates,checked)=>setSelectedDates(current=>setDatesSelected(current,dates,checked))}),[party.settlementPolicy,party.settlementPeriods,viewMonth,collapsedPeriods]);
+  const focusPeriod=(key:string)=>{setMode("dates");setCollapsedPeriods(current=>{if(!current.has(key))return current;const next=new Set(current);next.delete(key);return next});requestAnimationFrame(()=>document.getElementById(`payable-period-${key}`)?.scrollIntoView({block:"start",behavior:"smooth"}))};
   const loadDetail=useCallback(async()=>{setError("");try{const response=await fetch(`/api/admin/ledger/payables/${party.partyId}`,{cache:"no-store"}),body=await response.json();if(!response.ok)throw new Error(body.code);setDetail(body)}catch{setError(vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다.")}},[party.partyId,vi]);
   useEffect(()=>{void loadDetail()},[loadDetail]);
   const groups=useMemo(()=>groupPayableRows(detail?.payables??[]),[detail]);
@@ -2183,14 +2213,14 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
     <PayablePaymentRecovery partyId={party.partyId} vi={vi} accounts={accounts} onConfirmed={onPaid}/>
     <div className={styles.payableDetailHeader}><strong><span role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{partyEmoji}</span> {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
-    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods}/>
+    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={viewMonth} onSelectPeriod={focusPeriod}/>
     {error?<p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p>:null}
     {error==="IDEMPOTENCY_KEY_REQUIRED"?<PayablePaymentRefreshButton vi={vi}/>:null}
     {detail?<div className={styles.payModeTabs} role="group" aria-label={vi?"Cách thanh toán":"지급 방식"}><button type="button" aria-pressed={mode==="dates"} disabled={saving} onClick={()=>setMode("dates")}>{vi?"Theo ngày":"선택 일자 결제"}</button><button type="button" aria-pressed={mode==="partial"} disabled={saving||!groups.length} onClick={()=>setMode("partial")}>{vi?"Thanh toán một phần":"부분 지급"}</button><button type="button" aria-pressed={mode==="history"} disabled={saving} onClick={()=>setMode("history")}>{vi?"Lịch sử":"지급 내역"} {detail.payments?.length??0}</button></div>:null}
     {mode==="history"
       ?<div className={styles.paymentHistory}>{dailyPayments.length?dailyPayments.map(day=><div key={day.businessDate} className={styles.paymentHistoryRow}><span>{formatDate(day.businessDate,lang)}</span><strong>{money(day.amount)}</strong></div>):<p className={styles.paymentHistoryEmpty}>{vi?"Chưa có lịch sử thanh toán.":"지급 내역이 없습니다."}</p>}</div>
     :mode==="dates"
-      ?<PayableDateGroups rows={detail?.payables??[]} lang={lang} selectedDates={selectedDates} onSelectDate={date=>setSelectedDates(current=>{const next=new Set(current);if(next.has(date))next.delete(date);else next.add(date);return next})}/>
+      ?<PayableDateGroups rows={detail?.payables??[]} lang={lang} selectedDates={selectedDates} settlement={settlementGrouping} onSelectDate={date=>setSelectedDates(current=>{const next=new Set(current);if(next.has(date))next.delete(date);else next.add(date);return next})}/>
       :<div className={styles.partialPayment}>
         <BarField label={`💰 ${vi?"Số tiền thanh toán":"지급액"}`} required compact help={`${vi?"Tối đa":"최대"} ${money(partialPlan.totalOutstanding)}`}>{({id})=><input id={id} inputMode="numeric" value={formatLedgerAmountInput(partialAmount)} onChange={event=>setPartialAmount(sanitizeLedgerAmountInput(event.target.value))} style={keepingInputStyle}/>}</BarField>
         {partialPlan.error==="exceeds_outstanding"?<p className={styles.error} role="alert">{vi?"Vượt quá tổng công nợ.":"총 미납금을 초과할 수 없습니다."}</p>:null}
@@ -2209,6 +2239,8 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
   </BarSheet>
 }
 
+const shortMonthDay=(date:string)=>{const [,month,day]=date.split("-").map(Number);return `${month}/${day}`};
+const weekdayShort=(date:string,lang:"ko"|"vi")=>(lang==="vi"?["CN","T2","T3","T4","T5","T6","T7"]:["일","월","화","수","목","금","토"])[new Date(`${date}T00:00:00Z`).getUTCDay()];
 function payableItemLabel(row:PayableRow,vi:boolean){const snapshot=row.expense?.display_snapshot??row.expense?.source_snapshot;return String((vi?snapshot?.item_name_vi:null)??snapshot?.item_name??snapshot?.itemName??snapshot?.name??(vi?"Mặt hàng tồn kho":"재고 품목"))}
 
 function ManualEntrySheet({

@@ -133,3 +133,67 @@ export function buildSettlementPeriods(policy: SettlementPolicyValue | null | un
   }
   return periods.sort((a, b) => (a.kind === "undated" ? 1 : 0) - (b.kind === "undated" ? 1 : 0) || String(a.start).localeCompare(String(b.start)));
 }
+
+export type SettlementDateGroup<G> = {
+  key: string;
+  kind: "period" | "undated";
+  start: string | null;
+  end: string | null;
+  referenceDate: string | null;
+  // First month (YYYY-MM) of a period that starts before the viewed month, e.g. "2026-10".
+  carriedFromMonth: string | null;
+  payableCount: number;
+  remainingAmount: number;
+  dates: G[];
+};
+
+// Display-only regrouping of the existing per-date groups (selected-date payment list)
+// under their settlement periods. Amount and count come from the same buildSettlementPeriods
+// result shown in the summary when the period is present there; otherwise the date
+// groups' own totals are used. Returns null for non-period terms (the plain list stays).
+export function groupDatesBySettlementPeriod<G extends { businessDate: string; total: number; rows: readonly unknown[] }>(
+  policy: SettlementPolicyValue | null | undefined,
+  dateGroups: readonly G[],
+  periods: readonly SettlementPeriod[] | null | undefined,
+  viewMonth: string,
+): SettlementDateGroup<G>[] | null {
+  if (!isPeriodPolicy(policy)) return null;
+  const byKey = new Map((periods ?? []).map(period => [period.key, period]));
+  const buckets = new Map<string, SettlementDateGroup<G>>();
+  const monthStart = `${viewMonth}-01`;
+  for (const group of dateGroups) {
+    const range = group.businessDate ? settlementPeriodFor(policy, group.businessDate) : null;
+    const key = range ? `${range.start}~${range.end}` : "undated";
+    const bucket = buckets.get(key) ?? {
+      key, kind: range ? "period" as const : "undated" as const,
+      start: range?.start ?? null, end: range?.end ?? null, referenceDate: range?.referenceDate ?? null,
+      carriedFromMonth: range && /^\d{4}-\d{2}$/.test(viewMonth) && range.start < monthStart ? range.start.slice(0, 7) : null,
+      payableCount: 0, remainingAmount: 0, dates: [] as G[],
+    };
+    bucket.dates.push(group);
+    buckets.set(key, bucket);
+  }
+  return [...buckets.values()].map(bucket => {
+    const period = byKey.get(bucket.key);
+    return period
+      ? { ...bucket, payableCount: period.payableCount, remainingAmount: period.remainingAmount }
+      : { ...bucket, payableCount: bucket.dates.reduce((sum, group) => sum + group.rows.length, 0), remainingAmount: sumPayableAmounts(bucket.dates.map(group => group.total)) };
+  }).sort((a, b) => (a.kind === "undated" ? 1 : 0) - (b.kind === "undated" ? 1 : 0) || String(a.start).localeCompare(String(b.start)));
+}
+
+// Same carry-over rule for the summary rows.
+export function settlementCarriedFromMonth(period: Pick<SettlementPeriod, "kind" | "start">, viewMonth: string) {
+  return period.kind === "period" && period.start && /^\d{4}-\d{2}$/.test(viewMonth) && period.start < `${viewMonth}-01` ? period.start.slice(0, 7) : null;
+}
+
+// Period header checkbox: selects/clears all of that period's dates, leaving every
+// other selected date untouched.
+export function setDatesSelected(current: ReadonlySet<string>, dates: readonly string[], checked: boolean) {
+  const next = new Set(current);
+  for (const date of dates) { if (checked) next.add(date); else next.delete(date); }
+  return next;
+}
+export function periodSelectionState(dates: readonly string[], selected: ReadonlySet<string> | undefined): "all" | "some" | "none" {
+  const count = dates.filter(date => selected?.has(date)).length;
+  return dates.length > 0 && count === dates.length ? "all" : count > 0 ? "some" : "none";
+}
