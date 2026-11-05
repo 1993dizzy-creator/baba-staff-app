@@ -38,14 +38,16 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const login = await loginCukcuk();
 const headers = { "Content-Type": "application/json", Authorization: `Bearer ${login.accessToken}`, CompanyCode: login.companyCode };
-// Same list contract the app already uses for /sainvoices/paging; LastSyncDate = first window start.
-const requestShape = { Page: "<n>", Limit: limit, BranchId: branchId, LastSyncDate: windows[0].start };
+// Official paging-with-detail contract: Page, Limit, BranchId, FromDate, ToDate (no LastSyncDate).
+// FromDate = first business-day open (16:00), ToDate = last business-day close (next day 03:00).
+const fromDate = windows[0].start, toDate = windows.at(-1).end;
+const requestShape = { Page: "<n>", Limit: limit, BranchId: branchId, FromDate: fromDate, ToDate: toDate };
 const pages = []; const invoices = []; let total = null;
 for (let page = 1; page <= maxPages; page++) {
   let response, json;
   for (let attempt = 1; attempt <= 3; attempt++) {
     response = await fetch(`${baseUrl}/api/v1/sainvoices/paging-with-detail`, { method: "POST", headers, cache: "no-store",
-      body: JSON.stringify({ Page: page, Limit: limit, BranchId: branchId, LastSyncDate: windows[0].start }) });
+      body: JSON.stringify({ Page: page, Limit: limit, BranchId: branchId, FromDate: fromDate, ToDate: toDate }) });
     json = await response.json().catch(() => null);
     if (json?.Code !== 102) break; // documented concurrent-request code: back off and retry serially
     await sleep(1500 * attempt);
@@ -68,19 +70,26 @@ for (let page = 1; page <= maxPages; page++) {
       topLevelKeys: Object.keys(invoice ?? {}).sort(),
     });
   }
-  if (data.length < limit || (Number.isSafeInteger(total) && invoices.length >= total)) break;
+  // Total-driven paging: keep going until Total receipts / ceil(Total/Limit) pages are fetched.
+  if (data.length === 0) break;
+  if (Number.isSafeInteger(total) ? invoices.length >= total || page >= Math.ceil(total / limit) : data.length < limit) break;
   await sleep(400);
 }
 
 const inWindow = invoices.filter(invoice => invoice.businessDate);
+const expectedPages = Number.isSafeInteger(total) ? Math.ceil(total / limit) : null;
+const okPages = pages.filter(p => p.success === true).length;
+const totalCheck = { providerTotal: total, limit, expectedPages, fetchedPages: okPages, enumerated: invoices.length,
+  complete: pages.at(-1)?.success === true && Number.isSafeInteger(total) && invoices.length === total && okPages === expectedPages,
+  hitMaxPages: pages.length >= maxPages && !(Number.isSafeInteger(total) && invoices.length >= total) };
 const output = {
   readOnly: true, endpoint: "POST /api/v1/sainvoices/paging-with-detail", capturedAt: new Date().toISOString(),
-  branchId, windows, requestShape, pages, providerTotal: total, enumerated: invoices.length,
+  branchId, windows, fromDate, toDate, requestShape, pages, totalCheck, providerTotal: total, enumerated: invoices.length,
   inWindowCount: inWindow.length,
   perDay: windows.map(w => ({ businessDate: w.businessDate, receipts: inWindow.filter(i => i.businessDate === w.businessDate).length })),
   invoices: inWindow,
   outOfWindowRefDates: invoices.filter(invoice => !invoice.businessDate).map(invoice => invoice.header.RefDate ?? invoice.header.PostedDate ?? null),
 };
 writeFileSync(args.out, JSON.stringify(output, null, 1));
-console.log(JSON.stringify({ out: args.out, pages: pages.length, lastPage: pages.at(-1), providerTotal: total, enumerated: invoices.length,
+console.log(JSON.stringify({ out: args.out, fromDate, toDate, pages: pages.length, lastPage: pages.at(-1), totalCheck,
   inWindow: inWindow.length, perDay: output.perDay }, null, 1));
