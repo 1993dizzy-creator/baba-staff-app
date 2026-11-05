@@ -152,6 +152,54 @@ test("Vietnamese reserve warning names the rent reserve", async () => {
   assert.match(ready.html, /Hoàn tất chốt sổ/);
 });
 
+const findButton = (buttons, testId) => buttons.find(button => {
+  const child = button.props.children;
+  return child && typeof child === "object" && child.props?.["data-testid"] === testId;
+});
+
+test("loading and closing show a centered spinner with screen-reader text; failure restores the button", async () => {
+  for (const vi of [false, true]) {
+    const fixture = sheetFixture({ vi, replies: [{ body: check() }, { status: 500, body: { code: "BOOM" } }] });
+    const initial = fixture.render();
+    assert.match(initial.html, /data-testid="month-close-loading"[^>]*role="status"|role="status"[^>]*data-testid="month-close-loading"/);
+    assert.match(initial.html, /class="closeSpinner" aria-hidden="true"/);
+    assert.match(initial.html, vi ? /<span class="srOnly">Đang kiểm tra sổ…<\/span>/ : /<span class="srOnly">장부를 점검 중입니다…<\/span>/);
+    assert.doesNotMatch(initial.html, /reopenHelp/);
+    initial.effects[0]();
+    await flush();
+    const ready = fixture.render();
+    assert.doesNotMatch(ready.html, /month-close-loading/);
+    const label = vi ? "Hoàn tất chốt sổ" : "마감 완료";
+    ready.buttons.find(button => button.props.children === label).props.onClick();
+    // While the close request is in flight: spinner, disabled close and cancel, no double submit.
+    const closing = fixture.render();
+    const busyButton = findButton(closing.buttons, "month-close-busy");
+    assert.ok(busyButton, "busy spinner in the close button");
+    assert.equal(busyButton.props.disabled, true);
+    assert.equal(closing.buttons.find(button => button.props.children === (vi ? "Hủy" : "취소")).props.disabled, true);
+    assert.match(closing.html, vi ? /<span class="srOnly">Đang chốt…<\/span>/ : /<span class="srOnly">마감 중…<\/span>/);
+    assert.match(closing.html, /closeSpinner closeSpinnerOnDark/);
+    busyButton.props.onClick();
+    await flush();
+    assert.equal(fixture.calls.length, 2, "second click while busy sends nothing");
+    const failed = fixture.render();
+    assert.match(failed.html, vi ? /Không thể chốt sổ/ : /장부를 마감하지 못했습니다/);
+    assert.equal(failed.buttons.find(button => button.props.children === label).props.disabled, false);
+    assert.doesNotMatch(failed.html, /month-close-busy|BOOM/);
+    assert.equal(fixture.closed, 0);
+  }
+});
+
+test("a failed preflight load hides the spinner and offers a retry", async () => {
+  const fixture = sheetFixture({ replies: [{ status: 500, body: {} }] });
+  fixture.render().effects[0]();
+  await flush();
+  const failed = fixture.render();
+  assert.doesNotMatch(failed.html, /month-close-loading|closeSpinner/);
+  assert.match(failed.html, /장부를 점검하지 못했습니다/);
+  assert.ok(failed.buttons.some(button => button.props.children === "다시 점검"));
+});
+
 test('pending card fees display a warning and permit close without a fee-confirmation action',async()=>{
  const fixture=sheetFixture({replies:[{body:check({warnings:[{code:'CARD_FEE_PENDING',amount:6926797}]})}]});fixture.render().effects[0]();await flush();const ready=fixture.render();
  assert.match(ready.html,/6\.926\.797/);assert.match(ready.html,/\uCE74\uB4DC\uC218\uC218\uB8CC \uBBF8\uD655\uC815/);assert.equal(ready.buttons.find(b=>b.props.children==='\uB9C8\uAC10 \uC644\uB8CC').props.disabled,false);

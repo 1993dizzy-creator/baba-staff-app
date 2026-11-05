@@ -138,13 +138,19 @@ export default function MonthCloseSheet({ month, revision, vi, onClose, onClosed
     footer={<div className={styles.reopenFooter}>
       <button type="button" disabled={loading || busy || blocked || !preflight?.preflightHash} onClick={() => void closeMonth()}
         style={{ ...primaryButtonStyle, width: "100%" }}>
-        {busy ? (vi ? "Đang chốt…" : "마감 중…") : vi ? "Hoàn tất chốt sổ" : "마감 완료"}
+        {busy ? <span className={styles.closeButtonBusy} role="status" aria-live="polite" data-testid="month-close-busy">
+          <span className={`${styles.closeSpinner} ${styles.closeSpinnerOnDark}`} aria-hidden="true" />
+          <span className={styles.srOnly}>{vi ? "Đang chốt…" : "마감 중…"}</span>
+        </span> : vi ? "Hoàn tất chốt sổ" : "마감 완료"}
       </button>
       <button type="button" disabled={busy} onClick={onClose} style={{ ...secondaryButtonStyle, width: "100%" }}>
         {vi ? "Hủy" : "취소"}
       </button>
     </div>}>
-    {loading ? <p className={styles.reopenHelp}>{vi ? "Đang kiểm tra sổ…" : "장부를 점검 중입니다…"}</p> : null}
+    {loading ? <div className={styles.closeSheetLoading} role="status" aria-live="polite" data-testid="month-close-loading">
+      <span className={styles.closeSpinner} aria-hidden="true" />
+      <span className={styles.srOnly}>{vi ? "Đang kiểm tra sổ…" : "장부를 점검 중입니다…"}</span>
+    </div> : null}
     {check ? <div className={styles.closeSheetBody}>
       <section className={styles.closeCheckCard} aria-label={vi ? "Kiểm tra trước khi chốt" : "마감 점검"}>
         <h3 className={styles.closeCheckHeading}>{vi ? "Kiểm tra trước khi chốt" : "마감 점검"}</h3>
