@@ -3159,7 +3159,8 @@ function FundAccountLogSheet({ lang, month, account, fundsView, entryByTransacti
       onClose={onClose}
       footer={
         <div className={styles.detailFooter}>
-          <button type="button" onClick={onClose} style={{ ...secondaryButtonStyle, width: "100%" }}>
+          {/* Account sheet only: charcoal close button; shared button styles are untouched. */}
+          <button type="button" onClick={onClose} style={{ ...secondaryButtonStyle, width: "100%", border: "1px solid #111827", background: "#111827", color: "#fff" }}>
             {vi ? "Đóng" : "닫기"}
           </button>
         </div>
@@ -3197,11 +3198,14 @@ function FundAccountLogSheet({ lang, month, account, fundsView, entryByTransacti
               const dayRows = log.rows.filter((row) => row.businessDate === date);
               const open = openDates.has(date);
               const panelId = `account-log-day-${date}`;
+              // Day net change from this account's side: sum of its signed movements (display only).
+              const dayNet = Math.round(dayRows.reduce((sum, row) => sum + row.amount, 0));
               return (
                 <section className={styles.accountLogDay} key={date}>
                   <button type="button" className={styles.accountLogDayToggle} aria-expanded={open} aria-controls={panelId} onClick={() => toggleDate(date)}>
                     <span>{formatDate(date, lang)}</span>
                     <small>{vi ? `${dayRows.length} giao dịch` : `${dayRows.length}건`}</small>
+                    <b className={dayNet > 0 ? styles.balanceDeltaPositive : dayNet < 0 ? styles.balanceDeltaNegative : styles.balanceDeltaZero}>{signed(dayNet)}</b>
                     <i aria-hidden>{open ? "⌃" : "⌄"}</i>
                   </button>
                   {open ? (

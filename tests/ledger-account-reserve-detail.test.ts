@@ -60,6 +60,20 @@ test("account sheet: 입금/출금 then 월초/현재, collapsed date groups wit
   assert.equal(entryCategoryEmoji({ categoryName: "알 수 없는 분류", direction: "expense" }), "📂");
 });
 
+test("date header: date / count / signed day net change / chevron; charcoal close button on this sheet only", () => {
+  assert.match(logSheet, /const dayNet = Math\.round\(dayRows\.reduce\(\(sum, row\) => sum \+ row\.amount, 0\)\);/);
+  assert.match(logSheet, /<span>\{formatDate\(date, lang\)\}<\/span>\s+<small>[^\n]+<\/small>\s+<b className=\{dayNet > 0 \? styles\.balanceDeltaPositive : dayNet < 0 \? styles\.balanceDeltaNegative : styles\.balanceDeltaZero\}>\{signed\(dayNet\)\}<\/b>\s+<i aria-hidden>/);
+  assert.match(css, /\.accountLogDayToggle\{width:100%;min-height:38px;display:grid;grid-template-columns:auto minmax\(0,1fr\) max-content 14px;/);
+  assert.match(css, /\.accountLogDayToggle>b\{font-size:12px;font-weight:900;white-space:nowrap\}/);
+  // Production November: cash 11/1 #4068 −2,356,200 and Cho 11/1 +2,356,200 net per side.
+  const net = (amounts: number[]) => Math.round(amounts.reduce((sum, amount) => sum + amount, 0));
+  assert.equal(net([-2_356_200]), -2_356_200);
+  assert.equal(net([0.1, 0.2, -0.3]), 0);
+  const charcoal = 'style={{ ...secondaryButtonStyle, width: "100%", border: "1px solid #111827", background: "#111827", color: "#fff" }}';
+  assert.ok(logSheet.includes(charcoal));
+  assert.equal(page.split(charcoal).length - 1, 1, "only the account sheet's close button");
+});
+
 test("corporate account: 내역 / 준비금 tabs in the same sheet; other accounts log only", () => {
   assert.match(logSheet, /const showReserveTab = account\.code === "baba_corporate_bank" \|\| account\.reserves\.length > 0;/);
   assert.match(logSheet, /const \[tab, setTab\] = useState<"log" \| "reserve">\("log"\);/);
