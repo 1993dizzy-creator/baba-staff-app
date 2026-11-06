@@ -308,7 +308,7 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(css, /\.page\{padding-bottom:calc\(122px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /\.balanceToggle\{[^}]*min-height:46px/);
   // Every account renders as the same uniform card — no wide/full-width variant.
-  assert.match(pageCompact, /<buttontype="button"className=\{styles\.balanceCard\}key=\{account\.id\}aria-haspopup="dialog"onClick=\{\(\)=>setLogAccountId\(account\.id\)\}>/);
+  assert.match(pageCompact, /<divclassName=\{hasReserve\?`\$\{styles\.balanceCardCell\}\$\{styles\.balanceCardCellReserve\}`:styles\.balanceCardCell\}key=\{account\.id\}><buttontype="button"className=\{styles\.balanceCard\}aria-haspopup="dialog"onClick=\{\(\)=>\{setReserveAccountId\(null\);setLogAccountId\(account\.id\);\}\}>/);
   assert.doesNotMatch(css, /balanceCardWide/);
   assert.doesNotMatch(pageCompact, /wide=account\.code/);
   // Detail box is a plain block; the four accounts form an equal-height 2×2 KPI grid.
@@ -338,15 +338,15 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(css, /@media\(max-width:560px\)[\s\S]*\.balanceToggle/);
   assert.match(css, /@media\(max-width:340px\)[\s\S]*\.balanceToggle>strong\{font-size:11px\}/);
   // KPI card: emoji + name, balance, month delta only. A reserve shows as a
-  // non-interactive 🔒 mark; the reserve/available rows are no longer rendered.
+  // separate 🔒 button; the reserve/available rows are no longer rendered in the card.
   assert.match(pageCompact, /<iaria-hidden>\{accountEmoji\(account\.code,account\.type\)\}<\/i>\{localizedAccountName\(account,lang\)\}/);
   assert.match(pageCompact, /hasReserve=account\.reserveTotal!==0/);
-  assert.match(pageCompact, /hasReserve\?\(<spanclassName=\{styles\.balanceReserveMark\}role="img"aria-label=\{reserveSummary\}title=\{reserveSummary\}>🔒<\/span>\):null/);
   assert.match(pageCompact, /account\.availableBalance/);
-  assert.doesNotMatch(pageCompact, /reserveExpanded|toggleReserve|styles\.balanceReserveToggle|styles\.balanceReserveList|styles\.balanceAvailable/);
+  assert.doesNotMatch(pageCompact, /reserveExpanded|toggleReserve|styles\.balanceReserveToggle|styles\.balanceReserveList|styles\.balanceAvailable|balanceReserveMark/);
   const balanceCard = pageCompact.slice(pageCompact.indexOf("functionrenderBalanceCard"), pageCompact.indexOf("constpartnerByLedgerParty"));
-  // The whole card is the single button (account log); nothing inside is another control.
-  assert.equal(balanceCard.match(/<button/g)?.length, 1);
+  // Card (account log) and 🔒 (reserve detail) are two sibling buttons, never nested.
+  assert.equal(balanceCard.match(/<button/g)?.length, 2);
+  assert.match(balanceCard, /<\/em><\/button>\{hasReserve\?\(<buttontype="button"className=\{styles\.balanceReserveButton\}/);
   assert.doesNotMatch(page, /"총 잔액"/);
   assert.match(css, /\.balanceInner \.balanceCardHead\{display:flex;align-items:center;justify-content:space-between/);
   assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
