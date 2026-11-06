@@ -39,3 +39,14 @@ export function entryCategoryEmoji(entry: Pick<LedgerEntry, "categoryName" | "di
   }
   return entry.direction === "income" ? "💰" : entry.direction === "expense" ? "📂" : "🔄";
 }
+
+// The same category-name rules as entryCategoryEmoji, but null when nothing
+// matches (no direction fallback), so callers never invent an emoji.
+export function categoryNameEmoji(categoryName: string | null | undefined) {
+  if (!categoryName) return null;
+  const manualEmoji = manualExpenseCategoryEmoji(categoryName);
+  if (manualEmoji) return manualEmoji;
+  if (categoryName.includes("매출")) return "🧾";
+  if (categoryName.includes("수수료")) return "🏦";
+  return null;
+}

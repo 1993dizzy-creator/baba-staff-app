@@ -47,7 +47,7 @@ import { ledgerMonthHref, selectedLedgerMonth } from "@/lib/ledger/month-query";
 import { reserveEntryTypeLabel } from "@/lib/ledger/reserve-text";
 import { ledgerSettingsText } from "@/lib/ledger/settings-text";
 import ReserveEntryHistoryList, { type ReserveHistoryEntry } from "@/components/ledger/ReserveEntryHistoryList";
-import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
+import { categoryNameEmoji, chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledgerPartyEmoji } from "@/lib/ledger/entry-display-emoji";
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
 import { accountTransferBadgeLabel, shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
@@ -311,7 +311,6 @@ function LedgerEntriesContent() {
     [openingExpanded, setOpeningExpanded] = useState(false),
     [balanceExpanded, setBalanceExpanded] = useState(false),
     [logAccountId, setLogAccountId] = useState<number | null>(null),
-    [reserveAccountId, setReserveAccountId] = useState<number | null>(null),
     [payableExpanded, setPayableExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
     [payableParty, setPayableParty] = useState<(PayableParty & {viewMonth:string}) | null>(null);
@@ -515,9 +514,6 @@ function LedgerEntriesContent() {
   }, [data?.entries]);
   const logAccount = data?.month === month && logAccountId != null
     ? (data.accounts ?? []).find((account) => account.id === logAccountId) ?? null
-    : null;
-  const reserveAccount = data?.month === month && reserveAccountId != null
-    ? (data.accounts ?? []).find((account) => account.id === reserveAccountId && account.reserveTotal !== 0) ?? null
     : null;
   const listEntries = useMemo(() => withPaymentDifferenceAdjustments(data?.entries ?? []), [data?.entries]);
   const groups = useMemo(() => {
@@ -858,37 +854,29 @@ function LedgerEntriesContent() {
           `${vi ? "Số dư khả dụng" : "사용 가능 잔액"} ${money(account.availableBalance)}`,
         ].join(" · ")
       : "";
-    // Two sibling buttons, never nested: the card opens the account log, the
-    // 🔒 opens the reserve detail.
+    // The whole card opens the account log (with a 준비금 tab for the corporate
+    // account); the 🔒 only marks that a reserve exists.
     return (
-      <div className={hasReserve ? `${styles.balanceCardCell} ${styles.balanceCardCellReserve}` : styles.balanceCardCell} key={account.id}>
-        <button
-          type="button"
-          className={styles.balanceCard}
-          aria-haspopup="dialog"
-          onClick={() => { setReserveAccountId(null); setLogAccountId(account.id); }}
-        >
-          <span className={styles.balanceCardHead}>
-            <small className={styles.balanceCardName}>
-              <i aria-hidden>{accountEmoji(account.code, account.type)}</i> {localizedAccountName(account, lang)}
-            </small>
-          </span>
-          <b className={styles.balanceCardValue}>{money(account.balance)}</b>
-          <em className={`${styles.balanceDelta} ${deltaClass}`}>
-            {delta > 0 ? "+" : ""}{money(delta)}
-          </em>
-        </button>
-        {hasReserve ? (
-          <button
-            type="button"
-            className={styles.balanceReserveButton}
-            aria-haspopup="dialog"
-            aria-label={`${vi ? "Chi tiết quỹ dự phòng" : "준비금 상세"} · ${reserveSummary}`}
-            title={reserveSummary}
-            onClick={() => { setLogAccountId(null); setReserveAccountId(account.id); }}
-          >🔒</button>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        className={styles.balanceCard}
+        key={account.id}
+        aria-haspopup="dialog"
+        onClick={() => setLogAccountId(account.id)}
+      >
+        <span className={styles.balanceCardHead}>
+          <small className={styles.balanceCardName}>
+            <i aria-hidden>{accountEmoji(account.code, account.type)}</i> {localizedAccountName(account, lang)}
+          </small>
+          {hasReserve ? (
+            <span className={styles.balanceReserveMark} role="img" aria-label={reserveSummary} title={reserveSummary}>🔒</span>
+          ) : null}
+        </span>
+        <b className={styles.balanceCardValue}>{money(account.balance)}</b>
+        <em className={`${styles.balanceDelta} ${deltaClass}`}>
+          {delta > 0 ? "+" : ""}{money(delta)}
+        </em>
+      </button>
     );
   }
   const partnerByLedgerParty = useMemo(
@@ -1439,23 +1427,15 @@ function LedgerEntriesContent() {
               if (fresh) setNotice(vi ? `Đã chốt sổ tháng ${Number(month.slice(5, 7))}.` : `${Number(month.slice(5, 7))}월 장부 마감이 완료되었습니다.`);
             }} />
         ) : null}
-        {reserveAccount && data && !selected ? (
-          <FundAccountReserveSheet
-            key={`${month}:${reserveAccount.id}`}
-            lang={lang}
-            month={month}
-            account={reserveAccount}
-            fundsView={data.fundsView}
-            onClose={() => setReserveAccountId(null)}
-          />
-        ) : null}
         {logAccount && data && !selected ? (
           <FundAccountLogSheet
             key={`${month}:${logAccount.id}`}
             lang={lang}
             month={month}
             account={logAccount}
+            fundsView={data.fundsView}
             entryByTransaction={entryByTransaction}
+            partnersByParty={partnerByLedgerParty}
             onOpenEntry={(entry) => void openEntry(entry)}
             onClose={() => setLogAccountId(null)}
           />
@@ -3124,11 +3104,15 @@ type ReservePlanHistory = { planId: number; name: string; fundAccountName: strin
 const logTime = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 // Read-only account log: the account's own confirmed movements for the month
 // (business date, 03:00 day), + deposit / − withdrawal from this account's side.
-function FundAccountLogSheet({ lang, month, account, entryByTransaction, onOpenEntry, onClose }: {
+// Date groups start collapsed. The corporate account adds a 준비금 tab in the
+// same sheet; other accounts show the log only.
+function FundAccountLogSheet({ lang, month, account, fundsView, entryByTransaction, partnersByParty, onOpenEntry, onClose }: {
   lang: "ko" | "vi";
   month: string;
   account: Account;
+  fundsView: LedgerData["fundsView"];
   entryByTransaction: Map<number, LedgerEntry>;
+  partnersByParty: ReadonlyMap<number, Partner>;
   onOpenEntry: (entry: LedgerEntry) => void;
   onClose: () => void;
 }) {
@@ -3136,6 +3120,9 @@ function FundAccountLogSheet({ lang, month, account, entryByTransaction, onOpenE
   const [rows, setRows] = useState<FundAccountLogRow[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [openDates, setOpenDates] = useState<Set<string>>(() => new Set());
+  const showReserveTab = account.code === "baba_corporate_bank" || account.reserves.length > 0;
+  const [tab, setTab] = useState<"log" | "reserve">("log");
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
@@ -3153,6 +3140,13 @@ function FundAccountLogSheet({ lang, month, account, entryByTransaction, onOpenE
   const log = rows ? buildFundAccountLog(rows, account.openingBalance, account.balance) : null;
   const dates = log ? [...new Set(log.rows.map((row) => row.businessDate))] : [];
   const signed = (amount: number) => `${amount > 0 ? "+" : amount < 0 ? "−" : ""}${money(Math.abs(amount))}`;
+  const toggleDate = (date: string) => setOpenDates((current) => {
+    const next = new Set(current);
+    if (next.has(date)) next.delete(date);
+    else next.add(date);
+    return next;
+  });
+  const monthLabel = vi ? `Tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월`;
   return (
     <BarSheet
       kind="full"
@@ -3160,7 +3154,7 @@ function FundAccountLogSheet({ lang, month, account, entryByTransaction, onOpenE
       topAligned
       comfortableTop
       title={`${accountEmoji(account.code, account.type)} ${localizedAccountName(account, lang)}`}
-      titleAside={vi ? `Tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월`}
+      titleAside={fundsView.mode === "closed_snapshot" ? `${monthLabel} · ${vi ? "Đã chốt" : "마감"}` : monthLabel}
       closeLabel={vi ? "Đóng" : "닫기"}
       onClose={onClose}
       footer={
@@ -3172,70 +3166,100 @@ function FundAccountLogSheet({ lang, month, account, entryByTransaction, onOpenE
       }
     >
       <div className={styles.accountLogSummary}>
-        <span><small>{vi ? "Đầu tháng" : "월초 잔액"}</small><b>{money(account.openingBalance)}</b></span>
         <span><small>{vi ? "Tiền vào" : "입금"}</small><b className={styles.balanceDeltaPositive}>{log ? signed(log.inflow) : "…"}</b></span>
         <span><small>{vi ? "Tiền ra" : "출금"}</small><b className={styles.balanceDeltaNegative}>{log ? signed(log.outflow) : "…"}</b></span>
+        <span><small>{vi ? "Đầu tháng" : "월초 잔액"}</small><b>{money(account.openingBalance)}</b></span>
         <span><small>{vi ? "Số dư hiện tại" : "현재 잔액"}</small><b>{money(account.balance)}</b></span>
       </div>
-      {log ? (
-        <>
-          {!log.balanceReliable ? (
-            <p className={styles.policyNote}>
-              {vi
-                ? "Số dư đầu tháng cộng giao dịch không khớp số dư hiện tại, nên không hiển thị số dư sau giao dịch."
-                : "월초 잔액과 거래 합계가 현재 잔액과 일치하지 않아 거래 후 잔액은 표시하지 않습니다."}
-            </p>
-          ) : null}
-          {log.rows.length ? dates.map((date) => (
-            <section className={styles.accountLogDay} key={date}>
-              <h4>{formatDate(date, lang)}</h4>
-              {log.rows.filter((row) => row.businessDate === date).map((row) => {
-                const entry = entryByTransaction.get(row.transactionId);
-                const title = entry ? entryDisplayTitle(entry, lang) : fundAccountLogFallbackTitle(row, lang);
-                const meta = [logTime.format(new Date(row.occurredAt)), fundAccountLogRoute(row, lang) ?? fundAccountLogTypeLabel(row.type, lang)].join(" · ");
-                const body = (
-                  <>
-                    <span className={styles.accountLogMain}><strong title={title}>{title}</strong><small>{meta}</small></span>
-                    <span className={styles.accountLogRight}>
-                      <b className={row.amount > 0 ? styles.balanceDeltaPositive : row.amount < 0 ? styles.balanceDeltaNegative : styles.balanceDeltaZero}>{signed(row.amount)}</b>
-                      {row.balanceAfter != null ? <small>{money(row.balanceAfter)}</small> : null}
-                    </span>
-                  </>
-                );
-                return entry ? (
-                  <button type="button" className={styles.accountLogRow} key={row.movementId} onClick={() => onOpenEntry(entry)}>{body}</button>
-                ) : (
-                  <div className={styles.accountLogRow} key={row.movementId}>{body}</div>
-                );
-              })}
-            </section>
-          )) : <p className={styles.policyNote}>{vi ? "Không có giao dịch trong tháng này." : "이번 달 입출금 내역이 없습니다."}</p>}
-        </>
-      ) : failed ? (
-        <div className={styles.reserveLoadError}>
-          <p className={styles.error} role="alert">
-            {vi ? "Không thể tải lịch sử tài khoản. Vui lòng thử lại." : "계좌 내역을 불러오지 못했습니다. 다시 시도해주세요."}
-          </p>
-          <button type="button" onClick={() => { setFailed(false); setAttempt((value) => value + 1); }} style={{ ...secondaryButtonStyle, width: "100%" }}>
-            {vi ? "Thử lại" : "다시 시도"}
+      {showReserveTab ? (
+        <div className={styles.accountLogTabs} role="tablist" aria-label={localizedAccountName(account, lang)}>
+          <button type="button" role="tab" id="account-log-tab-log" aria-controls="account-log-panel" aria-selected={tab === "log"} className={tab === "log" ? styles.accountLogTabActive : undefined} onClick={() => setTab("log")}>
+            {vi ? "Giao dịch" : "내역"}
+          </button>
+          <button type="button" role="tab" id="account-log-tab-reserve" aria-controls="account-log-panel" aria-selected={tab === "reserve"} className={tab === "reserve" ? styles.accountLogTabActive : undefined} onClick={() => setTab("reserve")}>
+            🔒 {vi ? "Quỹ dự phòng" : "준비금"}
           </button>
         </div>
-      ) : (
-        <InventoryLoadingCard lang={lang} inline minHeight={120} testId="fund-account-log-loading" label={vi ? "Đang tải lịch sử tài khoản…" : "계좌 내역을 불러오는 중…"} />
-      )}
+      ) : null}
+      <div id="account-log-panel" role={showReserveTab ? "tabpanel" : undefined} aria-labelledby={showReserveTab ? (tab === "log" ? "account-log-tab-log" : "account-log-tab-reserve") : undefined}>
+        {showReserveTab && tab === "reserve" ? (
+          <AccountReservePanel lang={lang} account={account} fundsView={fundsView} />
+        ) : log ? (
+          <>
+            {!log.balanceReliable ? (
+              <p className={styles.policyNote}>
+                {vi
+                  ? "Số dư đầu tháng cộng giao dịch không khớp số dư hiện tại, nên không hiển thị số dư sau giao dịch."
+                  : "월초 잔액과 거래 합계가 현재 잔액과 일치하지 않아 거래 후 잔액은 표시하지 않습니다."}
+              </p>
+            ) : null}
+            {log.rows.length ? dates.map((date) => {
+              const dayRows = log.rows.filter((row) => row.businessDate === date);
+              const open = openDates.has(date);
+              const panelId = `account-log-day-${date}`;
+              return (
+                <section className={styles.accountLogDay} key={date}>
+                  <button type="button" className={styles.accountLogDayToggle} aria-expanded={open} aria-controls={panelId} onClick={() => toggleDate(date)}>
+                    <span>{formatDate(date, lang)}</span>
+                    <small>{vi ? `${dayRows.length} giao dịch` : `${dayRows.length}건`}</small>
+                    <i aria-hidden>{open ? "⌃" : "⌄"}</i>
+                  </button>
+                  {open ? (
+                    <div className={styles.accountLogDayRows} id={panelId}>
+                      {dayRows.map((row) => {
+                        const entry = entryByTransaction.get(row.transactionId);
+                        const title = entry ? entryDisplayTitle(entry, lang) : fundAccountLogFallbackTitle(row, lang);
+                        // Same emoji rule as the ledger list; unlisted rows only get a category-name match.
+                        const emoji = entry ? entryDisplayEmoji(entry, partnersByParty) : categoryNameEmoji(row.categoryName);
+                        const meta = [logTime.format(new Date(row.occurredAt)), fundAccountLogRoute(row, lang) ?? fundAccountLogTypeLabel(row.type, lang)].join(" · ");
+                        const body = (
+                          <>
+                            <span className={styles.accountLogMain}>
+                              <strong title={title}>{emoji ? <i className={styles.accountLogEmoji} aria-hidden>{emoji}</i> : null}{title}</strong>
+                              <small>{meta}</small>
+                            </span>
+                            <span className={styles.accountLogRight}>
+                              <b className={row.amount > 0 ? styles.balanceDeltaPositive : row.amount < 0 ? styles.balanceDeltaNegative : styles.balanceDeltaZero}>{signed(row.amount)}</b>
+                              {row.balanceAfter != null ? <small>{money(row.balanceAfter)}</small> : null}
+                            </span>
+                          </>
+                        );
+                        return entry ? (
+                          <button type="button" className={styles.accountLogRow} key={row.movementId} onClick={() => onOpenEntry(entry)}>{body}</button>
+                        ) : (
+                          <div className={styles.accountLogRow} key={row.movementId}>{body}</div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </section>
+              );
+            }) : <p className={styles.policyNote}>{vi ? "Không có giao dịch trong tháng này." : "이번 달 입출금 내역이 없습니다."}</p>}
+          </>
+        ) : failed ? (
+          <div className={styles.reserveLoadError}>
+            <p className={styles.error} role="alert">
+              {vi ? "Không thể tải lịch sử tài khoản. Vui lòng thử lại." : "계좌 내역을 불러오지 못했습니다. 다시 시도해주세요."}
+            </p>
+            <button type="button" onClick={() => { setFailed(false); setAttempt((value) => value + 1); }} style={{ ...secondaryButtonStyle, width: "100%" }}>
+              {vi ? "Thử lại" : "다시 시도"}
+            </button>
+          </div>
+        ) : (
+          <InventoryLoadingCard lang={lang} inline minHeight={120} testId="fund-account-log-loading" label={vi ? "Đang tải lịch sử tài khoản…" : "계좌 내역을 불러오는 중…"} />
+        )}
+      </div>
     </BarSheet>
   );
 }
-// Read-only reserve detail for one fund account, as of the selected month.
-// Every amount comes from that month's account view (closed months: the close
-// snapshot), never from the history API's latest figure. Amounts are actual
-// reserved money, not plan targets. History is cut at the month's cutoff.
-function FundAccountReserveSheet({ lang, month, account, fundsView, onClose }: {
+// 준비금 tab of the account sheet, as of the selected month. Every amount comes
+// from that month's account view (closed months: the close snapshot), never
+// from the history API's latest figure. Amounts are actual reserved money, not
+// plan targets. History is cut at the month's cutoff.
+function AccountReservePanel({ lang, account, fundsView }: {
   lang: "ko" | "vi";
-  month: string;
   account: Account;
   fundsView: LedgerData["fundsView"];
-  onClose: () => void;
 }) {
   const vi = lang === "vi";
   const copy = ledgerSettingsText[lang];
@@ -3265,30 +3289,9 @@ function FundAccountReserveSheet({ lang, month, account, fundsView, onClose }: {
     return () => controller.abort();
   }, [planKey, attempt]);
   const loaded = history?.key === planKey ? history : null;
-  const monthLabel = vi ? `Tháng ${Number(month.slice(5, 7))}` : `${Number(month.slice(5, 7))}월`;
   return (
-    <BarSheet
-      kind="full"
-      compact
-      topAligned
-      comfortableTop
-      title={vi ? "Chi tiết quỹ dự phòng" : "준비금 상세"}
-      titleAside={fundsView.mode === "closed_snapshot" ? `${monthLabel} · ${vi ? "Đã chốt" : "마감"}` : monthLabel}
-      closeLabel={vi ? "Đóng" : "닫기"}
-      onClose={onClose}
-      footer={
-        <div className={styles.detailFooter}>
-          <button type="button" onClick={onClose} style={{ ...secondaryButtonStyle, width: "100%" }}>
-            {vi ? "Đóng" : "닫기"}
-          </button>
-        </div>
-      }
-    >
-      <div className={styles.reservePlanHeader}>
-        <strong>{accountEmoji(account.code, account.type)} {localizedAccountName(account, lang)}</strong>
-      </div>
+    <>
       <div className={styles.accountLogSummary}>
-        <span><small>{vi ? "Tổng số dư tài khoản" : "계좌 전체 잔액"}</small><b>{money(account.balance)}</b></span>
         <span><small>{vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</small><b>{money(account.reserveTotal)}</b></span>
         <span className={styles.reserveAvailable}><small>{vi ? "Số dư khả dụng" : "사용 가능 잔액"}</small><b>{money(account.availableBalance)}</b></span>
       </div>
@@ -3320,7 +3323,8 @@ function FundAccountReserveSheet({ lang, month, account, fundsView, onClose }: {
           </section>
         );
       })}
-      {!loaded && failed ? (
+      {!plans.length ? <p className={styles.policyNote}>{copy.noHistory}</p> : null}
+      {plans.length && !loaded && failed ? (
         <div className={styles.reserveLoadError}>
           <p className={styles.error} role="alert">
             {vi ? "Không thể tải ghi nhận quỹ dự phòng. Vui lòng thử lại." : "준비금 기록을 불러오지 못했습니다. 다시 시도해주세요."}
@@ -3329,10 +3333,10 @@ function FundAccountReserveSheet({ lang, month, account, fundsView, onClose }: {
             {vi ? "Thử lại" : "다시 시도"}
           </button>
         </div>
-      ) : !loaded ? (
+      ) : plans.length && !loaded ? (
         <InventoryLoadingCard lang={lang} inline minHeight={120} testId="account-reserve-loading" label={vi ? "Đang tải ghi nhận quỹ dự phòng…" : "준비금 기록을 불러오는 중…"} />
       ) : null}
-    </BarSheet>
+    </>
   );
 }
 function ReserveEntryDetailSheet({ lang, entry, onClose }: { lang: "ko" | "vi"; entry: LedgerEntry; onClose: () => void }) {

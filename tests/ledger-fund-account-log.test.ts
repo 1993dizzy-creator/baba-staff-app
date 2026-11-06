@@ -102,7 +102,7 @@ test("route: read-only, this account's confirmed movements, business-date month,
 });
 
 test("page: whole KPI card opens the account log in a BarSheet; rows reuse the entry detail", () => {
-  assert.match(page, /className=\{styles\.balanceCard\}\s+aria-haspopup="dialog"\s+onClick=\{\(\) => \{ setReserveAccountId\(null\); setLogAccountId\(account\.id\); \}\}/);
+  assert.match(page, /className=\{styles\.balanceCard\}\s+key=\{account\.id\}\s+aria-haspopup="dialog"\s+onClick=\{\(\) => setLogAccountId\(account\.id\)\}/);
   assert.match(page, /\{logAccount && data && !selected \? \(\s+<FundAccountLogSheet/);
   const sheet = page.slice(page.indexOf("function FundAccountLogSheet"), page.indexOf("function ReserveEntryDetailSheet"));
   assert.match(sheet, /<BarSheet/);
