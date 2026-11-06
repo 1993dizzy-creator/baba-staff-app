@@ -629,7 +629,12 @@ function isEqualValue(left: unknown, right: unknown) {
   return JSON.stringify(normalizeForCompare(left)) === JSON.stringify(normalizeForCompare(right));
 }
 
-function hasReceiptChanged(existing: ExistingReceiptRow, next: ReceiptRow) {
+// paging-with-detail returns the same receipt in a differently shaped raw object.
+// With this option a raw_json-only difference is not an update: every stored
+// field must still match, so real amount/item/quantity/status changes still save.
+export type SyncSaveOptions = { ignoreRawJsonOnlyChanges?: boolean };
+
+function hasReceiptChanged(existing: ExistingReceiptRow, next: ReceiptRow, options: SyncSaveOptions = {}) {
   const compareKeys: (keyof ReceiptRow)[] = [
     "source",
     "branch_id",
@@ -654,6 +659,7 @@ function hasReceiptChanged(existing: ExistingReceiptRow, next: ReceiptRow) {
 
   return compareKeys.some((key) => {
     if (key === "raw_json") {
+      if (options.ignoreRawJsonOnlyChanges) return false;
       return !isEqualValue(
         stripVolatilePosSyncFields(existing[key]),
         stripVolatilePosSyncFields(next[key])
@@ -663,7 +669,7 @@ function hasReceiptChanged(existing: ExistingReceiptRow, next: ReceiptRow) {
   });
 }
 
-function hasLineChanged(existing: ExistingLineRow, next: LineRow) {
+function hasLineChanged(existing: ExistingLineRow, next: LineRow, options: SyncSaveOptions = {}) {
   const compareKeys: (keyof LineRow)[] = [
     "source",
     "receipt_id",
@@ -695,7 +701,8 @@ function hasLineChanged(existing: ExistingLineRow, next: LineRow) {
     "raw_json",
   ];
 
-  return compareKeys.some((key) => !isEqualValue(existing[key], next[key]));
+  return compareKeys.some((key) =>
+    !(key === "raw_json" && options.ignoreRawJsonOnlyChanges) && !isEqualValue(existing[key], next[key]));
 }
 
 function getLineRefDetailKey(
@@ -1203,7 +1210,7 @@ export async function getReceiptPaymentSources(receiptRefIds: string[]) {
   return map;
 }
 
-export async function saveReceipts(rows: ReceiptRow[]) {
+export async function saveReceipts(rows: ReceiptRow[], options: SyncSaveOptions = {}) {
   const emptyTiming = {
     getExistingReceiptsMs: 0,
     compareReceiptsMs: 0,
@@ -1232,7 +1239,7 @@ export async function saveReceipts(rows: ReceiptRow[]) {
   const inserts = rows.filter((row) => !existingMap.has(row.ref_id));
   const updates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
-    return existing && !existing.is_modified ? hasReceiptChanged(existing, row) : false;
+    return existing && !existing.is_modified ? hasReceiptChanged(existing, row, options) : false;
   });
   const protectedStatusCandidates = rows.filter((row) => {
     const existing = existingMap.get(row.ref_id);
@@ -1428,7 +1435,7 @@ export async function markReceiptsInventoryDeductionEligible(
   }
 }
 
-export async function saveLines(rows: LineRow[]) {
+export async function saveLines(rows: LineRow[], options: SyncSaveOptions = {}) {
   const emptyTiming = {
     initialQueriesMs: 0,
     compareLinesMs: 0,
@@ -1492,7 +1499,7 @@ export async function saveLines(rows: LineRow[]) {
 
     if (primaryExisting) {
       usedExistingLineIds.add(primaryExisting.id);
-      if (hasLineChanged(primaryExisting, row)) {
+      if (hasLineChanged(primaryExisting, row, options)) {
         updates.push({ row, existing: primaryExisting });
       }
       return;
@@ -1507,7 +1514,7 @@ export async function saveLines(rows: LineRow[]) {
       usedExistingLineIds.add(fallbackExisting.id);
       fallbackMatchedCount += 1;
 
-      if (hasLineChanged(fallbackExisting, row)) {
+      if (hasLineChanged(fallbackExisting, row, options)) {
         updates.push({ row, existing: fallbackExisting });
       }
       return;

@@ -701,7 +701,10 @@ export async function POST(req: Request) {
       })
     );
 
-    const receiptSaveResult = await saveReceipts(receiptRows);
+    // paging-with-detail only: a raw_json shape difference alone never rewrites an
+    // existing receipt/line (keeps updated_at and the ledger source fingerprint).
+    const saveOptions = { ignoreRawJsonOnlyChanges: usePagingWithDetail };
+    const receiptSaveResult = await saveReceipts(receiptRows, saveOptions);
     markPhase("saveReceiptsMs");
 
     const lineRows = validDetails.flatMap((item) => {
@@ -724,7 +727,7 @@ export async function POST(req: Request) {
       );
     });
 
-    const lineSaveResult = await saveLines(lineRows);
+    const lineSaveResult = await saveLines(lineRows, saveOptions);
     markPhase("saveLinesMs");
     const buildPaymentRowsStartedAt = Date.now();
     // Only real paid sales require a payment snapshot for close completeness.
