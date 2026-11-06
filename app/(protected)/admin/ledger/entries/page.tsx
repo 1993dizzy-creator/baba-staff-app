@@ -2721,7 +2721,7 @@ function ManualEntrySheet({
             <div className={styles.prepaymentBanner} data-testid="manual-prepayment-hint">
               <div className={styles.prepaymentBannerText}>
                 <strong>{vi ? "Tiền hàng trả trước khi nhập kho nên ghi là trả trước" : "입고 전 매입대금은 선결제로 기록하세요"}</strong>
-                <small>{vi ? "Nếu lưu như chi phí thường, chi phí có thể bị ghi trùng" : "일반 지출로 저장하면 비용이 중복될 수 있습니다"}</small>
+                <small>{vi ? "Tránh ghi trùng chi phí." : "일반 지출로 저장하면 비용이 중복될 수 있습니다"}</small>
               </div>
               <button type="button" className={styles.prepaymentBannerAction} onClick={() => setCategoryId(SUPPLIER_PREPAYMENT_MANUAL_ACTION)}>{vi ? "💸 Ghi là trả trước" : "💸 선결제로 기록"}</button>
             </div>
