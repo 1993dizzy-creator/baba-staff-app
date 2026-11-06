@@ -49,23 +49,52 @@ test("no filter except 조정 can show a row that 전체 hides", () => {
     const ids = idsFor(filter);
     assert.deepEqual(ids.filter(id => !allIds.includes(id)), [], filter);
   }
-  // 조정 can only add manual balance adjustments, nothing else.
+  // 조정 lists only manual balance adjustments, and 전체 shows them too.
   assert.deepEqual(idsFor("adjustment"), [24]);
+  assert.equal(allIds.includes(24), true);
   for (const entry of entries.filter(entry => !allIds.includes(entry.transactionId))) {
     const reachable = LEDGER_ENTRY_FILTERS.filter(filter => entryMatchesListFilter(entry, filter));
-    assert.deepEqual(reachable, entry.transactionId === 24 ? ["adjustment"] : [], `transaction ${entry.transactionId}`);
+    assert.deepEqual(reachable, [], `transaction ${entry.transactionId}`);
   }
 });
 
-test("전체 still shows exactly the previously visible rows, with the same day subtotal", () => {
-  assert.deepEqual(allIds, [1, 3, 10, 11, 12, 26]);
+const subtotal = (rows: LedgerEntry[]) => rows.reduce((sum, entry) => {
+  const value = entryDisplaySubtotal(entry);
+  return { income: sum.income + value.income, expense: sum.expense + value.expense };
+}, { income: 0, expense: 0 });
+
+test("전체 shows the previously visible rows plus manual balance adjustments, with the same day subtotal", () => {
+  assert.deepEqual(allIds, [1, 3, 10, 11, 12, 24, 26]);
   const before = entries.filter(entry => !entry.isSystemAdjustment);
-  assert.deepEqual(entries.filter(entry => entryMatchesListFilter(entry, "all")), before);
-  const subtotal = (rows: LedgerEntry[]) => rows.reduce((sum, entry) => {
-    const value = entryDisplaySubtotal(entry);
-    return { income: sum.income + value.income, expense: sum.expense + value.expense };
-  }, { income: 0, expense: 0 });
-  assert.deepEqual(subtotal(entries.filter(entry => entryMatchesListFilter(entry, "all"))), subtotal(before));
+  const listed = entries.filter(entry => entryMatchesListFilter(entry, "all"));
+  assert.deepEqual(listed.filter(entry => entry.transactionId !== 24), before);
+  // The balance adjustment is non-P&L: it adds nothing to the day's 수입/지출.
+  assert.deepEqual(subtotal(listed), subtotal(before));
+});
+
+test("#4181 manual cash rounding adjustment (−600₫, 11/5) is one row under 전체 and 조정 only", () => {
+  const row: TransactionRow = {
+    id: 4181, type: "balance_adjustment", status: "confirmed", source_type: "manual", source_key: "sheet:2026-11:row78:pos-cash-rounding:-600",
+    business_date: "2026-11-05", occurred_at: "2026-11-05T12:00:00+07:00", amount: 600, economic_effect_sign: 1,
+    memo: "2026-11-05 시트 11월!G78 br4 실수령 현금 262,000₫ vs CUKCUK 영수증 M-261105-001 262,600₫ 차이 −600₫.", movements: cash(-600),
+  };
+  const sale = tx(4180, { type: "income", business_date: "2026-11-05", amount: 262_600, movements: cash(262_600) });
+  const built = buildLedgerEntries([sale, row], [], new Map(), [], "2026-11");
+  const adjustment = built.find(entry => entry.transactionId === 4181)!;
+  assert.equal(adjustment.isSystemAdjustment, true);
+  assert.equal(adjustment.userAdjustment, "balance");
+  assert.deepEqual(LEDGER_ENTRY_FILTERS.filter(filter => entryMatchesListFilter(adjustment, filter)), ["all", "adjustment"]);
+  // Same entry, same date/amount/account/memo/cash outflow in both lists; no duplicate row.
+  for (const filter of ["all", "adjustment"] as const) {
+    const rows = built.filter(entry => entryMatchesListFilter(entry, filter) && entry.transactionId === 4181);
+    assert.equal(rows.length, 1, filter);
+    assert.equal(rows[0], adjustment);
+  }
+  assert.deepEqual([adjustment.businessDate, adjustment.amount, adjustment.accountName, adjustment.fundFlow, adjustment.memo],
+    ["2026-11-05", 600, "매장 현금", "outflow", row.memo]);
+  // 전체 day subtotal = the sale only; the adjustment adds 0 to 수입 and 지출.
+  assert.deepEqual(entryDisplaySubtotal(adjustment), { income: 0, expense: 0 });
+  assert.deepEqual(subtotal(built.filter(entry => entryMatchesListFilter(entry, "all"))), { income: 262_600, expense: 0 });
 });
 
 test("급여 shows only displayable payroll payments and advances, never accrued company cost or reversals", () => {
@@ -91,7 +120,7 @@ test("page applies every filter through the shared helper only", () => {
   assert.match(loop, /for \(const entry of listEntries\) \{\s*if \(isHiddenRentAllocation\(entry\)\) continue;\s*if \(!entryMatchesListFilter\(entry, filter\)\) continue;/);
   assert.doesNotMatch(loop, /isSystemAdjustment|filter ===/);
   const filterSource = readFileSync("lib/ledger/entry-list-filter.ts", "utf8");
-  assert.match(filterSource, /^  if \(entry\.isSystemAdjustment\) return filter === "adjustment" && entry\.userAdjustment === "balance";$/m);
+  assert.match(filterSource, /^  if \(entry\.isSystemAdjustment\) return entry\.userAdjustment === "balance" && \(filter === "all" \|\| filter === "adjustment"\);$/m);
   assert.match(filterSource, /^  if \(entry\.paymentDifference\) return filter === "adjustment" \|\| \(filter === "all" && entry\.paymentDifference\.shownInAll === true\);$/m);
   assert.match(filterSource, /^  if \(entry\.paymentSettledInPayables\) return false;$/m);
 });

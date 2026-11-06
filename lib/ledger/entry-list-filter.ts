@@ -23,8 +23,8 @@ const UTILITY_CATEGORIES = new Set(["전기료", "수도료", "가스비"]);
 
 export function entryMatchesListFilter(entry: LedgerEntry, filter: LedgerEntryFilter) {
   // System adjustments stay out of the list; only a user-facing manual balance
-  // adjustment surfaces, and only under 조정.
-  if (entry.isSystemAdjustment) return filter === "adjustment" && entry.userAdjustment === "balance";
+  // adjustment (it moves real cash) surfaces, under 전체 and 조정. Its subtotal is 0.
+  if (entry.isSystemAdjustment) return entry.userAdjustment === "balance" && (filter === "all" || filter === "adjustment");
   // Derived payment-difference rows exist for 조정; 전체 keeps them inside the
   // payment row, or lists them when that payment row is read inside its purchases.
   if (entry.paymentDifference) return filter === "adjustment" || (filter === "all" && entry.paymentDifference.shownInAll === true);

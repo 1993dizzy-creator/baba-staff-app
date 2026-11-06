@@ -179,8 +179,8 @@ test("pill order and labels come from the shared filter list", () => {
   assert.match(page, /\{LEDGER_ENTRY_FILTERS\.map\(\(value\) => \[value, ledgerEntryFilterLabel\(value, lang\)\] as const\)\.map\(\(\[value, label\]\) => \(/);
 });
 
-test("each filter has one user meaning; card and adjustment rows are exclusive to their own filter", () => {
-  assert.deepEqual(visible("all"), [1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 15, pending, "reserve-entry:41"]);
+test("each filter has one user meaning; card and adjustment rows appear only under 전체 and their own filter", () => {
+  assert.deepEqual(visible("all"), [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 15, pending, "reserve-entry:41"]);
   assert.deepEqual(visible("income"), [1, 15]);
   assert.deepEqual(visible("expense"), [2, 3, 8, pending]);
   assert.deepEqual(visible("unpaid"), [3]);
@@ -211,7 +211,8 @@ test("system corrections and reversals stay hidden from every filter, including 
   }
   const balance = entries.find(entry => entry.transactionId === 9)!;
   assert.equal(balance.userAdjustment, "balance");
-  assert.deepEqual(LEDGER_ENTRY_FILTERS.filter(filter => entryMatchesListFilter(balance, filter)), ["adjustment"]);
+  // A manual balance adjustment moves real cash: listed under 전체 and 조정, nowhere else.
+  assert.deepEqual(LEDGER_ENTRY_FILTERS.filter(filter => entryMatchesListFilter(balance, filter)), ["all", "adjustment"]);
   const sheet = entries.find(entry => entry.transactionId === 12)!;
   assert.equal(sheet.userAdjustment, "paymentDifference");
   // A standalone sheet adjustment was already visible in 전체 and stays there (now as [조정]).
@@ -243,10 +244,12 @@ test("every filter's date header uses its visible rows only; 전체 subtotal is 
     assert.equal(header.filterAmount, expected.filterAmount, `${filter} amount`);
     if (expected.filterAmount === null) assert.deepEqual([header.income, header.expense], [expected.income, expected.expense], `${filter} pair`);
   }
-  // 전체 equals the pre-change visible set and subtotal.
+  // 전체 = the non-system rows plus the manual balance adjustment #9; the subtotal is
+  // unchanged because a balance adjustment adds nothing to 수입/지출.
   const before = raw.filter(entry => !entry.isSystemAdjustment);
   const all = dayHeader(entries, "all", day);
-  assert.deepEqual(all.rows, before);
+  assert.deepEqual(all.rows, raw.filter(entry => !entry.isSystemAdjustment || entry.userAdjustment === "balance"));
+  assert.deepEqual(entryDisplaySubtotal(entries.find(entry => entry.transactionId === 9)!), { income: 0, expense: 0 });
   assert.deepEqual([all.income, all.expense], [
     before.reduce((sum, entry) => sum + entryDisplaySubtotal(entry).income, 0),
     before.reduce((sum, entry) => sum + entryDisplaySubtotal(entry).expense, 0),
