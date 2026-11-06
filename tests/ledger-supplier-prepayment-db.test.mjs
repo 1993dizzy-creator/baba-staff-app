@@ -168,12 +168,54 @@ test('receipt in a closed month cannot take a prepayment; ordinary payments keep
   await assert.rejects(() => db2.query('insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) values($1,$2,100000)', [nov, ordinary.id]), /LEDGER_MONTH_CLOSED/);
 });
 
+test('prepayment outflow account must be an active business fund (active card_clearing is refused)', async () => {
+  const db = await setup();
+  // Production shape: card_clearing stays active but is_business_fund=false.
+  await db.exec("update ledger_fund_accounts set is_business_fund=false where type='card_clearing'");
+  const card = await one(db, "select id from ledger_fund_accounts where type='card_clearing' and is_active=true order by id limit 1");
+  assert.ok(card, 'fixture has an active card_clearing account');
+  const before = await totals(db);
+  assert.equal((await create(db, { account: Number(card.id) })).status, 'invalid_account');
+  await db.exec("update ledger_fund_accounts set is_business_fund=false where id=1");
+  assert.equal((await create(db, { account: 1 })).status, 'invalid_account', 'active non-business fund is refused');
+  assert.deepEqual(await totals(db), before, 'nothing written');
+});
+
+test('UPDATE of a prepayment allocation guards both the OLD and the NEW application month', async () => {
+  const db = await setup();
+  const { prepaymentTransactionId: id } = await create(db, { amount: 1_000_000, at: '2026-10-01T12:00:00+07:00' });
+  const oct = await receipt(db, 500_000, '2026-10-20'), nov = await receipt(db, 500_000, '2026-11-05');
+  assert.equal((await apply(db, [{ prepaymentTransactionId: id, payableId: oct, allocatedAmount: 500_000 }])).status, 'applied');
+  await db.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+  // OLD application month (October) is closed, NEW (November) is open: still refused.
+  await assert.rejects(() => db.query('update ledger_payable_allocations set payable_id=$1 where payment_transaction_id=$2', [nov, id]), /LEDGER_MONTH_CLOSED/);
+  await assert.rejects(() => db.query('update ledger_payable_allocations set allocated_amount=1 where payment_transaction_id=$1', [id]), /LEDGER_MONTH_CLOSED/);
+  // OLD open (November), NEW closed (October): refused as before.
+  const db2 = await setup();
+  const { prepaymentTransactionId: id2 } = await create(db2, { amount: 1_000_000, at: '2026-10-01T12:00:00+07:00' });
+  const oct2 = await receipt(db2, 500_000, '2026-10-20'), nov2 = await receipt(db2, 500_000, '2026-11-05');
+  assert.equal((await apply(db2, [{ prepaymentTransactionId: id2, payableId: nov2, allocatedAmount: 500_000 }])).status, 'applied');
+  await db2.exec("insert into ledger_month_closures(month,status) values('2026-10-01','closed')");
+  await assert.rejects(() => db2.query('update ledger_payable_allocations set payable_id=$1 where payment_transaction_id=$2', [oct2, id2]), /LEDGER_MONTH_CLOSED/);
+  // both open: allowed
+  assert.equal((await db2.query('update ledger_payable_allocations set allocated_amount=400000 where payment_transaction_id=$1', [id2])).affectedRows, 1);
+});
+
 test('migration refuses to replace an unexpected allocation guard', async () => {
   const db = await database();
   await db.exec(read('202608210004_add_ledger_payable_payments.sql'));
   await db.exec(read('20261018105936_add_payable_payment_idempotency_v2.sql'));
   await db.exec("create or replace function public.ledger_payable_allocation_month_guard_v1() returns trigger language plpgsql as $$begin return new;end$$");
   await assert.rejects(() => db.exec(migration), /differs from the expected baseline/);
+  // a body that merely contains this migration's marker text is not accepted either
+  await db.exec("create or replace function public.ledger_payable_allocation_month_guard_v1() returns trigger language plpgsql as $$begin -- supplier prepayment application\n return new;end$$");
+  await assert.rejects(() => db.exec(migration), /differs from the expected baseline/);
+});
+
+test('migration re-run accepts only its own exact guard version', async () => {
+  const db = await setup();
+  await db.exec(migration);
+  assert.equal((await create(db)).status, 'created');
 });
 
 test('grants: service_role only; existing payment RPC definitions are untouched', () => {

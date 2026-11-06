@@ -21,27 +21,38 @@ do $$
 declare v_src text;
 begin
  select prosrc into v_src from pg_proc where oid='public.ledger_payable_allocation_month_guard_v1()'::regprocedure;
- -- Expected production baseline (202608210008), or this migration's own version on re-run.
- if md5(v_src)<>'ac92f7318abeeed1ddb591050a32f1a4' and position('supplier prepayment application' in v_src)=0 then
+ -- Only the exact production baseline (202608210008) or, on re-run, this migration's own
+ -- exact version is accepted. Any other body, even one containing similar text, is refused.
+ if md5(v_src) not in('ac92f7318abeeed1ddb591050a32f1a4','71ecabe117bbd2dd40ce191326eebd17') then
   raise exception 'ledger_payable_allocation_month_guard_v1 differs from the expected baseline; review before applying';
  end if;
 end $$;
 
 create or replace function public.ledger_payable_allocation_month_guard_v1() returns trigger
 language plpgsql security definer set search_path=pg_catalog,public as $$
-declare v_tx public.ledger_transactions%rowtype;v_id bigint;v_payable_id bigint;v_date date;
+declare v_tx public.ledger_transactions%rowtype;v_id bigint;v_payable_id bigint;v_date date;v_side int;
 begin
- v_id:=case when tg_op='DELETE' then old.payment_transaction_id else new.payment_transaction_id end;
- v_payable_id:=case when tg_op='DELETE' then old.payable_id else new.payable_id end;
- select * into v_tx from public.ledger_transactions where id=v_id;
- v_date:=v_tx.business_date;
- -- supplier prepayment application: guard the application month (receipt side).
- if v_tx.type='payable_payment' and v_tx.source_snapshot->'prepayment'='true'::jsonb then
-  select greatest(v_tx.business_date,e.business_date) into v_date
-  from public.ledger_payables p join public.ledger_transactions e on e.id=p.expense_transaction_id where p.id=v_payable_id;
-  v_date:=coalesce(v_date,v_tx.business_date);
- end if;
- perform public.ledger_assert_month_open_v1(date_trunc('month',v_date)::date);
+ -- side 1: NEW (OLD on DELETE), as before. side 2 (UPDATE only): the OLD row, so a
+ -- prepayment application cannot be moved out of a closed application month.
+ for v_side in 1..case when tg_op='UPDATE' then 2 else 1 end loop
+  if v_side=1 then
+   v_id:=case when tg_op='DELETE' then old.payment_transaction_id else new.payment_transaction_id end;
+   v_payable_id:=case when tg_op='DELETE' then old.payable_id else new.payable_id end;
+  else
+   v_id:=old.payment_transaction_id;v_payable_id:=old.payable_id;
+  end if;
+  select * into v_tx from public.ledger_transactions where id=v_id;
+  v_date:=v_tx.business_date;
+  -- supplier prepayment application: guard the application month (receipt side).
+  if v_tx.type='payable_payment' and v_tx.source_snapshot->'prepayment'='true'::jsonb then
+   select greatest(v_tx.business_date,e.business_date) into v_date
+   from public.ledger_payables p join public.ledger_transactions e on e.id=p.expense_transaction_id where p.id=v_payable_id;
+   v_date:=coalesce(v_date,v_tx.business_date);
+  elsif v_side=2 then
+   continue; -- ordinary payment OLD row: original guard (NEW only) unchanged
+  end if;
+  perform public.ledger_assert_month_open_v1(date_trunc('month',v_date)::date);
+ end loop;
  return case when tg_op='DELETE' then old else new end;
 end $$;
 revoke all on function public.ledger_payable_allocation_month_guard_v1() from public,anon,authenticated,service_role;
@@ -78,9 +89,10 @@ begin
  end if;
  if v_invalid is not null then return jsonb_build_object('status',v_invalid);end if;
  if not exists(select 1 from public.ledger_parties where id=p_party_id and is_active=true) then return jsonb_build_object('status','invalid_party');end if;
- -- Same 03:00 business-day and account rules as ledger_pay_payables_v1.
+ -- Same 03:00 business-day and account rules as ledger_pay_payables_v1, plus business
+ -- funds only (excludes the active card_clearing account, is_business_fund=false).
  v_business_date:=((p_occurred_at at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date;
- if not exists(select 1 from public.ledger_fund_accounts where id=p_fund_account_id and is_active=true and active_from<=v_business_date
+ if not exists(select 1 from public.ledger_fund_accounts where id=p_fund_account_id and is_active=true and is_business_fund=true and active_from<=v_business_date
    and(active_to is null or active_to>=v_business_date)) then return jsonb_build_object('status','invalid_account');end if;
  perform public.ledger_assert_month_open_v1(date_trunc('month',v_business_date)::date);
  perform pg_advisory_xact_lock(hashtextextended('ledger-payable-party:'||p_party_id::text,0));
