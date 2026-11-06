@@ -1,0 +1,42 @@
+{
+  "capturedAt": "2026-11-06",
+  "source": "Production Supabase, read-only MCP SELECTs (no writes)",
+  "fundAccounts": [
+    { "id": 1, "code": "store_cash", "type": "cash", "is_active": true, "is_business_fund": true, "active_from": "2026-08-01" },
+    { "id": 2, "code": "baba_corporate_bank", "type": "bank", "is_active": true, "is_business_fund": true, "active_from": "2026-08-01" },
+    { "id": 3, "code": "cho_personal_custody", "type": "personal_custody", "is_active": true, "is_business_fund": true, "active_from": "2026-08-01" },
+    { "id": 4, "code": "card_clearing", "type": "card_clearing", "is_active": true, "is_business_fund": false, "active_from": "2026-08-01" },
+    { "id": 5, "code": "vuong_personal_custody", "type": "personal_custody", "is_active": true, "is_business_fund": true, "active_from": "2026-08-01" }
+  ],
+  "julyFirstOpenings": [],
+  "julySeedKeys": [],
+  "preAugustTransactions": [
+    { "id": 1190, "type": "sales", "business_date": "2026-07-31", "amount": 3694200, "source_key": "pos:2026-07-31:card", "movements": [{ "fund": 4, "amount": 3694200 }] },
+    { "id": 3804, "type": "opening", "business_date": "2026-07-31", "amount": 15426000, "source_type": "manual", "movements": [] }
+  ],
+  "augustOpenings": [
+    { "id": 3, "source_key": "2026-08-01:store_cash", "amount": 95464986, "movement": { "id": 1, "fund": 1 } },
+    { "id": 4, "source_key": "2026-08-01:vuong_personal_custody", "amount": 5231310, "movement": { "id": 2, "fund": 5 } },
+    { "id": 5, "source_key": "2026-08-01:cho_personal_custody", "amount": 95470741, "movement": { "id": 3, "fund": 3 } },
+    { "id": 6, "source_key": "2026-08-01:baba_corporate_bank", "amount": 104186605, "movement": { "id": 4, "fund": 2 } }
+  ],
+  "augustOpeningTotal": 300353642,
+  "monthClosures": [
+    { "month": "2026-08-01", "status": "closed", "revision": 5, "snapshot_hash": "298a9a2f878b2db001ab6b7e503b26f11577adfaca068e8ed3e4e4ace47d874b" },
+    { "month": "2026-09-01", "status": "closed", "revision": 5, "snapshot_hash": "04cba0449139a034a4a0c93d646eae1be0fa32cb824d60eca011178ce6e04a0e" },
+    { "month": "2026-10-01", "status": "closed", "revision": 1, "snapshot_hash": "936d932e251fde1ca2ecebd10611ba3b541821bfcd4fd836fe91661a49b3fed3" }
+  ],
+  "julyClosure": null,
+  "activeOwnerMasterUserIds": [1, 2, 15, 16, 22],
+  "seed": {
+    "business_date": "2026-07-01",
+    "occurred_at": "2026-07-01T03:00:00+07:00",
+    "accounts": [
+      { "fund_account_id": 1, "code": "store_cash", "amount": 202299186 },
+      { "fund_account_id": 5, "code": "vuong_personal_custody", "amount": 16123010 },
+      { "fund_account_id": 3, "code": "cho_personal_custody", "amount": 850041 },
+      { "fund_account_id": 2, "code": "baba_corporate_bank", "amount": 381587580 }
+    ],
+    "total": 600859817
+  }
+}
