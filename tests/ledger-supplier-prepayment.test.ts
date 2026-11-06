@@ -110,7 +110,11 @@ test("unused prepayment API supports ?month as-of reads; cash report keeps later
 test("manual expense suggests 💸 선결제 for goods suppliers but never converts automatically", () => {
   const page = read("app/(protected)/admin/ledger/entries/page.tsx");
   assert.match(page, /const prepaymentHint = type === "expense" && !payrollAdvance && !supplierPrepayment && !!selectedPartner\?\.ledgerPartyId\s*&& \["food", "alcohol", "beverage", "consumable"\]\.includes\(selectedPartner\.partnerType\);/);
-  assert.match(page, /입고 전에 지급한 매입대금이라면 선결제로 기록하세요/);
+  assert.match(page, /입고 전 매입대금은 선결제로 기록하세요/);
+  assert.match(page, /일반 지출로 저장하면 비용이 중복될 수 있습니다/);
+  assert.match(page, /Tiền hàng trả trước khi nhập kho nên ghi là trả trước/);
+  assert.match(page, /Nếu lưu như chi phí thường, chi phí có thể bị ghi trùng/);
+  assert.match(page, /data-testid="manual-prepayment-hint"/);
   assert.match(page, /onClick=\{\(\) => setCategoryId\(SUPPLIER_PREPAYMENT_MANUAL_ACTION\)\}/);
   // the only places that select the prepayment action are the hint button and the category selector
   assert.equal((page.match(/setCategoryId\(SUPPLIER_PREPAYMENT_MANUAL_ACTION\)/g) ?? []).length, 1);

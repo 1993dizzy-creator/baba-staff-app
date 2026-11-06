@@ -150,6 +150,12 @@
 @media(max-width:560px){.projectionWarningRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px}.projectionWarningSummary{grid-column:1;grid-row:1}}
 .manualReadOnly{background:#f3f4f6;color:#374151;font-weight:700}
 .manualNotice{grid-column:1/-1;margin:0;padding:8px 10px;border:1px solid #f5d9a8;border-radius:9px;background:#fffaf0;color:#9a5b10;font-size:10px;line-height:1.45}
+.prepaymentBanner{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #f5d9a8;border-radius:12px;background:#fffaf0}
+.prepaymentBannerText{flex:1 1 auto;min-width:0;display:grid;gap:3px}
+.prepaymentBannerText strong{color:#7c4a0e;font-size:15px;font-weight:800;line-height:1.35}
+.prepaymentBannerText small{overflow:hidden;color:#9a5b10;font-size:12px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}
+.prepaymentBannerAction{flex:0 0 auto;min-height:40px;padding:8px 14px;border:0;border-radius:10px;background:#111827;color:#fff;font-size:13px;font-weight:800;white-space:nowrap;cursor:pointer}
+@media(max-width:420px){.prepaymentBanner{flex-direction:column;align-items:stretch;gap:10px}.prepaymentBannerAction{width:100%}}
 
 .entryRow{grid-template-columns:minmax(0,1fr) max-content;gap:8px}
 .entryLeft{min-width:0;display:grid;grid-template-columns:auto 18px minmax(0,1fr);align-items:center;column-gap:6px}
