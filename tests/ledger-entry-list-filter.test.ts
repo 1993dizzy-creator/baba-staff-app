@@ -313,10 +313,10 @@ test("review counts exclude resolved, reserve, system and derived adjustment row
     { ...oct21Expense, status: "pending" as const, isSystemAdjustment: true },
     { ...oct21Reserves[0], status: "pending" as const },
   ]).size, 0);
-  // TX#3118 balance adjustment: unsigned display and no review badge.
+  // TX#3118 balance adjustment: signed by its own fund movement (+500,000 into 법인) and no review badge.
   const balance = oct21Base.find(entry => entry.transactionId === 3118)!;
   assert.equal(balance.userAdjustment, "balance");
-  assert.equal(entryDisplayAmountSign(balance), "");
+  assert.equal(entryDisplayAmountSign(balance), "+");
 });
 
 test("daily headers show a lone ❗ beside the date; 지난 내역 shows 확인 필요 N건 beside its title", () => {

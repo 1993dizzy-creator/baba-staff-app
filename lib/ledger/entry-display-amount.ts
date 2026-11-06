@@ -9,9 +9,18 @@ export function entryDisplayAmount(entry: Pick<LedgerEntry, "amount" | "systemDi
     : entry.amount;
 }
 
+// A manual balance adjustment is non-P&L but moves real money: its sign is the
+// net direction of its own fund movements (fundFlow), never its P&L direction.
+function balanceAdjustmentSign(entry: Pick<LedgerEntry, "userAdjustment" | "fundFlow">) {
+  if (entry.userAdjustment !== "balance") return null;
+  return entry.fundFlow === "inflow" ? "+" : entry.fundFlow === "outflow" ? "−" : "";
+}
+
 export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "paymentTransaction" | "payrollPayment" | "fundFlow" | "systemDisplay" | "userAdjustment" | "prepaidAllocation">) {
-  // Payments, user-facing adjustments and prepaid allocations (no money moves)
-  // show a plain, unsigned amount.
+  const balance = balanceAdjustmentSign(entry);
+  if (balance !== null) return balance;
+  // Payments, payment-difference adjustments and prepaid allocations (no money
+  // moves) show a plain, unsigned amount.
   if (entry.paymentTransaction || entry.userAdjustment || entry.prepaidAllocation) return "";
   if (entry.systemDisplay?.kind === "investment") {
     return entry.systemDisplay.cashFlow === "outflow" ? "−" :
@@ -28,6 +37,9 @@ export function entryDisplayAmountSign(entry: Pick<LedgerEntry, "direction" | "p
 }
 
 export function entryDisplayAmountTone(entry: Pick<LedgerEntry, "direction" | "payrollPayment" | "fundFlow" | "userAdjustment" | "prepaidAllocation">): "income" | "expense" | "transfer" {
+  // Increase/decrease colour only; the [조정] badge still marks it as non-P&L.
+  const balance = balanceAdjustmentSign(entry);
+  if (balance !== null) return balance === "+" ? "income" : balance === "−" ? "expense" : "transfer";
   if (entry.userAdjustment || entry.prepaidAllocation) return "transfer";
   if (entry.direction === "income") return "income";
   if (entry.direction === "expense" || isPayrollPaymentOutflow(entry)) return "expense";

@@ -51,6 +51,7 @@ import { chooseLedgerEntryEmoji, EMPLOYEE_COST_EMOJI, entryCategoryEmoji, ledger
 import { entryDisplayBadgeEmoji, entryDisplayBadgeKind, entryDisplayBadgeLabel } from "@/lib/ledger/entry-display-badge";
 import { entryDisplayAmount, entryDisplayAmountSign, entryDisplayAmountTone } from "@/lib/ledger/entry-display-amount";
 import { accountTransferBadgeLabel, shortLedgerAccountName } from "@/lib/ledger/entry-display-account";
+import { balanceAdjustmentListTitle } from "@/lib/ledger/entry-list-title";
 import { groupPayableRows, groupPayableRowsByMonth, latestPayableMonth } from "@/lib/ledger/payable-date-groups";
 import {
   formatLedgerAmountInput,
@@ -2815,9 +2816,11 @@ function entryMeta(entry: LedgerEntry, lang: "ko" | "vi" = "ko") {
   if (entry.systemDisplay?.kind === "pos") {
     return lang === "vi"
       ? `${entry.systemDisplay.receiptCount.toLocaleString("vi-VN")} hóa đơn`
-      : `영수증 ${entry.systemDisplay.receiptCount.toLocaleString("ko-KR")}건`;
+      : `${entry.systemDisplay.receiptCount.toLocaleString("ko-KR")}건`;
   }
   if (entry.systemDisplay?.kind === "meal") return "";
+  // The [조정] badge and account already identify it; no repeated 수동 / 수동 입력.
+  if (entry.userAdjustment === "balance") return "";
   if (entry.systemDisplay?.kind === "reserve") return reserveEntryTypeLabel(entry.systemDisplay.entryType, lang);
   if (entry.systemDisplay?.kind === "inventory") {
     const items = lang === "vi"
@@ -2884,7 +2887,7 @@ function entryDisplayTitle(entry: LedgerEntry, lang: "ko" | "vi") {
     const party = entry.paymentDifference.partyName || (lang === "vi" ? "Công nợ" : "미지급금");
     return lang === "vi" ? `Chênh lệch thanh toán ${party}` : `${party} 지급차액`;
   }
-  return entry.title;
+  return balanceAdjustmentListTitle(entry, lang) ?? entry.title;
 }
 function reserveLabel(
   reserve: Account["reserves"][number],
