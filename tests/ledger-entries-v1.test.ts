@@ -308,7 +308,7 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(css, /\.page\{padding-bottom:calc\(122px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /\.balanceToggle\{[^}]*min-height:46px/);
   // Every account renders as the same uniform card — no wide/full-width variant.
-  assert.match(pageCompact, /<articleclassName=\{styles\.balanceCard\}key=\{account\.id\}>/);
+  assert.match(pageCompact, /<buttontype="button"className=\{styles\.balanceCard\}key=\{account\.id\}aria-haspopup="dialog"onClick=\{\(\)=>setLogAccountId\(account\.id\)\}>/);
   assert.doesNotMatch(css, /balanceCardWide/);
   assert.doesNotMatch(pageCompact, /wide=account\.code/);
   // Detail box is a plain block; the four accounts form an equal-height 2×2 KPI grid.
@@ -345,7 +345,8 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(pageCompact, /account\.availableBalance/);
   assert.doesNotMatch(pageCompact, /reserveExpanded|toggleReserve|styles\.balanceReserveToggle|styles\.balanceReserveList|styles\.balanceAvailable/);
   const balanceCard = pageCompact.slice(pageCompact.indexOf("functionrenderBalanceCard"), pageCompact.indexOf("constpartnerByLedgerParty"));
-  assert.doesNotMatch(balanceCard, /<button/);
+  // The whole card is the single button (account log); nothing inside is another control.
+  assert.equal(balanceCard.match(/<button/g)?.length, 1);
   assert.doesNotMatch(page, /"총 잔액"/);
   assert.match(css, /\.balanceInner \.balanceCardHead\{display:flex;align-items:center;justify-content:space-between/);
   assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
