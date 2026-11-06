@@ -308,7 +308,6 @@ function LedgerEntriesContent() {
     [candidateDraft, setCandidateDraft] = useState<CandidateDraft | null>(null),
     [openingExpanded, setOpeningExpanded] = useState(false),
     [balanceExpanded, setBalanceExpanded] = useState(false),
-    [reserveExpanded, setReserveExpanded] = useState<Set<string>>(() => new Set()),
     [payableExpanded, setPayableExpanded] = useState(false),
     [payables, setPayables] = useState<PayablesSummary | null>(null),
     [payableParty, setPayableParty] = useState<(PayableParty & {viewMonth:string}) | null>(null);
@@ -580,8 +579,8 @@ function LedgerEntriesContent() {
       ),
     [businessAccounts],
   );
-  // Cash and the corporate bank each take a full-width row; the two personal
-  // custody accounts share a row (see .personalAccounts in the stylesheet).
+  // 2×2 KPI grid: cash and the corporate bank on the first row, the two
+  // personal custody accounts on the second.
   const primaryBalanceAccounts = useMemo(
     () => businessAccounts.filter((account) => account.type !== "personal_custody"),
     [businessAccounts],
@@ -820,14 +819,6 @@ function LedgerEntriesContent() {
       return next;
     });
   }
-  function toggleReserve(code: string) {
-    setReserveExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
-    });
-  }
   function renderBalanceCard(account: Account) {
     const delta = balanceDeltaByCode.get(account.code) ?? 0;
     const deltaClass = delta > 0
@@ -835,53 +826,32 @@ function LedgerEntriesContent() {
       : delta < 0
         ? styles.balanceDeltaNegative
         : styles.balanceDeltaZero;
-    const showReserve = account.code === "baba_corporate_bank" || account.reserves.length > 0;
+    // KPI card: name, balance, month-to-date change. Reserve figures stay in the
+    // data; the 🔒 mark only signals that this account holds a reserve.
     const hasReserve = account.reserveTotal !== 0;
-    const reserveOpen = reserveExpanded.has(account.code);
+    const reserveSummary = hasReserve
+      ? [
+          `${vi ? "Tổng quỹ dự phòng" : "준비금 합계"} ${money(account.reserveTotal)}`,
+          ...account.reserves
+            .filter((reserve) => reserve.currentAmount !== 0)
+            .map((reserve) => `${reserveLabel(reserve, lang)} ${money(reserve.currentAmount)}`),
+          `${vi ? "Số dư khả dụng" : "사용 가능 잔액"} ${money(account.availableBalance)}`,
+        ].join(" · ")
+      : "";
     return (
       <article className={styles.balanceCard} key={account.id}>
-        <small className={styles.balanceCardName}>{localizedAccountName(account, lang)}</small>
+        <span className={styles.balanceCardHead}>
+          <small className={styles.balanceCardName}>
+            <i aria-hidden>{accountEmoji(account.code, account.type)}</i> {localizedAccountName(account, lang)}
+          </small>
+          {hasReserve ? (
+            <span className={styles.balanceReserveMark} role="img" aria-label={reserveSummary} title={reserveSummary}>🔒</span>
+          ) : null}
+        </span>
         <b className={styles.balanceCardValue}>{money(account.balance)}</b>
         <em className={`${styles.balanceDelta} ${deltaClass}`}>
           {delta > 0 ? "+" : ""}{money(delta)}
         </em>
-        {showReserve ? (
-          <div className={styles.balanceReserve}>
-            {hasReserve ? (
-              <button
-                type="button"
-                className={styles.balanceReserveToggle}
-                aria-expanded={reserveOpen}
-                onClick={() => toggleReserve(account.code)}
-              >
-                <span>🔒 {vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</span>
-                <b>{money(account.reserveTotal)}</b>
-                <i aria-hidden>{reserveOpen ? "⌃" : "⌄"}</i>
-              </button>
-            ) : (
-              <span className={styles.balanceReserveToggle}>
-                <span>{vi ? "Tổng quỹ dự phòng" : "준비금 합계"}</span>
-                <b>{money(account.reserveTotal)}</b>
-              </span>
-            )}
-            {hasReserve && reserveOpen ? (
-              <div className={styles.balanceReserveList}>
-                {account.reserves
-                  .filter((reserve) => reserve.currentAmount !== 0)
-                  .map((reserve) => (
-                    <span key={reserve.id}>
-                      <small>{reserveLabel(reserve, lang)}</small>
-                      <b>{money(reserve.currentAmount)}</b>
-                    </span>
-                  ))}
-              </div>
-            ) : null}
-            <span className={styles.balanceAvailable}>
-              <small>{vi ? "Số dư khả dụng" : "사용 가능 잔액"}</small>
-              <b>{money(account.availableBalance)}</b>
-            </span>
-          </div>
-        ) : null}
       </article>
     );
   }
@@ -1364,11 +1334,7 @@ function LedgerEntriesContent() {
               {balanceExpanded ? <div className={styles.balanceDetail} id="ledger-current-balance-detail">
                 <div className={styles.balanceAccounts}>
                   {primaryBalanceAccounts.map(renderBalanceCard)}
-                  {personalBalanceAccounts.length > 0 ? (
-                    <div className={styles.personalAccounts}>
-                      {personalBalanceAccounts.map(renderBalanceCard)}
-                    </div>
-                  ) : null}
+                  {personalBalanceAccounts.map(renderBalanceCard)}
                 </div>
               </div> : null}
             </div>

@@ -311,23 +311,21 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(pageCompact, /<articleclassName=\{styles\.balanceCard\}key=\{account\.id\}>/);
   assert.doesNotMatch(css, /balanceCardWide/);
   assert.doesNotMatch(pageCompact, /wide=account\.code/);
-  // Detail box is a plain block; the outer accounts wrapper is a single column
-  // (cash and the corporate bank each take a full-width row).
-  assert.match(css, /\.balanceInner \.balanceAccounts\{display:grid;grid-template-columns:1fr;gap:8px;width:100%/);
+  // Detail box is a plain block; the four accounts form an equal-height 2×2 KPI grid.
+  assert.match(css, /\.balanceInner \.balanceAccounts\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-auto-rows:1fr;gap:8px;width:100%;align-items:stretch\}/);
   assert.match(css, /\.balanceInner \.balanceCard\{min-width:0;width:100%/);
   assert.match(css, /\.balanceInner>\.balanceDetail\{display:block/);
   assert.doesNotMatch(css, /max-width:640px/);
-  // The two personal-custody accounts share a row via a dedicated 2-col grid,
-  // falling back to one column only on very narrow screens.
+  // Row 1: cash / corporate bank; row 2: the two personal-custody accounts.
+  // Two columns are kept even at 320px.
   assert.match(pageCompact, /businessAccounts\.filter\(\(account\)=>account\.type!=="personal_custody"\)/);
   assert.match(pageCompact, /businessAccounts\.filter\(\(account\)=>account\.type==="personal_custody"\)/);
   assert.match(pageCompact, /\{primaryBalanceAccounts\.map\(renderBalanceCard\)\}/);
-  assert.match(pageCompact, /personalBalanceAccounts\.length>0\?\(<divclassName=\{styles\.personalAccounts\}>\{personalBalanceAccounts\.map\(renderBalanceCard\)\}<\/div>\)/);
-  assert.match(css, /\.balanceInner \.personalAccounts\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);gap:8px;width:100%/);
-  assert.match(css, /@media\(max-width:340px\)\{[\s\S]*?\.balanceInner \.personalAccounts\{grid-template-columns:1fr\}/);
-  // No internal scroll on the panel itself; only a very long reserve list is capped.
+  assert.match(pageCompact, /\{primaryBalanceAccounts\.map\(renderBalanceCard\)\}\{personalBalanceAccounts\.map\(renderBalanceCard\)\}<\/div>/);
+  assert.doesNotMatch(pageCompact, /styles\.personalAccounts/);
+  assert.doesNotMatch(css, /personalAccounts/);
+  // No internal scroll on the panel itself.
   assert.doesNotMatch(css, /\.balanceInner>\.balanceDetail\{[^}]*overflow-y:auto/);
-  assert.match(css, /\.balanceInner \.balanceReserveList\{[^}]*max-height:30vh;overflow-y:auto/);
   assert.match(css, /\.balanceInner\{[^}]*border:1px solid #cbd5e1;[^}]*border-radius:14px 14px 0 0;[^}]*background:rgba\(255,255,255,\.995\);[^}]*box-shadow:0 -2px 10px/);
   assert.match(css, /\.balanceInner::before\{[^}]*height:2px;background:#374151/);
   assert.match(pageCompact, /delta>0\?styles\.balanceDeltaPositive:delta<0\?styles\.balanceDeltaNegative:styles\.balanceDeltaZero/);
@@ -339,15 +337,17 @@ test("current balance panel is collapsed, nav-safe and expandable", () => {
   assert.match(css, /\.balanceExpandedPage\{padding-bottom:calc\(430px \+ env\(safe-area-inset-bottom\)\)\}/);
   assert.match(css, /@media\(max-width:560px\)[\s\S]*\.balanceToggle/);
   assert.match(css, /@media\(max-width:340px\)[\s\S]*\.balanceToggle>strong\{font-size:11px\}/);
-  // Reserve/available shown inside the corporate card; per-reserve list is collapsed behind a toggle.
-  assert.match(pageCompact, /showReserve=account\.code==="baba_corporate_bank"\|\|account\.reserves\.length>0/);
+  // KPI card: emoji + name, balance, month delta only. A reserve shows as a
+  // non-interactive 🔒 mark; the reserve/available rows are no longer rendered.
+  assert.match(pageCompact, /<iaria-hidden>\{accountEmoji\(account\.code,account\.type\)\}<\/i>\{localizedAccountName\(account,lang\)\}/);
   assert.match(pageCompact, /hasReserve=account\.reserveTotal!==0/);
-  assert.match(pageCompact, /reserveOpen=reserveExpanded\.has\(account\.code\)/);
-  assert.match(pageCompact, /onClick=\{\(\)=>toggleReserve\(account\.code\)\}/);
-  assert.match(pageCompact, /hasReserve&&reserveOpen\?/);
+  assert.match(pageCompact, /hasReserve\?\(<spanclassName=\{styles\.balanceReserveMark\}role="img"aria-label=\{reserveSummary\}title=\{reserveSummary\}>🔒<\/span>\):null/);
   assert.match(pageCompact, /account\.availableBalance/);
+  assert.doesNotMatch(pageCompact, /reserveExpanded|toggleReserve|styles\.balanceReserveToggle|styles\.balanceReserveList|styles\.balanceAvailable/);
+  const balanceCard = pageCompact.slice(pageCompact.indexOf("functionrenderBalanceCard"), pageCompact.indexOf("constpartnerByLedgerParty"));
+  assert.doesNotMatch(balanceCard, /<button/);
   assert.doesNotMatch(page, /"총 잔액"/);
-  assert.match(css, /\.balanceInner \.balanceAvailable small\{[^}]*color:#16805a/);
+  assert.match(css, /\.balanceInner \.balanceCardHead\{display:flex;align-items:center;justify-content:space-between/);
   assert.match(bottomNav,/height: 60/);assert.match(bottomNav,/marginTop: -22/);assert.match(bottomNav,/zIndex: 1000/);
   assert.match(page,/vuong_personal_custody: "개인\(Vương\)"/);
   assert.match(page,/cho_personal_custody: "개인\(Cho\)"/);
