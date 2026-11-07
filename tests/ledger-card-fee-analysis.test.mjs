@@ -113,24 +113,54 @@ function renderAnalysis(lang, props = {}) {
   const deps = { react: React, 'react/jsx-runtime': require('react/jsx-runtime'), './card-settlements.module.css': { default: new Proxy({}, { get: (_, key) => String(key) }) } };
   const mod = { exports: {} };
   new Function('require', 'module', 'exports', 'fetch', code)(name => { assert.ok(name in deps, `Unexpected import ${name}`); return deps[name]; }, mod, mod.exports, url => { requests.push(url); throw new Error('no network'); });
-  const html = renderToStaticMarkup(React.createElement(mod.exports.default, { estimate: october(), month: '2026-10', lang, monthClosed: true, hasClosure: false, ...props }));
+  const fee = { month: '2026-10', monthClosed: true, autoStatus: 'pending', historicalConfirmedFee: 0, monthEndFee: 0, currentOutstanding: 5699112, projectedTotalFee: 5699112, finalConfirmedFee: null, remainingRate: 5699112 / 192125640, confirmedRate: null, closure: null, estimate: october(), ...props };
+  const html = renderToStaticMarkup(React.createElement(mod.exports.default, { fee, lang }));
   return { html, requests };
 }
+const BANNED = /자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소|Chờ xác nhận tự động|Cần hủy bút toán thủ công/;
 
-test('October analysis renders the provisional notice and a collapsed review panel in Korean', () => {
+test('October renders one compact card: two KPIs, one-line warning, provisional status chips and a 3-row table', () => {
   const { html, requests } = renderAnalysis('ko');
-  for (const label of ['수수료 추정 분석', '192.125.640 ₫', '5.699.112 ₫', '2.97%', '확정 수수료', '미확정 추정액', '수기 비용 처리 #4119',
-    '전표 #4119는 잠정 수기 비용입니다. 공식 카드수수료 확정 기록이 아닙니다.', '장부 마감 완료 · 공식 카드수수료 확정 기록 없음',
-    '참고 범위(1.80%~2.50%)를 넘습니다', '최소 1.80%', '목표 2.15%', '최대 2.50%', '4.130.701 ₫', '+1.568.411 ₫', '+2.240.850 ₫', '+895.971 ₫', 'POS 영수증 검토 후보'])
-    assert.ok(html.includes(label), label);
+  // KPIs: estimated fee and rate only.
+  const has = fragment => assert.ok(html.includes(fragment), fragment);
+  has('<span>추정 수수료</span><strong>5.699.112 ₫</strong>');
+  has('<span>수수료율</span><strong>2.97%</strong><small class="kpiNote">참고 1.80%~2.50%</small>');
+  has('⚠️ 참고 범위 초과 · 목표 대비 +1.568.411 ₫');
+  for (const chip of ['🧾 잠정 비용 처리 #4119', '🛡️ 자동 중복 확정 보호', '⏳ 공식 확정 미완료']) has(chip);
+  // Units and titles once in the header; rows carry bare numbers.
+  has('<thead><tr><th scope="col">기준</th><th scope="col">예상 수수료(₫)</th><th scope="col">차액(₫)</th></tr></thead>');
+  assert.equal((html.match(/<tr/g) || []).length, 4);
+  has('<th scope="row">최소 1.80%</th><td>3.458.262</td><td>+2.240.850</td>');
+  has('<tr class="feeTableTarget"><th scope="row">목표 2.15%</th><td>4.130.701</td><td>+1.568.411</td>');
+  has('<th scope="row">최대 2.50%</th><td>4.803.141</td><td>+895.971</td>');
+  // Breakdown and manual voucher sit in a collapsed details element.
+  has('<details class="feeDetails"><summary>세부 내역 · 수기 전표</summary>');
+  assert.doesNotMatch(html, /<details[^>]* open/);
+  for (const label of ['192.125.640 ₫', '수기 비용 전표 #4119', '└ 남은 미반영 추정액']) assert.ok(html.slice(html.indexOf('<details')).includes(label), label);
+  assert.doesNotMatch(html, BANNED);
+  // POS review stays collapsed and silent.
   assert.match(html, /aria-expanded="false"/);
-  assert.doesNotMatch(html, /id="card-fee-receipt-review"|검토 후보<\/span>/);
+  assert.doesNotMatch(html, /id="card-fee-receipt-review"/);
   assert.equal(requests.length, 0, 'rendering never fetches candidates');
 });
 
-test('Vietnamese analysis has no Korean text', () => {
+test('confirmed and plain pending months use the same compact card', () => {
+  const confirmed = renderAnalysis('ko', { closure: { confirmed_at: '2026-10-08T05:00:00Z', finalization_business_date: '2026-10-08' }, finalConfirmedFee: 4332575, monthEndFee: 4332575, currentOutstanding: 0,
+    estimate: { ...october(), currentEstimate: 4332575, confirmedFee: 4332575, unconfirmedEstimate: 0, rate: 0.0239, rangeStatus: 'within', manualExpenses: [], manualExpenseTotal: 0, provisionalManualOnly: false } }).html;
+  assert.ok(confirmed.includes('<span>확정 수수료</span><strong>4.332.575 ₫</strong>'));
+  assert.ok(confirmed.includes('✅ 공식 확정') && confirmed.includes('>자동<'));
+  assert.doesNotMatch(confirmed, /⚠️|잠정 비용 처리/);
+  const pending = renderAnalysis('ko', { estimate: { ...october(), currentEstimate: 4000000, rate: 0.0208, rangeStatus: 'within', manualExpenses: [], manualExpenseTotal: 0, provisionalManualOnly: false } }).html;
+  for (const chip of ['⏳ 공식 확정 미완료', '🔒 장부 마감', '다음 카드입금 때 자동 확정 대상']) assert.ok(pending.includes(chip), chip);
+  assert.doesNotMatch(pending, /⚠️|잠정 비용 처리|수기 비용 전표/);
+});
+
+test('Vietnamese card has no Korean text and no banned wording', () => {
   const { html } = renderAnalysis('vi');
-  for (const label of ['Phân tích phí thẻ ước tính', 'Bút toán #4119 là chi phí thủ công tạm tính', 'Mục tiêu 2.15%', 'Hóa đơn POS cần xem xét', 'Đã chốt sổ'])
+  for (const label of ['Phí ước tính', 'Vượt khoảng tham chiếu', 'Đã ghi chi phí tạm tính #4119', 'Chặn xác nhận tự động trùng', 'Chưa xác nhận chính thức', 'Phí dự kiến (₫)', 'Mục tiêu 2.15%', 'Hóa đơn POS cần xem xét'])
     assert.ok(html.includes(label), label);
-  assert.doesNotMatch(html, /[가-힣]/);
+  // The voucher memo is stored ledger data (shown as entered); every UI label is Vietnamese.
+  assert.ok(html.includes('#4119 [잠정 추정·추후 정산검증]'));
+  assert.doesNotMatch(html.replace('[잠정 추정·추후 정산검증]', ''), /[가-힣]/);
+  assert.doesNotMatch(html, BANNED);
 });

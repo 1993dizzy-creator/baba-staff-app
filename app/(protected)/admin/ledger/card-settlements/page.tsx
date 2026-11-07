@@ -33,10 +33,8 @@ const cardText = {
     posCardDetail:"POS 카드매출 상세",source:"원본",ledger:"장부",loading:"불러오는 중…",loadingPage:"카드 정산을 불러오는 중…",
     readFailed:"조회 실패",posFailed:"POS 조회 실패",cancelledMessage:"카드 입금을 취소하고 역분개했습니다.",cancelFailed:"취소 실패",
     cancelHint:"카드 입금 기록을 취소합니다. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다. 기록은 취소 이력으로 보존됩니다.",historicalDifferenceCancelHint:"이 입금에 기록된 과거 정산 차액도 함께 역분개됩니다.",
-    cardFee:"카드 수수료",feeCurrentMonthHint:"카드 수수료는 월마감 후 익월 카드입금 처리 중 자동 확정됩니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
-    historicalFee:"기존 확정 수수료",remainingCardSales:"현재 남은 카드매출",
-    feeMonth:"대상 매출월",thisFee:"이번 수수료 확정",finalFee:"최종 카드수수료",
-    confirmedFee:"확정 카드수수료",historicalPart:"└ 기존 확정",monthEndPart:"└ 월말 확정",feeConfirmedState:"확정 완료",feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
+    cardFee:"카드 수수료",feeCurrentMonthHint:"이번 달 수수료는 월마감 후 카드입금이 들어오면 계산됩니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
+    feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
     feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",
     feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
   },
@@ -52,10 +50,8 @@ const cardText = {
     posCardDetail:"Chi tiết doanh thu thẻ POS",source:"Nguồn",ledger:"Sổ cái",loading:"Đang tải…",loadingPage:"Đang tải quyết toán thẻ…",
     readFailed:"Tải thất bại",posFailed:"Tải chi tiết POS thất bại",cancelledMessage:"Đã hủy tiền thẻ về và ghi bút toán đảo.",cancelFailed:"Hủy thất bại",
     cancelHint:"Hủy bản ghi tiền thẻ về. Bút toán tiền về sẽ được đảo và doanh thu thẻ đã trừ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",historicalDifferenceCancelHint:"Chênh lệch quyết toán cũ của khoản này cũng sẽ được đảo.",
-    cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí thẻ được xác nhận tự động khi xử lý tiền về tháng sau, sau khi chốt sổ.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
-    historicalFee:"Phí đã xác nhận trước",remainingCardSales:"Doanh thu thẻ còn lại",
-    feeMonth:"Tháng bán",thisFee:"Phí xác nhận lần này",finalFee:"Tổng phí thẻ cuối cùng",
-    confirmedFee:"Phí thẻ đã xác nhận",historicalPart:"└ Đã xác nhận trước",monthEndPart:"└ Xác nhận cuối tháng",feeConfirmedState:"Đã xác nhận",feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
+    cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí tháng này được tính khi có tiền thẻ về sau khi chốt sổ.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
+    feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
     feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",
     feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
   },
@@ -202,33 +198,15 @@ function CardSettlementsContent() {
           <Card title={`🌐 ${t.currentUnsettled}`} value={money(data.summary.totalUnreconciledGross)}/>
         </div>
       </section>
-      {/* Card fees are handled per sale month only; the remaining gross is never labelled a fee before confirmation. */}
+      {/* Card fees per sale month: one unified card (KPIs, status, reference table, collapsed details and POS review). */}
       <section className={styles.card} aria-label={t.cardFee}>
         <h2>💳 {t.cardFee}</h2>
         {!fee?<p className={styles.empty}>{t.loading}</p>
         :fee.blockerReason==="current_month"||fee.blockerReason==="future_month"?<p className={styles.hint}>{t.feeCurrentMonthHint}</p>
-        :fee.closure?<>
-          <dl className={styles.feeRows}>
-            <div className={styles.feeTotal}><dt>{t.confirmedFee}</dt><dd>{money(fee.finalConfirmedFee??0)}</dd></div>
-            <div><dt>{t.historicalPart}</dt><dd>{money(fee.historicalConfirmedFee)}</dd></div>
-            <div><dt>{t.monthEndPart}</dt><dd>{money(fee.monthEndFee)}</dd></div>
-          </dl>
-          <p className={styles.hint}>✅ {fee.closure?.finalization_business_date?(lang==="vi"?"Đã xác nhận tự động":"자동 확정 완료"):t.feeConfirmedState} · {fee.confirmedRate!=null?`${(fee.confirmedRate*100).toFixed(2)}% · `:""}<time dateTime={fee.closure.confirmed_at}>{new Date(fee.closure.confirmed_at).toLocaleDateString(lang==="vi"?"vi-VN":"ko-KR",{timeZone:"Asia/Ho_Chi_Minh"})}</time></p>
-          {fee.canCancel?<button ref={feeButtonRef} type="button" disabled={working} className={styles.secondary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeCancelReason("");setFeeCancelOpen(true);}}>{t.cancelFee}</button>:<p className={styles.hint}>{t.feeReadOnly}</p>}
-        </>
         :!fee.hasCardSales?<p className={styles.hint}>{t.feeNoSales}</p>
-        :<>
-          <dl className={styles.feeRows}>
-            <div><dt>{t.historicalFee}</dt><dd>{money(fee.historicalConfirmedFee)}</dd></div>
-            <div><dt>{t.remainingCardSales}</dt><dd>{money(fee.currentOutstanding)}</dd></div>
-
-          </dl>
-          <p className={styles.hint}>{lang==="vi"?"Chờ xác nhận tự động khi tiền thẻ về tháng sau.":"자동 확정 대기 · 익월 카드입금 처리 중 자동 확정됩니다."} {fee.remainingRate!=null?`${(fee.remainingRate*100).toFixed(2)}%`:""}</p>
-          {fee.autoStatus==="review_required"?<p role="status" className={styles.validation}>{lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."}</p>:null}
-          {feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)?<p role="status" className={styles.validation}>{feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)}</p>:null}
-        </>}
-        {/* Read-only analysis for past months; the current month's remainder is mostly undeposited sales. */}
-        {fee?.estimate&&fee.hasCardSales&&fee.blockerReason!=="current_month"&&fee.blockerReason!=="future_month"?<CardFeeAnalysis key={month} estimate={fee.estimate} month={month} lang={lang} monthClosed={fee.monthClosed} hasClosure={Boolean(fee.closure)}/>:null}
+        :<CardFeeAnalysis key={month} fee={fee} lang={lang}
+          notices={[fee.closure?null:fee.autoStatus==="review_required"?(lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."):null,fee.closure?null:feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)].filter((notice):notice is string=>Boolean(notice))}
+          footer={fee.closure?(fee.canCancel?<button ref={feeButtonRef} type="button" disabled={working} className={styles.secondary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeCancelReason("");setFeeCancelOpen(true);}}>{t.cancelFee}</button>:<p className={styles.hint}>{t.feeReadOnly}</p>):null}/>}
       </section>
       {data.priorUnreconciledSales.length?<p className={styles.hint}>↪️ {t.priorUnsettled} {money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</p>:null}
       <section className={styles.card} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>

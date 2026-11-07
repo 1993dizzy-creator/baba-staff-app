@@ -295,14 +295,14 @@ test('closed October card fee section keeps its pending view and adds the read-o
   const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],totalReconciliationCount:0,reconciliations:[],summary:{monthlyCardGross:192125640,monthlyReconciledGross:0,monthlySettledGross:186426528,monthlyUnreconciledGross:5699112,totalUnreconciledGross:5699112,cardPendingBalance:5699112,actualCardDeposits:0,monthlyUnmatchedDeposits:0,monthlyCompletedGross:0,monthlyCompletedDeposit:0,monthlyCompletedDifference:0,actualDifferenceRate:null}};
   const fee={month:'2026-10',autoFeeMonths:[],autoStatus:'pending',remainingRate:5699112/192125640,confirmedRate:null,hasCardSales:true,historicalConfirmedFee:0,currentOutstanding:5699112,projectedTotalFee:5699112,monthEndFee:0,finalConfirmedFee:null,monthClosed:true,earlierUnconfirmedMonth:null,blockerReason:'month_closed',canConfirm:false,canCancel:false,closure:null,estimate};
   const state=pageFixture(cardPath,{0:'2026-10',1:data,19:fee});
-  // Existing pending fee view is unchanged.
-  assert.match(state.html,/기존 확정 수수료/);assert.match(state.html,/자동 확정 대기/);
-  for(const label of ['수수료 추정 분석','전표 #4119는 잠정 수기 비용입니다','공식 카드수수료 확정 기록 없음','+1.568.411 ₫','POS 영수증 검토 후보']) assert.ok(state.html.includes(label),label);
-  assert.ok(state.html.indexOf('기존 확정 수수료')<state.html.indexOf('수수료 추정 분석'));
-  assert.ok(state.html.indexOf('수수료 추정 분석')<state.html.indexOf('카드 입금 내역'));
+  // One unified fee card: estimate KPI, provisional + P0 protection status, no stale auto-confirm wording.
+  for(const label of ['<span>추정 수수료</span><strong>5.699.112 ₫</strong>','🧾 잠정 비용 처리 #4119','🛡️ 자동 중복 확정 보호','⏳ 공식 확정 미완료','⚠️ 참고 범위 초과 · 목표 대비 +1.568.411 ₫','POS 영수증 검토 후보']) assert.ok(state.html.includes(label),label);
+  assert.doesNotMatch(state.html,/자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소/);
+  assert.equal((state.html.match(/<h2>💳 카드 수수료<\/h2>/g)||[]).length,1);
+  assert.ok(state.html.indexOf('추정 수수료')<state.html.indexOf('카드 입금 내역'));
   assert.equal(state.requests.length,0);
-  // The current month never shows the analysis.
-  assert.doesNotMatch(pageFixture(cardPath,{0:'2026-10',1:data,19:{...fee,blockerReason:'current_month'}}).html,/수수료 추정 분석/);
+  // The current month never shows the estimate card.
+  assert.doesNotMatch(pageFixture(cardPath,{0:'2026-10',1:data,19:{...fee,blockerReason:'current_month'}}).html,/추정 수수료/);
 });
 
 test('payable accordion keeps its closing total visible but puts all four monthly cards inside expansion',()=>{
@@ -1035,7 +1035,7 @@ test('deposit rows are date-left, amount-right, chevron-last inside a scroll con
 // Month-end card fee
 // ---------------------------------------------------------------------------
 const feeState=(overrides={})=>({month:'2026-08',hasCardSales:true,historicalConfirmedFee:200,currentOutstanding:3_250_000,projectedTotalFee:3_250_200,monthEndFee:0,finalConfirmedFee:null,monthClosed:false,earlierUnconfirmedMonth:null,blockerReason:null,canConfirm:true,canCancel:false,closure:null,...overrides});
-const feeSection=html=>html.slice(html.indexOf('<h2>💳 카드 수수료</h2>'),html.indexOf('<h2>💳 카드 수수료</h2>')+1500);
+const feeSection=html=>html.slice(html.indexOf('<h2>💳 카드 수수료</h2>'),html.indexOf('🏦 카드 입금 내역'));
 
 test('card fee UI waits automatically and never exposes manual confirmation',()=>{
  for(const overrides of [{blockerReason:'current_month'}, {monthClosed:true,blockerReason:'month_closed'}, {autoStatus:'review_required'}]) {
@@ -1046,15 +1046,19 @@ test('card fee UI waits automatically and never exposes manual confirmation',()=
  }
  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState({remainingRate:.0325})});
  assert.match(state.html,/3\.25%/);
- assert.match(state.html,/\uC790\uB3D9 \uD655\uC815 \uB300\uAE30/);
+ // Pending past month: compact status chips instead of the old "\uC790\uB3D9 \uD655\uC815 \uB300\uAE30" sentence.
+ assert.ok(state.html.includes('\u23F3 \uACF5\uC2DD \uD655\uC815 \uBBF8\uC644\uB8CC')&&state.html.includes('\uC6D4\uB9C8\uAC10 \uC804'));
+ assert.doesNotMatch(state.html,/\uC790\uB3D9 \uD655\uC815 \uB300\uAE30/);
  assert.doesNotMatch(state.html,/\uD655\uC815 \uD6C4 \uCD1D \uC218\uC218\uB8CC/);
 });
 
 test('a confirmed month shows the fee breakdown and cancels through the guarded endpoint while open',async()=>{
   const confirmed=feeState({canConfirm:false,canCancel:true,monthEndFee:3_250_000,finalConfirmedFee:3_250_200,closure:{id:41,fee_amount:3_250_000,confirmed_at:'2026-09-05T03:00:00Z'}});
   const section=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed}).html);
-  assert.match(section,/<div class="feeTotal"><dt>확정 카드수수료<\/dt><dd>3\.250\.200 ₫<\/dd><\/div><div><dt>└ 기존 확정<\/dt><dd>200 ₫<\/dd><\/div><div><dt>└ 월말 확정<\/dt><dd>3\.250\.000 ₫<\/dd><\/div>/);
-  assert.match(section,/✅ 확정 완료 · <time dateTime="2026-09-05T03:00:00Z">/);
+  assert.ok(section.includes('<span>확정 수수료</span><strong>3.250.200 ₫</strong>'));
+  // Breakdown moved into the collapsed details element, values unchanged.
+  assert.ok(section.includes('<div class="feeTotal"><dt>확정 수수료</dt><dd>3.250.200 ₫</dd></div><div><dt>└ 기존 확정</dt><dd>200 ₫</dd></div><div><dt>└ 월말 확정</dt><dd>3.250.000 ₫</dd></div>'));
+  assert.ok(section.includes('✅ 공식 확정')&&section.includes('>수동<'));
   assert.match(section,/>수수료 확정 취소<\/button>/);assert.doesNotMatch(section,/카드 수수료 확정<\/button>|현재 남은 카드매출/);
   const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed,22:true,23:'  late deposit  '},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
   assert.match(state.html,/월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다/);
@@ -1069,7 +1073,7 @@ test('a confirmed month shows the fee breakdown and cancels through the guarded 
 test('card fee section is translated and deposit rows still carry no fee',()=>{
   const auto={id:30,deposit_date:'2026-08-27',deposit_amount:5_000_000,matched_gross_amount:5_000_000,difference_amount:0,status:'auto_allocated',memo:null,destination:null};
   const vi=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState()},undefined,'vi').html;
-  for(const label of ['Ph\u00ed th\u1ebb','Ch\u1edd x\u00e1c nh\u1eadn t\u1ef1 \u0111\u1ed9ng']) assert.ok(vi.includes(label),label);
+  for(const label of ['Ph\u00ed th\u1ebb','Ch\u01b0a x\u00e1c nh\u1eadn ch\u00ednh th\u1ee9c','Ph\u00ed \u01b0\u1edbc t\u00ednh']) assert.ok(vi.includes(label),label);
   assert.doesNotMatch(vi,/카드 수수료|기존 확정/);
   const ko=pageFixture(cardPath,{0:'2026-08',1:cardData([],[auto]),19:feeState(),15:auto}).html;
   const detail=ko.slice(ko.indexOf('role="dialog" aria-label="2026-08-27 카드 입금"'));
