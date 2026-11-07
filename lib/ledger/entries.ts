@@ -404,6 +404,9 @@ function specialTransactionDisplay(row: TransactionRow) {
     const name = investor ? `${investor} 투자금` : "투자금";
     return { title: investmentFlow === "outflow" ? `${name} 회수` : name, subtitle: "사업 투자금" };
   }
+  if (row.type === "historical_cash_event") {
+    return { title: "과거 자금 기록", subtitle: "시재 반영 · 경제 분류 대기" };
+  }
   if (row.type === "prepaid_expense_payment") {
     const planName = String(row.source_snapshot?.planName ?? "");
     const rent = /임대료|월세/.test(`${memo} ${planName}`);

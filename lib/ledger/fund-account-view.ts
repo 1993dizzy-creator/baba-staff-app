@@ -6,8 +6,23 @@ export type FundAccountViewMode = "live" | "provisional" | "closed_snapshot";
 const AUGUST_OPENING_ACCOUNTS = new Set([
   "store_cash", "baba_corporate_bank", "cho_personal_custody", "vuong_personal_custody",
 ]);
-export function fundMovementInScope(code: string | undefined, businessDate: string, month: string) {
-  return !AUGUST_OPENING_ACCOUNTS.has(code ?? "") || month < "2026-08" || businessDate >= "2026-08-01";
+export function fundMovementInScope(code: string | undefined, businessDate: string, month: string, openingBoundary?: string) {
+  if (!AUGUST_OPENING_ACCOUNTS.has(code ?? "")) return true;
+  // A view's latest explicit opening replaces all earlier cash, independently per fund.
+  // Keep the known August boundary as a fallback for callers without typed movements.
+  const boundary = openingBoundary ?? (month >= "2026-08" ? "2026-08-01" : null);
+  return boundary == null || businessDate >= boundary;
+}
+
+export function fundOpeningBoundaries(rows: readonly FundMovement[], month: string) {
+  const dates = new Map<number, string>();
+  for (const row of rows) {
+    const date = row.transaction?.business_date;
+    if (row.transaction?.type !== "opening" || !date || date.slice(0, 7) > month) continue;
+    const id = Number(row.fund_account_id);
+    if (!dates.has(id) || dates.get(id)! < date) dates.set(id, date);
+  }
+  return dates;
 }
 
 export type FundAccountReservePlan = {
@@ -36,14 +51,14 @@ type FundAccount = {
 export type FundMovement = {
   fund_account_id: number | string;
   amount: number | string;
-  transaction?: { business_date?: string } | null;
+  transaction?: { business_date?: string; type?: string } | null;
 };
 
 // A ledger_movements row as returned by a Supabase embedded relation select
 // (`transaction:ledger_transactions!inner(...)`). The generated client types the
 // many-to-one relation as an array while PostgREST returns a single object, so
 // both shapes are accepted here.
-type FundMovementTransaction = { business_date?: unknown } | null | undefined;
+type FundMovementTransaction = { business_date?: unknown; type?: unknown } | null | undefined;
 export type FundMovementSourceRow = {
   fund_account_id: number | string;
   amount: number | string;
@@ -59,7 +74,7 @@ export function normalizeFundMovementRows(rows: readonly FundMovementSourceRow[]
     return {
       fund_account_id: row.fund_account_id,
       amount: row.amount,
-      transaction: relation ? { business_date: businessDate } : null,
+      transaction: relation ? { business_date: businessDate, ...(typeof relation.type === "string" ? { type: relation.type } : {}) } : null,
     };
   });
 }
