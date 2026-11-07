@@ -21,7 +21,11 @@ async function fixture({ settled = true } = {}) {
   } catch (error) { await db.close(); throw error; }
 }
 const close = (db, month) => db.query('insert into ledger_month_closures(month,summary_snapshot) values($1,$2::jsonb)', [`${month}-01`, JSON.stringify({ card: { feeStatus: 'pending' } })]);
-const complete = (db, month, actor = 1) => call(db, 'ledger_complete_card_month_v1', [`${month}-01`, 'last deposit checked', actor]);
+// The admin confirms the final deposit and the exact amount shown (default: the month's current remainder).
+const complete = async (db, month, actor = 1, { confirmed = true, fee } = {}) => {
+  const amount = fee ?? ((await monthOutstanding(db, month)) || 1);
+  return call(db, 'ledger_complete_card_month_v1', [`${month}-01`, confirmed, amount, 'last deposit checked', actor]);
+};
 const snapshot = async db => (await db.query(`select (select count(*) from ledger_transactions)::int t,(select count(*) from ledger_movements)::int m,(select count(*) from ledger_card_reconciliations)::int r,
   (select count(*) from ledger_card_fee_closures)::int f,(select count(*) from ledger_card_fee_allocation_lines)::int l,(select count(*) from ledger_audit_logs)::int a`)).rows[0];
 const feeExpenses = async db => Number((await db.query("select count(*) n from ledger_transactions where source_type='card_fee_month_close'")).rows[0].n);
@@ -182,5 +186,58 @@ test('TS deposit preview plans the same FIFO allocation and no fee', async () =>
     assert.equal(plan.error, null);
     assert.deepEqual(plan.fees, []);
     assert.deepEqual(plan.rows.map(row => [row.transactionId, row.allocatedAmount]), result.allocations.map(row => [Number(row.transactionId), Number(row.allocatedAmount)]));
+  } finally { await db.close(); }
+});
+
+test('settlement requires the explicit final-deposit confirmation and the exact amount, and audits who/when/how much', async () => {
+  for (const closedMonth of [true, false]) {
+    const db = await fixture();
+    try {
+      await seedSale(db, 100000000, '2026-08-20'); await autoDeposit(db, 95000000, '2026-08-25');
+      if (closedMonth) { await close(db, '2026-08'); await autoDeposit(db, 2850000, '2026-09-05'); }
+      const remainder = await monthOutstanding(db, '2026-08');
+      const before = await snapshot(db);
+      // A bare remainder never settles: no confirmation, a stale amount or a bad amount writes nothing.
+      assert.equal((await complete(db, '2026-08', 1, { confirmed: false, fee: remainder })).status, 'last_deposit_confirmation_required');
+      const stale = await complete(db, '2026-08', 1, { fee: remainder + 1000 });
+      assert.deepEqual([stale.status, Number(stale.feeAmount)], ['confirmed_fee_mismatch', remainder]);
+      assert.equal((await complete(db, '2026-08', 1, { fee: 0 })).status, 'invalid_confirmed_fee');
+      assert.deepEqual(await snapshot(db), before, `closed=${closedMonth}`);
+      const result = await complete(db, '2026-08', 1, { fee: remainder });
+      assert.equal(result.status, 'confirmed');
+      assert.deepEqual([result.lastDepositConfirmed, Number(result.confirmedBy), Number(result.confirmedFee), result.path],
+        [true, 1, remainder, closedMonth ? 'closed_month_post_close_settlement' : 'open_month_manual_confirmation']);
+      const audit = (await db.query("select actor_user_id,entity_id,after_snapshot,reason,created_at from ledger_audit_logs where action='card_payment_settlement_confirmed'")).rows;
+      assert.equal(audit.length, 1);
+      assert.equal(Number(audit[0].actor_user_id), 1);
+      assert.equal(Number(audit[0].entity_id), Number(result.closureId));
+      assert.deepEqual([audit[0].after_snapshot.lastDepositConfirmed, Number(audit[0].after_snapshot.confirmedBy), Number(audit[0].after_snapshot.confirmedFee), Number(audit[0].after_snapshot.feeAmount)], [true, 1, remainder, remainder]);
+      assert.ok(audit[0].after_snapshot.confirmedAt, 'confirmation time recorded');
+      assert.equal(audit[0].reason, 'last deposit checked');
+    } finally { await db.close(); }
+  }
+});
+
+test('every card month boundary, including the reused manual confirmation, follows the 03:00 business day', async () => {
+  const db = await fixture();
+  try {
+    const def = async signature => (await db.query(`select pg_get_functiondef('${signature}'::regprocedure) d`)).rows[0].d;
+    const expression = (source, name) => {
+      const line = source.split('\n').find(row => row.trim().startsWith(name) && row.includes('now()'));
+      assert.ok(line, name);
+      return line.slice(line.indexOf(':=') + 2).replace(/;\s*$/, '').trim();
+    };
+    const boundaries = [
+      ['confirm v_current_month', expression(await def('public.ledger_confirm_card_fee_month_v1(date,text,bigint)'), 'v_current_month')],
+      ['settlement v_current', expression(await def('public.ledger_complete_card_month_v1(date,boolean,numeric,text,bigint)'), 'v_current')],
+      ['deposit v_current_month', expression(await def('public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint)'), 'v_current_month')],
+    ];
+    // Month start: before 03:00 on the 1st is still the previous business month.
+    for (const [instant, expected] of [['2026-11-01 00:30:00+07', '2026-10-01'], ['2026-11-01 02:59:59+07', '2026-10-01'], ['2026-11-01 03:00:00+07', '2026-11-01'], ['2026-10-31 23:59:00+07', '2026-10-01'], ['2027-01-01 01:00:00+07', '2026-12-01']]) {
+      for (const [label, sql] of boundaries) {
+        const value = (await db.query(`select (${sql.replaceAll('now()', `'${instant}'::timestamptz`)})::text v`)).rows[0].v;
+        assert.equal(value, expected, `${label} at ${instant}`);
+      }
+    }
   } finally { await db.close(); }
 });

@@ -70,8 +70,11 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   // Card payment settlement after the month's last deposit. The fee amount is never accepted from the
   // client: the RPC books the month's actual remainder under lock, once.
-  if (!body || Object.keys(body).some(key => !["month", "memo"].includes(key)) || typeof body.month !== "string" || !MONTH.test(body.month)
-    || (body.memo !== undefined && body.memo !== null && typeof body.memo !== "string")) {
+  // The admin must explicitly confirm the month's final deposit and the exact amount shown to them.
+  if (!body || Object.keys(body).some(key => !["month", "memo", "lastDepositConfirmed", "confirmedFee"].includes(key)) || typeof body.month !== "string" || !MONTH.test(body.month)
+    || (body.memo !== undefined && body.memo !== null && typeof body.memo !== "string")
+    || body.lastDepositConfirmed !== true || typeof body.confirmedFee !== "number" || !Number.isFinite(body.confirmedFee) || body.confirmedFee <= 0
+    || Math.round(body.confirmedFee * 1000) / 1000 !== body.confirmedFee) {
     return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
   }
   try {
@@ -83,14 +86,15 @@ export async function POST(request: Request) {
       return ledgerJson({ ok: false, code: "POS_LEDGER_CARD_MISMATCH", posCard: parity.sales.card, ledgerCard: parity.ledger.card }, 409);
     }
     const { data, error } = await supabaseServer.rpc("ledger_complete_card_month_v1", {
-      p_month: `${body.month}-01`, p_memo: typeof body.memo === "string" ? body.memo : null, p_actor_user_id: auth.actor.id,
+      p_month: `${body.month}-01`, p_last_deposit_confirmed: true, p_confirmed_fee: body.confirmedFee,
+      p_memo: typeof body.memo === "string" ? body.memo : null, p_actor_user_id: auth.actor.id,
     });
     if (error) throw error;
     const result = data as { status?: string };
     if (result.status !== "confirmed") {
       const status = String(result.status ?? "CARD_FEE_CONFIRM_FAILED");
       const httpStatus = status === "forbidden" ? 403
-        : ["current_month", "future_month", "month_closed", "already_confirmed", "provisional_fee_exists", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales", "nothing_to_settle", "no_settlement_deposit"].includes(status) ? 409
+        : ["current_month", "future_month", "month_closed", "already_confirmed", "provisional_fee_exists", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales", "nothing_to_settle", "no_settlement_deposit", "confirmed_fee_mismatch"].includes(status) ? 409
           : 400;
       return ledgerJson({ ok: false, code: status.toUpperCase(), result }, httpStatus);
     }

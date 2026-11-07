@@ -36,7 +36,7 @@ const cardText = {
     cardFee:"카드 수수료",feeCurrentMonthHint:"이번 달 수수료는 월마감 후 카드입금이 들어오면 계산됩니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
     feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
     feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",feeSettled:"카드대금 정산을 완료하고 실제 수수료를 확정했습니다.",settleFailed:"정산 실패",
-    settlePosMismatch:"POS와 장부 카드매출이 달라 확정하지 않았습니다. 매출 동기화를 먼저 확인하세요.",settleNoDeposit:"이 달 매출에 배분된 익월 카드입금이 없어 확정할 수 없습니다.",
+    settlePosMismatch:"POS와 장부 카드매출이 달라 확정하지 않았습니다. 매출 동기화를 먼저 확인하세요.",settleNoDeposit:"이 달 매출에 배분된 익월 카드입금이 없어 확정할 수 없습니다.",settleAmountChanged:"확인한 금액과 현재 차액이 달라 확정하지 않았습니다. 새로고침 후 다시 확인하세요.",
     feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
   },
   vi: {
@@ -54,7 +54,7 @@ const cardText = {
     cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí tháng này được tính khi có tiền thẻ về sau khi chốt sổ.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
     feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
     feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",feeSettled:"Đã hoàn tất quyết toán tiền thẻ và xác nhận phí thực tế.",settleFailed:"Quyết toán thất bại",
-    settlePosMismatch:"Doanh thu thẻ POS và sổ cái khác nhau nên chưa xác nhận. Hãy kiểm tra đồng bộ doanh thu trước.",settleNoDeposit:"Chưa có tiền thẻ về sau tháng này được trừ vào doanh thu tháng này nên chưa thể xác nhận.",
+    settlePosMismatch:"Doanh thu thẻ POS và sổ cái khác nhau nên chưa xác nhận. Hãy kiểm tra đồng bộ doanh thu trước.",settleNoDeposit:"Chưa có tiền thẻ về sau tháng này được trừ vào doanh thu tháng này nên chưa thể xác nhận.",settleAmountChanged:"Số tiền đã kiểm tra khác chênh lệch hiện tại nên chưa xác nhận. Hãy tải lại và kiểm tra lại.",
     feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
   },
 } as const;
@@ -119,12 +119,12 @@ function CardSettlementsContent() {
     } catch (e) { setMessage(`${t.cancelFailed}: ${(e as Error).message}`); } finally { setWorking(false); }
   }
   // Card payment settlement: the server re-checks POS/ledger parity and books the actual remainder once.
-  async function settleFee() {
+  async function settleFee(confirmedFee: number) {
     if (!fee || fee.closure || working) return;
     setWorking(true); setMessage("");
     try {
-      const r = await fetch("/api/admin/ledger/card-fees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month }) }), b = await r.json();
-      if (!r.ok) throw new Error(b.code==="POS_LEDGER_CARD_MISMATCH"?t.settlePosMismatch:b.code==="NO_SETTLEMENT_DEPOSIT"?t.settleNoDeposit:b.code);
+      const r = await fetch("/api/admin/ledger/card-fees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month, lastDepositConfirmed: true, confirmedFee }) }), b = await r.json();
+      if (!r.ok) throw new Error(b.code==="POS_LEDGER_CARD_MISMATCH"?t.settlePosMismatch:b.code==="NO_SETTLEMENT_DEPOSIT"?t.settleNoDeposit:b.code==="CONFIRMED_FEE_MISMATCH"?t.settleAmountChanged:b.code);
       setMessage(t.feeSettled);
       await reloadAll();
     } catch (e) { setMessage(`${t.settleFailed}: ${(e as Error).message}`); } finally { setWorking(false); }

@@ -127,31 +127,35 @@ function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = fa
   return { calls, route, post, cancelPost };
 }
 
-test('card fee POST checks POS parity, sends only month and memo to the settlement RPC and maps its statuses', async () => {
+test('card fee POST requires the explicit final-deposit confirmation, checks POS parity and maps statuses', async () => {
+  const confirm = { lastDepositConfirmed: true, confirmedFee: 300 };
   const ok = feeApi({ rpcResult: { status: 'confirmed', feeAmount: 300 } });
-  const response = await ok.post({ month: '2026-08', memo: 'bank checked' });
+  const response = await ok.post({ month: '2026-08', memo: 'bank checked', ...confirm });
   assert.equal(response.status, 201);
-  assert.deepEqual(ok.calls, [{ name: 'parity', args: '2026-08' }, { name: 'ledger_complete_card_month_v1', args: { p_month: '2026-08-01', p_memo: 'bank checked', p_actor_user_id: 7 } }]);
+  assert.deepEqual(ok.calls, [{ name: 'parity', args: '2026-08' }, { name: 'ledger_complete_card_month_v1', args: { p_month: '2026-08-01', p_last_deposit_confirmed: true, p_confirmed_fee: 300, p_memo: 'bank checked', p_actor_user_id: 7 } }]);
   // A POS cancellation/refund/edit after sync blocks settlement before the RPC.
   const mismatch = feeApi({ parity: { sales: { card: 900 }, ledger: { card: 1000 } } });
-  const blocked = await mismatch.post({ month: '2026-08' });
+  const blocked = await mismatch.post({ month: '2026-08', ...confirm });
   assert.equal(blocked.status, 409);
   assert.equal((await blocked.json()).code, 'POS_LEDGER_CARD_MISMATCH');
   assert.deepEqual(mismatch.calls.map(call => call.name), ['parity']);
   const unavailable = feeApi({ parity: new Error('POS_SOURCE_SNAPSHOT_INCOMPLETE') });
-  assert.equal((await (await unavailable.post({ month: '2026-08' })).json()).code, 'POS_SOURCE_UNAVAILABLE');
+  assert.equal((await (await unavailable.post({ month: '2026-08', ...confirm })).json()).code, 'POS_SOURCE_UNAVAILABLE');
   assert.deepEqual(unavailable.calls.map(call => call.name), ['parity']);
-  for (const body of [{ month: '2026-08', feeAmount: 300 }, { month: '2026-8' }, { memo: 'x' }, { month: '2026-08', memo: 5 }]) {
+  // No confirmation, a false/absent confirmation or an invalid amount never reaches parity or the RPC.
+  for (const body of [{ month: '2026-08', feeAmount: 300, ...confirm }, { month: '2026-8', ...confirm }, { memo: 'x', ...confirm }, { month: '2026-08', memo: 5, ...confirm },
+    { month: '2026-08' }, { month: '2026-08', confirmedFee: 300 }, { month: '2026-08', lastDepositConfirmed: false, confirmedFee: 300 }, { month: '2026-08', lastDepositConfirmed: 'true', confirmedFee: 300 },
+    { month: '2026-08', lastDepositConfirmed: true }, { month: '2026-08', lastDepositConfirmed: true, confirmedFee: 0 }, { month: '2026-08', lastDepositConfirmed: true, confirmedFee: '300' }, { month: '2026-08', lastDepositConfirmed: true, confirmedFee: 1.0001 }]) {
     const state = feeApi();
     assert.equal((await state.post(body)).status, 400, JSON.stringify(body));
     assert.equal(state.calls.length, 0);
   }
-  for (const [status, http] of [['forbidden', 403], ['current_month', 409], ['month_closed', 409], ['already_confirmed', 409], ['legacy_unallocated_deposits', 409], ['earlier_month_unconfirmed', 409], ['insufficient_card_pending', 409], ['no_card_sales', 409], ['nothing_to_settle', 409], ['no_settlement_deposit', 409], ['provisional_fee_exists', 409], ['invalid_month', 400]]) {
-    const result = await feeApi({ rpcResult: { status } }).post({ month: '2026-08' });
+  for (const [status, http] of [['forbidden', 403], ['current_month', 409], ['month_closed', 409], ['already_confirmed', 409], ['legacy_unallocated_deposits', 409], ['earlier_month_unconfirmed', 409], ['insufficient_card_pending', 409], ['no_card_sales', 409], ['nothing_to_settle', 409], ['no_settlement_deposit', 409], ['provisional_fee_exists', 409], ['confirmed_fee_mismatch', 409], ['last_deposit_confirmation_required', 400], ['invalid_month', 400]]) {
+    const result = await feeApi({ rpcResult: { status } }).post({ month: '2026-08', ...confirm });
     assert.equal(result.status, http, status);
     assert.equal((await result.json()).code, status.toUpperCase());
   }
-  assert.equal((await feeApi({ denied: true }).post({ month: '2026-08' })).status, 403);
+  assert.equal((await feeApi({ denied: true }).post({ month: '2026-08', ...confirm })).status, 403);
   assert.equal((await feeApi().route.GET(new Request('http://local/api/admin/ledger/card-fees?month=2026-13'))).status, 400);
 });
 

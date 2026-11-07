@@ -151,3 +151,11 @@ test('settleable month offers the explicit card payment settlement step; provisi
   // October (provisional) and any month without canSettle show no settlement button.
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(mod.default, { fee: { ...fee, estimate: october() }, lang: 'ko', canSettle: false, onSettle: () => {} })), /수수료 확정<\/button>/);
 });
+
+test('settlement confirm stays disabled until the final deposit is ticked and sends the shown amount', () => {
+  const source = readFileSync(componentPath, 'utf8');
+  assert.match(source, /<input type="checkbox" checked=\{lastDepositChecked\}/);
+  assert.match(source, /disabled=\{settling \|\| !lastDepositChecked\} onClick=\{\(\) => void onSettle\(fee\.currentOutstanding\)\}/);
+  const page = readFileSync(pagePath, 'utf8');
+  assert.match(page, /body: JSON\.stringify\(\{ month, lastDepositConfirmed: true, confirmedFee \}\)/);
+});

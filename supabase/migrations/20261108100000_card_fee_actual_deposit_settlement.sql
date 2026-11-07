@@ -2,8 +2,10 @@
 -- * A card deposit moves only the real principal (card_clearing -> corporate bank) and keeps FIFO by
 --   sale business date. The 1.8% / 2.15% / 2.5% planning and automatic fee finalization are removed.
 -- * A sale month is settled only by an explicit "card payment complete" step after its last deposit
---   (ledger_complete_card_month_v1). The fee is that month's actual remainder (gross - deposits applied),
---   booked once as before (closure + allocation lines + expense), after blocking checks.
+--   (ledger_complete_card_month_v1). The admin must confirm the month's final deposit and the exact fee
+--   amount; the fee is that month's actual remainder (gross - deposits applied), booked once as before
+--   (closure + allocation lines + expense), after blocking checks. Confirmer, time and amount are audited.
+-- * The reused manual confirmation RPC uses the BABA business month (03:00 Asia/Ho_Chi_Minh boundary).
 -- * Existing closures, allocation lines, expense rows, cancellation and audit paths are unchanged.
 --   The P0 provisional guard (October #4119) is kept: such a month is never repaid nor settled again.
 -- Verified before writing (2026-11-08, read-only): live prosrc of the deposit RPC, finalize_month and
@@ -310,30 +312,70 @@ end $$;
 drop function ledger_card_fee_private.policy();
 
 ---------------------------------------------------------------------------
--- 3. Settlement after the month's last deposit ("카드대금 정산완료").
-create function public.ledger_complete_card_month_v1(p_month date, p_memo text, p_actor_user_id bigint) returns jsonb
+-- 3. Manual month confirmation (reused for open past months): month boundary = BABA business day
+--    (03:00 Asia/Ho_Chi_Minh), like every other card RPC. Only this declaration changes; the anchor
+--    occurs exactly once in the live definition (checked read-only 2026-11-08).
+do $confirm_business_day$
+declare v_definition text; v_anchor text:=$a$  v_current_month date := date_trunc('month', now() at time zone 'Asia/Ho_Chi_Minh')::date;$a$;
+begin
+ v_definition:=pg_get_functiondef('public.ledger_confirm_card_fee_month_v1(date,text,bigint)'::regprocedure);
+ if (length(v_definition)-length(replace(v_definition,v_anchor,'')))/length(v_anchor)<>1 then raise exception 'CARD_FEE_CONFIRM_BUSINESS_DAY_ANCHOR_MISMATCH'; end if;
+ v_definition:=replace(v_definition,v_anchor,
+  $r$  v_current_month date := date_trunc('month', ((now() at time zone 'Asia/Ho_Chi_Minh') - interval '3 hours')::date)::date;$r$);
+ execute v_definition;
+end $confirm_business_day$;
+
+---------------------------------------------------------------------------
+-- 4. Settlement after the month's last deposit ("카드대금 정산완료"). Never automatic: the admin must
+--    explicitly confirm the month's final deposit and the exact fee amount shown to them. Confirmer,
+--    time and amount are written to ledger_audit_logs ('card_payment_settlement_confirmed').
+create function public.ledger_complete_card_month_v1(
+  p_month date, p_last_deposit_confirmed boolean, p_confirmed_fee numeric, p_memo text, p_actor_user_id bigint
+) returns jsonb
 language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
 declare
   v_role text;
-  v_date date:=((now() at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date;
   v_current date:=date_trunc('month',((now() at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date)::date;
   v_lock_month date; v_closure public.ledger_card_fee_closures%rowtype; v_legacy bigint; v_earlier date;
-  v_gross numeric; v_outstanding numeric; v_deposit bigint;
+  v_gross numeric; v_outstanding numeric; v_deposit bigint; v_result jsonb; v_path text;
 begin
   select lower(role::text) into v_role from public.users where id=p_actor_user_id and is_active and app_login_enabled;
   if coalesce(v_role,'') not in ('owner','master') then return jsonb_build_object('status','forbidden'); end if;
   if p_month is null or p_month<>date_trunc('month',p_month)::date then return jsonb_build_object('status','invalid_month'); end if;
-  -- The running month's deposits are still arriving.
+  -- Explicit confirmation of the month's final deposit and of the amount; a bare remainder never settles.
+  if p_last_deposit_confirmed is not true then return jsonb_build_object('status','last_deposit_confirmation_required'); end if;
+  if p_confirmed_fee is null or p_confirmed_fee<=0 or scale(p_confirmed_fee)>3 then return jsonb_build_object('status','invalid_confirmed_fee'); end if;
+  -- The running business month's deposits are still arriving.
   if p_month>=v_current then
     return jsonb_build_object('status', case when p_month=v_current then 'current_month' else 'future_month' end);
   end if;
-  -- An open past month books the same actual remainder through the existing manual confirmation.
+
   if not public.ledger_month_is_closed_v1(p_month) then
-    return public.ledger_confirm_card_fee_month_v1(p_month, p_memo, p_actor_user_id);
-  end if;
+    -- An open past month books the same actual remainder through the existing manual confirmation,
+    -- which locks and recomputes it. The amount must still be the one the admin confirmed.
+    select coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_outstanding
+    from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
+      and date_trunc('month',t.business_date)::date=p_month;
+    if v_outstanding<>p_confirmed_fee then
+      return jsonb_build_object('status','confirmed_fee_mismatch','feeAmount',v_outstanding,'confirmedFee',p_confirmed_fee);
+    end if;
+    v_result:=public.ledger_confirm_card_fee_month_v1(p_month, p_memo, p_actor_user_id);
+    if v_result->>'status' is distinct from 'confirmed' then return v_result; end if;
+    -- Recomputed under lock: a change after the pre-check rolls everything back.
+    if (v_result->>'feeAmount')::numeric<>p_confirmed_fee then raise exception 'CARD_FEE_CONFIRMED_AMOUNT_CHANGED'; end if;
+    v_path:='open_month_manual_confirmation';
+  else
+    -- Same lock order as deposit/cancel: month close (ascending), then card clearing.
+    perform pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
+    for v_lock_month in select distinct m from (values(p_month),(v_current)) months(m) order by m loop
+      perform pg_advisory_xact_lock(hashtext('ledger_month_close'),hashtext(v_lock_month::text));
+      perform pg_advisory_xact_lock(hashtext('ledger_month_close:'||to_char(v_lock_month,'YYYY-MM')));
+    end loop;
+    perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
+    if public.ledger_month_is_closed_v1(v_current) then return jsonb_build_object('status','month_closed'); end if;
 
   -- Same lock order as deposit/cancel: month close (ascending), then card clearing.
   perform pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
@@ -344,53 +386,70 @@ begin
   perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
   if public.ledger_month_is_closed_v1(v_current) then return jsonb_build_object('status','month_closed'); end if;
 
-  select * into v_closure from public.ledger_card_fee_closures where fee_month=p_month and status='confirmed';
-  if v_closure.id is not null then
-    return jsonb_build_object('status','already_confirmed','closureId',v_closure.id,'feeAmount',v_closure.fee_amount);
-  end if;
-  -- October #4119 style provisional fee: settled later by a current-month correction, never here.
-  if ledger_card_fee_private.provisional_fee(p_month) is distinct from 0 then
-    return jsonb_build_object('status','provisional_fee_exists','provisionalFee',ledger_card_fee_private.provisional_fee(p_month));
-  end if;
-  -- A legacy deposit that could still pay this month's sales would be booked as fee.
-  select count(*) into v_legacy from public.ledger_card_reconciliations where status in('unmatched','partial') and deposit_date>=p_month;
-  if v_legacy>0 then return jsonb_build_object('status','legacy_unallocated_deposits','count',v_legacy); end if;
-  -- FIFO: an older month with unpaid principal (beyond its provisional fee) is settled first.
-  select min(e.sale_month) into v_earlier from (
-    select date_trunc('month',t.business_date)::date sale_month, sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)) outstanding
-    from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
-      and t.business_date<p_month group by 1
-  ) e
-  where e.outstanding-coalesce(ledger_card_fee_private.provisional_fee(e.sale_month),0)>0
-    and not exists(select 1 from public.ledger_card_fee_closures c where c.status='confirmed' and c.fee_month=e.sale_month);
-  if v_earlier is not null then return jsonb_build_object('status','earlier_month_unconfirmed','month',v_earlier); end if;
+    select * into v_closure from public.ledger_card_fee_closures where fee_month=p_month and status='confirmed';
+    if v_closure.id is not null then
+      return jsonb_build_object('status','already_confirmed','closureId',v_closure.id,'feeAmount',v_closure.fee_amount);
+    end if;
+    -- October #4119 style provisional fee: settled later by a current-month correction, never here.
+    if ledger_card_fee_private.provisional_fee(p_month) is distinct from 0 then
+      return jsonb_build_object('status','provisional_fee_exists','provisionalFee',ledger_card_fee_private.provisional_fee(p_month));
+    end if;
+    -- A legacy deposit that could still pay this month's sales would be booked as fee.
+    select count(*) into v_legacy from public.ledger_card_reconciliations where status in('unmatched','partial') and deposit_date>=p_month;
+    if v_legacy>0 then return jsonb_build_object('status','legacy_unallocated_deposits','count',v_legacy); end if;
+    -- FIFO: an older month with unpaid principal (beyond its provisional fee) is settled first.
+    select min(e.sale_month) into v_earlier from (
+      select date_trunc('month',t.business_date)::date sale_month, sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)) outstanding
+      from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
+        and t.business_date<p_month group by 1
+    ) e
+    where e.outstanding-coalesce(ledger_card_fee_private.provisional_fee(e.sale_month),0)>0
+      and not exists(select 1 from public.ledger_card_fee_closures c where c.status='confirmed' and c.fee_month=e.sale_month);
+    if v_earlier is not null then return jsonb_build_object('status','earlier_month_unconfirmed','month',v_earlier); end if;
 
-  select coalesce(sum(t.amount),0),coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_gross,v_outstanding
-  from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
-    and date_trunc('month',t.business_date)::date=p_month;
-  if v_gross<=0 then return jsonb_build_object('status','no_card_sales'); end if;
-  if v_outstanding<=0 then return jsonb_build_object('status','nothing_to_settle'); end if;
-  -- The month's last deposit: the latest deposit after month end that paid this month's sales.
-  select r.id into v_deposit
-  from public.ledger_card_reconciliations r
-  join public.ledger_card_reconciliation_lines l on l.reconciliation_id=r.id
-  join public.ledger_transactions s on s.id=l.pos_card_transaction_id
-  where r.status='auto_allocated' and r.deposit_date>=(p_month+interval '1 month')::date
-    and date_trunc('month',s.business_date)::date=p_month
-  order by r.deposit_date desc, r.id desc limit 1;
-  if v_deposit is null then return jsonb_build_object('status','no_settlement_deposit'); end if;
-  return ledger_card_fee_private.finalize_month(p_month, v_deposit, p_actor_user_id)
-    ||jsonb_build_object('settlementDepositReconciliationId',v_deposit,'cardGross',v_gross,'memo',nullif(btrim(p_memo),''));
+    select coalesce(sum(t.amount),0),coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_gross,v_outstanding
+    from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
+      and date_trunc('month',t.business_date)::date=p_month;
+    if v_gross<=0 then return jsonb_build_object('status','no_card_sales'); end if;
+    if v_outstanding<=0 then return jsonb_build_object('status','nothing_to_settle'); end if;
+    -- Under lock: the amount must be exactly the one the admin confirmed.
+    if v_outstanding<>p_confirmed_fee then
+      return jsonb_build_object('status','confirmed_fee_mismatch','feeAmount',v_outstanding,'confirmedFee',p_confirmed_fee);
+    end if;
+    -- The month's last deposit: the latest deposit after month end that paid this month's sales.
+    select r.id into v_deposit
+    from public.ledger_card_reconciliations r
+    join public.ledger_card_reconciliation_lines l on l.reconciliation_id=r.id
+    join public.ledger_transactions s on s.id=l.pos_card_transaction_id
+    where r.status='auto_allocated' and r.deposit_date>=(p_month+interval '1 month')::date
+      and date_trunc('month',s.business_date)::date=p_month
+    order by r.deposit_date desc, r.id desc limit 1;
+    if v_deposit is null then return jsonb_build_object('status','no_settlement_deposit'); end if;
+    v_result:=ledger_card_fee_private.finalize_month(p_month, v_deposit, p_actor_user_id)
+      ||jsonb_build_object('settlementDepositReconciliationId',v_deposit,'cardGross',v_gross);
+    v_path:='closed_month_post_close_settlement';
+  end if;
+
+  -- Who confirmed the month's final deposit, when, and for which amount (same transaction).
+  insert into public.ledger_audit_logs(actor_user_id,action,entity_type,entity_id,after_snapshot,reason)
+  values(p_actor_user_id,'card_payment_settlement_confirmed','card_fee_closure',(v_result->>'closureId')::bigint,
+    jsonb_build_object('feeMonth',p_month,'lastDepositConfirmed',true,'confirmedBy',p_actor_user_id,'confirmedAt',now(),
+      'confirmedFee',p_confirmed_fee,'feeAmount',(v_result->>'feeAmount')::numeric,'path',v_path,
+      'settlementDepositReconciliationId',v_result->'settlementDepositReconciliationId','expenseTransactionId',v_result->'expenseTransactionId'),
+    coalesce(nullif(btrim(p_memo),''),'Final card deposit confirmed by admin'));
+  return v_result||jsonb_build_object('lastDepositConfirmed',true,'confirmedBy',p_actor_user_id,'confirmedFee',p_confirmed_fee,'path',v_path);
 end $$;
 
 revoke all on function ledger_card_fee_private.allowed_transaction(public.ledger_transactions) from public,anon,authenticated,service_role;
 revoke all on function ledger_card_fee_private.finalize_month(date,bigint,bigint) from public,anon,authenticated,service_role;
 revoke all on function public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint) from public,anon,authenticated;
 grant execute on function public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint) to service_role;
-revoke all on function public.ledger_complete_card_month_v1(date,text,bigint) from public,anon,authenticated;
-grant execute on function public.ledger_complete_card_month_v1(date,text,bigint) to service_role;
+revoke all on function public.ledger_confirm_card_fee_month_v1(date,text,bigint) from public,anon,authenticated;
+grant execute on function public.ledger_confirm_card_fee_month_v1(date,text,bigint) to service_role;
+revoke all on function public.ledger_complete_card_month_v1(date,boolean,numeric,text,bigint) from public,anon,authenticated;
+grant execute on function public.ledger_complete_card_month_v1(date,boolean,numeric,text,bigint) to service_role;
 comment on function public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint) is
  'Registers actual bank principal and allocates it FIFO by sale date. Never books a card fee; provisional-fee months are skipped.';
-comment on function public.ledger_complete_card_month_v1(date,text,bigint) is
- 'Card payment settlement after the month''s last deposit: books the actual remainder once as the card fee.';
+comment on function public.ledger_complete_card_month_v1(date,boolean,numeric,text,bigint) is
+ 'Card payment settlement: the admin explicitly confirms the month''s final deposit and the exact remainder, which is booked once as the card fee and audited.';
 commit;
