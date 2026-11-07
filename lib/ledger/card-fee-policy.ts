@@ -34,7 +34,7 @@ export function planCardDepositWithFees(
     const provisional = feeMonth?.provisionalFee ?? 0;
     if (provisional !== 0) {
       // Already expensed and out of card clearing: never repaid, never fee'd again (RPC provisional_fee).
-      if (!feeMonth || provisional < 0 || provisional > outstanding) return result("review_required");
+      if (!feeMonth || feeMonth.reviewRequired || provisional < 0 || provisional > outstanding) return result("review_required");
       payment = Math.min(remaining, cardMoney(outstanding - provisional));
     } else if (feeMonth) {
       const rate=outstanding/feeMonth.gross, after=(outstanding-payment)/feeMonth.gross;

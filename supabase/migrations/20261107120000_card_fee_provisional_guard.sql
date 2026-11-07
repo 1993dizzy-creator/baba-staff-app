@@ -59,6 +59,11 @@ $r$||v_anchor);
     return jsonb_build_object('status','card_fee_review_required','feeMonth',v_sale_month.sale_month,'reason','provisional_fee_mismatch',
      'provisionalFee',v_provisional,'remainingAmount',v_sale_month.outstanding);
    elsif v_provisional<>0 then
+    -- A legacy deposit that could still pay this month's sales makes the remainder unknown.
+    if exists(select 1 from public.ledger_card_reconciliations r where r.status in('unmatched','partial') and r.deposit_date>=v_sale_month.sale_month) then
+     return jsonb_build_object('status','card_fee_review_required','feeMonth',v_sale_month.sale_month,'reason','legacy_unallocated_deposits',
+      'provisionalFee',v_provisional,'remainingAmount',v_sale_month.outstanding);
+    end if;
     -- Already expensed and taken from card clearing: never repaid by a deposit, never fee'd again.
     -- The rest of the month (if any) is still ordinary FIFO principal.
     v_month_payment:=least(v_remaining,v_sale_month.outstanding-v_provisional);

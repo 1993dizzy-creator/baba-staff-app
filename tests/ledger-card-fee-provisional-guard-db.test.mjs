@@ -220,3 +220,37 @@ test('TS deposit preview plans the same allocations as the guarded RPC', async (
   // Ambiguous provisional data is refused by both.
   assert.equal(planCardDepositWithFees([{ id: 1, business_date: '2026-08-20', outstandingGrossAmount: 3000000 }], 1000, '2026-09-05', [{ month: '2026-08', gross: 100000000, outstanding: 3000000, provisionalFee: 4000000 }]).error, 'review_required');
 });
+
+test('provisional month with a legacy unallocated deposit blocks the whole deposit and writes nothing', async () => {
+  const db = await fixture();
+  try {
+    await octoberShape(db);
+    await legacyDeposit(db, 100000, '2026-09-03');
+    const before = await snapshot(db);
+    const bank = await balance(db, 'baba_corporate_bank'), clearing = await balance(db, 'card_clearing');
+    const result = await autoDeposit(db, 5000000, '2026-09-05');
+    assert.equal(result.status, 'card_fee_review_required');
+    assert.equal(result.reason, 'legacy_unallocated_deposits');
+    assert.equal(result.feeMonth, '2026-08-01');
+    assert.equal(Number(result.provisionalFee), 3000000);
+    assert.deepEqual(await snapshot(db), before, 'no deposit, fee, allocation or audit row');
+    assert.equal(await balance(db, 'baba_corporate_bank'), bank);
+    assert.equal(await balance(db, 'card_clearing'), clearing);
+    const { planCardDepositWithFees } = await import('../lib/ledger/card-fee-policy.ts');
+    assert.equal(planCardDepositWithFees(await outstanding(db), 5000000, '2026-09-05', [{ month: '2026-08', gross: 100000000, outstanding: 3000000, provisionalFee: 3000000, reviewRequired: true }]).error, 'review_required');
+  } finally { await db.close(); }
+});
+
+test('a drifted live definition aborts the whole migration', async () => {
+  const db = await fixture({ guarded: false });
+  try {
+    // Simulate drift inside the plan anchor (one extra space), then apply the guard.
+    await db.exec(`do $d$ declare v text:=pg_get_functiondef('public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint)'::regprocedure);
+      begin execute replace(v,'   v_month_payment:=least(v_remaining,v_sale_month.outstanding);','   v_month_payment:=least(v_remaining, v_sale_month.outstanding);'); end $d$;`);
+    await assert.rejects(db.exec(guard), /CARD_FEE_GUARD_PLAN_ANCHOR_MISMATCH/);
+    await db.exec('rollback');
+    assert.equal((await db.query("select count(*)::int n from pg_proc where proname='provisional_fee'")).rows[0].n, 0);
+    const definition = (await db.query("select pg_get_functiondef('public.ledger_create_card_deposit_auto_allocate_v1(timestamptz,numeric,bigint,text,bigint)'::regprocedure) d")).rows[0].d;
+    assert.ok(!definition.includes('provisional'), 'deposit RPC unchanged');
+  } finally { await db.close(); }
+});
