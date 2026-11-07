@@ -282,8 +282,8 @@ test('zero reconciliations retain compact collapsed sales and entry button witho
   assert.match(state.html,/↪️ 이전월 미정산 1\.000 ₫/);
   assert.equal((state.html.match(/<details/g)||[]).length,0);
   assert.doesNotMatch(state.html,/datetime-local|Gross|card_clearing|카드미정산 계정/);
-  assert.ok(state.html.indexOf('이전월 미정산')<state.html.indexOf('＋ 카드 입금 등록'));
-  assert.ok(state.html.indexOf('＋ 카드 입금 등록')<state.html.indexOf('카드 입금 내역'));
+  assert.doesNotMatch(state.html,/카드 입금 등록|registerLink/);
+  assert.ok(state.html.indexOf('이전월 미정산')<state.html.indexOf('카드 입금 내역'));
   assert.equal(state.requests.length,0);
 });
 
@@ -490,10 +490,10 @@ test('card settlement renders Vietnamese throughout its main view and deposit fo
   const sale={id:1,business_date:'2026-08-01',amount:1000,allocatedGrossAmount:0,outstandingGrossAmount:1000};
   const data={accounts:[{id:1,code:'store_cash',display_name:'Tiền mặt'}],sales:[sale],monthlySales:[sale],priorUnreconciledSales:[],reconciliations:[rec],summary:{...cardSummary}};
   const main=pageFixture(cardPath,{0:'2026-08',1:data},undefined,'vi').html;
-  for(const label of ['Quyết toán thẻ','Tình hình thẻ (T8)','Đã quyết toán cuối tháng','Ghi nhận tiền thẻ','Lịch sử tiền thẻ về','Đã quyết toán','Tiền về 08/28']) assert.ok(main.includes(label),label);
+  for(const label of ['Quyết toán thẻ','Tình hình thẻ (T8)','Đã quyết toán cuối tháng','Lịch sử tiền thẻ về','Đã quyết toán','Tiền về 08/28']) assert.ok(main.includes(label),label);
   assert.doesNotMatch(main,/카드 정산|카드 현황|월말 정산완료|미정산 카드매출|카드 입금 등록|카드 입금 내역|입금</);
-  // Registration moved to the ledger entry sheet; the card page links there for the same month.
-  assert.match(main,/<a href="\/admin\/ledger\/entries\?month=2026-08" class="registerLink">＋ Ghi nhận tiền thẻ <small>Thêm giao dịch › Thu › Tiền thẻ về<\/small><\/a>/);
+  // Registration lives only in the ledger entry sheet; the card page has no register button.
+  assert.doesNotMatch(main,/registerLink|Ghi nhận tiền thẻ|Thêm giao dịch › Thu › Tiền thẻ về/);
   assert.doesNotMatch(main,/card-deposit-form|Xem trước quyết toán tự động/);
   const detail=pageFixture(cardPath,{0:'2026-08',1:data,15:rec},undefined,'vi').html;
   for(const label of ['Tiền thực nhận','Trừ vào doanh thu thẻ','2.225.000 ₫','Hủy tiền về']) assert.ok(detail.includes(label),label);

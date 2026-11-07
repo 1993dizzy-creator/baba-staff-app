@@ -1,6 +1,5 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import { BarSheet } from "@/components/bar/keeping/KeepingUi";
@@ -25,7 +24,7 @@ const cardText = {
     title:"카드 정산",previous:"이전",next:"다음",previousMonth:"이전 달",nextMonth:"다음 달",selectMonth:"월 선택",
     cardStatus:"카드 현황",cardSales:"카드매출",monthEndSettled:"월말 정산완료",monthEndUnsettled:"월말 미정산",currentUnsettled:"현재 전체 미정산",
     priorUnsettled:"이전월 미정산",posDetail:"POS 상세",
-    registerDeposit:"카드 입금 등록",registerInLedger:"장부 내역 추가 › 수입 › 카드입금",depositHistory:"카드 입금 내역",deposit:"입금",unsettledCardSales:"미정산 카드매출",noDeposits:"등록된 카드 입금이 없습니다.",
+    depositHistory:"카드 입금 내역",deposit:"입금",unsettledCardSales:"미정산 카드매출",noDeposits:"등록된 카드 입금이 없습니다.",
     unmatched:"미연결",partial:"부분 연결",cancelled:"취소",depositTitle:"카드 입금",close:"닫기",
     actualDeposit:"실제 입금",appliedToSales:"카드매출 반영",cancelDeposit:"입금 취소",confirmCancel:"취소 확정",back:"돌아가기",cancelRecord:"취소 기록",noReason:"사유 기록 없음",cancelReason:"취소 사유",
     depositOn:"입금",saleDate:"매출일",
@@ -44,7 +43,7 @@ const cardText = {
     title:"Quyết toán thẻ",previous:"Trước",next:"Sau",previousMonth:"Tháng trước",nextMonth:"Tháng sau",selectMonth:"Chọn tháng",
     cardStatus:"Tình hình thẻ",cardSales:"Doanh thu thẻ",monthEndSettled:"Đã quyết toán cuối tháng",monthEndUnsettled:"Chưa quyết toán cuối tháng",currentUnsettled:"Tổng chưa quyết toán hiện tại",
     priorUnsettled:"Chưa quyết toán từ tháng trước",posDetail:"Chi tiết POS",
-    registerDeposit:"Ghi nhận tiền thẻ",registerInLedger:"Thêm giao dịch › Thu › Tiền thẻ về",depositHistory:"Lịch sử tiền thẻ về",deposit:"Tiền về",unsettledCardSales:"Doanh thu thẻ chưa quyết toán",noDeposits:"Chưa có khoản tiền thẻ nào.",
+    depositHistory:"Lịch sử tiền thẻ về",deposit:"Tiền về",unsettledCardSales:"Doanh thu thẻ chưa quyết toán",noDeposits:"Chưa có khoản tiền thẻ nào.",
     unmatched:"Chưa kết nối",partial:"Kết nối một phần",cancelled:"Đã hủy",depositTitle:"Tiền thẻ về",close:"Đóng",
     actualDeposit:"Tiền thực nhận",appliedToSales:"Trừ vào doanh thu thẻ",cancelDeposit:"Hủy tiền về",confirmCancel:"Xác nhận hủy",back:"Quay lại",cancelRecord:"Lịch sử hủy",noReason:"Không có lý do",cancelReason:"Lý do hủy",
     depositOn:"Tiền về",saleDate:"Ngày bán",
@@ -229,8 +228,6 @@ function CardSettlementsContent() {
         </>}
       </section>
       {data.priorUnreconciledSales.length?<p className={styles.hint}>↪️ {t.priorUnsettled} {money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</p>:null}
-      {/* 카드 입금 등록은 장부 내역 추가 › 수입 › 카드입금 한 곳에서만 한다(같은 카드정산 API·RPC). */}
-      <Link href={ledgerMonthHref("/admin/ledger/entries","",month)} className={styles.registerLink}>＋ {t.registerDeposit} <small>{t.registerInLedger}</small></Link>
       <section className={styles.card} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>
         <h2>🏦 {t.depositHistory}</h2>
         {/* Unsettled card sales is the current outstanding balance, not a confirmed card fee. */}

@@ -183,7 +183,7 @@ test('card deposit success notice reports the auto-settled sale count in Korean 
 test('card settlement page keeps history, cancellation and fees but has no second registration form', () => {
   const page = readFileSync(cardPath, 'utf8');
   assert.doesNotMatch(page, /card-deposit-form|planCardDepositWithFees|setCreateOpen|method: "POST", headers: \{ "Content-Type": "application\/json" \}, body: JSON\.stringify\(\{ depositAt/);
-  assert.match(page, /<Link href=\{ledgerMonthHref\("\/admin\/ledger\/entries","",month\)\} className=\{styles\.registerLink\}>/);
+  assert.doesNotMatch(page, /registerLink|registerDeposit|from "next\/link"/);
   for (const kept of ['/api/admin/ledger/card-settlements/${inspectedDeposit.id}/cancel', '/api/admin/ledger/card-fees/${fee.closure.id}/cancel', '/api/admin/ledger/card-fees?month=', 'pos-drilldown']) assert.ok(page.includes(kept), kept);
   const entries = readFileSync(entriesPath, 'utf8');
   assert.match(entries, /카드 입금 등록은 장부 내역 추가 › 수입 › 카드입금에서 진행합니다\./);
