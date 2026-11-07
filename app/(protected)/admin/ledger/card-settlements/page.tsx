@@ -67,7 +67,7 @@ function feeBlockerText(reason:string|null|undefined,earlierMonth:string|null|un
   if (reason==="insufficient_card_pending") return text.feeBlockPending;
   return null;
 }
-const monthNoticeCardStyle: CSSProperties = { padding: "10px 12px", borderRadius: 10, background: "#f9fafb", border: "1px solid #e5e7eb" };
+const monthNoticeCardStyle: CSSProperties = { padding: "10px 12px", borderRadius: 14, background: "#fff", border: "1px solid #e5e7eb" };
 const monthControlStyle: CSSProperties = { marginTop: 8, display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 8 };
 const monthButtonStyle: CSSProperties = { ...ui.button, padding: "9px 10px", borderRadius: 10, fontSize: 12, fontWeight: 800 };
 const monthInputStyle: CSSProperties = { ...ui.input, width: "100%", minWidth: 0, padding: "9px 10px", fontSize: 13, borderRadius: 10 };

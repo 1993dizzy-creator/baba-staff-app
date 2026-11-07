@@ -94,15 +94,21 @@ function render(lang, feeOverrides = {}, history = buildCardFeeHistory({ months:
 }
 const BANNED = /자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소|Chờ xác nhận tự động|Cần hủy bút toán thủ công/;
 
-test('October card: estimate KPIs with store average, provisional status, details and history', () => {
+test('October card: provisional difference KPIs, cost booked vs fee unconfirmed, tidy details and history', () => {
   const html = render('ko');
   const has = fragment => assert.ok(html.includes(fragment), fragment);
-  has('<span>추정 수수료</span><strong>5.699.112 ₫</strong>');
-  has('<span>추정 수수료율</span><strong>2.97%</strong><small class="kpiNote">매장 평균 2.11%</small>');
-  for (const chip of ['🧾 잠정 비용 처리 #4119', '🛡️ 자동 중복 확정 보호', '⏳ 공식 확정 미완료']) has(chip);
+  has('<span>잠정 정산 차액</span><strong>5.699.112 ₫</strong>');
+  has('<span>잠정 차액률</span><strong>2.97%</strong><small class="kpiNote">매장 평균 2.11%</small>');
+  // Cost booking and fee confirmation are two separate facts, no badges.
+  has('<dl class="feeState"><div><dt>비용 반영</dt><dd>수기 전표 #4119 · 5.699.112 ₫</dd></div><div><dt>수수료 확정</dt><dd>미확정</dd></div></dl>');
+  has('같은 금액이 자동 확정으로 다시 비용 처리되지 않도록 보호됩니다. 실제 수수료가 확정되면 차액만 현재 열린 월에서 정정합니다.');
+  assert.doesNotMatch(html, /잠정 비용 처리|자동 중복 확정 보호|공식 확정 미완료|chip/);
   has('<details class="feeDetails"><summary>세부 내역 · 수기 전표</summary>');
   assert.doesNotMatch(html, /<details[^>]* open/);
   has('수기 비용 전표 #4119');
+  // Zero lines are gone from the breakdown.
+  const details = html.slice(html.indexOf('<details'), html.indexOf('</details>'));
+  assert.doesNotMatch(details, /<dd>0 ₫<\/dd>|기존 확정|비용 미반영 차액/);
   // History block.
   has('📈 역대 카드수수료율');
   has('<span>매장 평균</span><strong>2.11%</strong><small class="kpiNote">확정 2개월 · 매출 가중</small>');
@@ -126,7 +132,7 @@ test('no confirmed month shows "collecting", never 0%', () => {
 
 test('Vietnamese card and history have no Korean UI text', () => {
   const html = render('vi');
-  for (const label of ['Phí ước tính', 'TB cửa hàng 2.11%', 'Đã ghi chi phí tạm tính #4119', 'Chặn xác nhận tự động trùng', 'Tỷ lệ phí thẻ các tháng', 'Thấp nhất', 'Cao nhất', '>T8<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
+  for (const label of ['Chênh lệch quyết toán tạm tính', 'TB cửa hàng 2.11%', 'Bút toán thủ công #4119', '<dt>Xác nhận phí</dt><dd>Chưa xác nhận</dd>', 'Tỷ lệ phí thẻ các tháng', 'Thấp nhất', 'Cao nhất', '>T8<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
     assert.ok(html.includes(label), label);
   // The voucher memo is stored ledger data (shown as entered); every UI label is Vietnamese.
   assert.doesNotMatch(html.replace('[잠정 추정·추후 정산검증]', ''), /[가-힣]/);
