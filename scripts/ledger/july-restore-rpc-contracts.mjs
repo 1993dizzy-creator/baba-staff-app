@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {sha} from './july-restore-phase2.mjs';
 const read=n=>readFileSync(new URL('../../supabase/migrations/'+n,import.meta.url),'utf8').replaceAll('\r\n','\n');
 const unquote=s=>s.replaceAll("''","'");
-function functionFrom(text,name){
+export function functionFrom(text,name){
  const start=text.search(new RegExp('create (?:or replace )?function '+name.replaceAll('.','\\.')+'\\('));
  if(start<0)throw Error('RPC_SOURCE_ABSENT:'+name);
  const rest=text.slice(start),m=rest.match(/as \$\$([\s\S]*?)\$\$;/);

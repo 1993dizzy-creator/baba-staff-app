@@ -107,12 +107,14 @@ export function phase3Plan(prior,priorCsv,phase2,capture){
  return {rows,remaining:remaining.map(r=>rows.find(a=>a.row===r.row)||r),payload,summary:{byState,cohort:rows.length,paid:vnd(rows.reduce((s,r)=>s+money(r.paid),0n)),remaining:remaining.length,unchangedHeld217:217,fundDelta,httpCalls:capture.requests.length,workflows:Object.fromEntries(['canonical_components','sheet_paid_group'].map(w=>[w,actions.filter(a=>a.workflow===w).length])),bundleDigest:payload.bundleDigest}};
 }
 export function renderPhase3(payload){
+ if(existsSync(new URL('../../.local/july-restore/phase3-final-20261107-r2/README-APPLIED-DO-NOT-RERUN.md',import.meta.url)))throw Error('PHASE3_ALREADY_APPLIED_DO_NOT_RENDER');
  if(!payload.bundle.actions.length)throw Error('NO_READY_ROWS');
  const canonical=JSON.stringify(payload),literal="'"+canonical.replaceAll("'","''")+"'";
  return readFileSync(new URL('./july-restore-phase3-batch.sql',import.meta.url),'utf8').replaceAll('__PAYLOAD_LITERAL__',()=>literal).replaceAll('__PAYLOAD_DIGEST__',sha(canonical)).replaceAll('__EXACT_ROWS__',payload.bundle.actions.map(a=>a.row).join(','));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const root=fileURLToPath(new URL('../../.local/july-restore/',import.meta.url)),out=resolve(process.argv[2]||''),capturePath=resolve(process.argv[3]||'');
+ if(existsSync(join(root,'phase3-final-20261107-r2/README-APPLIED-DO-NOT-RERUN.md')))throw Error('PHASE3_ALREADY_APPLIED_DO_NOT_RENDER');
  for(const p of [out,capturePath]){const r=relative(root,p);if(!r||r.startsWith('..')||isAbsolute(r))throw Error('WORKTREE_LOCAL_REQUIRED');}if(existsSync(out))throw Error('NEW_OUTPUT_REQUIRED');
  const priorRoot=join(root,'phase2-final-20261107-r2'),prior=JSON.parse(readFileSync(join(priorRoot,'reviewed-345.json'),'utf8')),priorCsv=readFileSync(join(priorRoot,'remaining-345-status.csv'),'utf8'),phase2=JSON.parse(readFileSync(join(priorRoot,'bundle.json'),'utf8'));
  const result=phase3Plan(prior,priorCsv,phase2,JSON.parse(readFileSync(capturePath,'utf8')));
