@@ -26,7 +26,10 @@
 --   * card_clearing is never touched. 8/1 openings #3~#6, #1190, #3804, every
 --     movement dated 2026-08-01 or later and all month closures are compared
 --     before/after; any difference rolls the whole transaction back.
---   * July must be open (ledger_assert_month_open_v1); the month guards also enforce it.
+--   * July must be open (ledger_assert_month_open_v1) on every run, fresh or re-run;
+--     a closed July stops even an identical re-run. The month guards also enforce it.
+--   * 8/1 openings #3~#6 are verified one by one (account, amount, keys, exactly one
+--     positive movement on that account) before anything is written; never repaired.
 --   * This seed alone does NOT make July close at 300,353,642; that target needs the
 --     July transactions restored separately.
 
@@ -46,6 +49,12 @@ DECLARE
   ]';
   c_total constant numeric := 600859817;
   c_august_total constant numeric := 300353642;
+  c_august constant jsonb := '[
+    {"id":3,"fund_account_id":1,"code":"store_cash","amount":95464986},
+    {"id":4,"fund_account_id":5,"code":"vuong_personal_custody","amount":5231310},
+    {"id":5,"fund_account_id":3,"code":"cho_personal_custody","amount":95470741},
+    {"id":6,"fund_account_id":2,"code":"baba_corporate_bank","amount":104186605}
+  ]';
   c_source_type constant text := 'opening_balance_seed';
   c_business_date constant date := date '2026-07-01';
   c_occurred_at constant timestamptz := timestamptz '2026-07-01 03:00:00+07';
@@ -58,6 +67,7 @@ DECLARE
   v_approval text := current_setting('baba.july_opening_approval', true);
   v_actor bigint;
   v_seed record;
+  v_aug record;
   v_snapshot jsonb;
   v_key text;
   v_existing integer;
@@ -91,6 +101,9 @@ BEGIN
       OR (type='opening' AND business_date=c_business_date)
    FOR SHARE;
 
+  -- 1b. July must be open on every run (fresh and re-run alike).
+  PERFORM public.ledger_assert_month_open_v1(c_business_date);
+
   -- 2. Fund accounts are the four business accounts; card_clearing is not a seed.
   FOR v_seed IN SELECT * FROM jsonb_to_recordset(c_seeds) AS s(fund_account_id bigint, code text, type text, amount numeric) LOOP
     IF NOT EXISTS (SELECT 1 FROM public.ledger_fund_accounts WHERE id=v_seed.fund_account_id AND code=v_seed.code
@@ -99,7 +112,22 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- 3. August opening baseline #3~#6 must be the known seed (300,353,642).
+  -- 3. August opening baseline #3~#6 must be the known seed (300,353,642),
+  --    checked transaction by transaction and movement by movement. Never repaired.
+  FOR v_aug IN SELECT * FROM jsonb_to_recordset(c_august) AS a(id bigint, fund_account_id bigint, code text, amount numeric) LOOP
+    IF NOT EXISTS (SELECT 1 FROM public.ledger_transactions t
+                    WHERE t.id=v_aug.id AND t.type='opening' AND t.status='confirmed'
+                      AND t.business_date=date '2026-08-01' AND t.source_type=c_source_type
+                      AND t.source_key='2026-08-01:'||v_aug.code AND t.amount=v_aug.amount) THEN
+      RAISE EXCEPTION 'JULY_OPENING_AUGUST_BASELINE_MISMATCH: transaction #% (%)', v_aug.id, v_aug.code;
+    END IF;
+    SELECT count(*) INTO v_count FROM public.ledger_movements m WHERE m.transaction_id=v_aug.id;
+    IF v_count<>1 OR NOT EXISTS (SELECT 1 FROM public.ledger_movements m
+                                  WHERE m.transaction_id=v_aug.id AND m.fund_account_id=v_aug.fund_account_id
+                                    AND m.amount=v_aug.amount AND m.amount>0) THEN
+      RAISE EXCEPTION 'JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #% (%): % movements', v_aug.id, v_aug.code, v_count;
+    END IF;
+  END LOOP;
   SELECT count(*), coalesce(sum(t.amount),0) INTO v_count, v_sum FROM public.ledger_transactions t
    WHERE t.id IN (3,4,5,6) AND t.type='opening' AND t.status='confirmed' AND t.business_date=date '2026-08-01'
      AND t.source_type=c_source_type AND t.source_key LIKE '2026-08-01:%';
@@ -139,7 +167,6 @@ BEGIN
 
   -- 6. Fresh run: insert 4 transactions, 4 movements, 4 audits.
   IF v_existing=0 THEN
-    PERFORM public.ledger_assert_month_open_v1(c_business_date);
     FOR v_seed IN SELECT * FROM jsonb_to_recordset(c_seeds) AS s(fund_account_id bigint, code text, type text, amount numeric) LOOP
       v_key := '2026-07-01:'||v_seed.code;
       v_snapshot := jsonb_build_object('basis','legacy_sheet_closing_balance','sheet','(2026)BABA - Sổ dự án',

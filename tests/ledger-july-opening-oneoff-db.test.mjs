@@ -363,13 +363,62 @@ test('⑦ a closed July stops the seed', async () => {
   } finally { await db.close(); }
 });
 
+test('⑦ July closure is checked on every run: closed re-run of 4 identical seeds is rejected; open re-run unchanged', async () => {
+  const db = await database();
+  try {
+    await run(db);
+    const seeded = await dump(db);
+    await run(db);
+    assert.equal(await dump(db), seeded, 'open-July re-run writes nothing');
+    await db.exec(`insert into ledger_month_closures(month,status,closed_by,summary_snapshot,snapshot_hash) values('2026-07-01','closed',2,'{}','${'b'.repeat(64)}')`);
+    const closed = await dump(db);
+    await rejects(db, /LEDGER_MONTH_CLOSED/);
+    await rejects(db, /LEDGER_MONTH_CLOSED/, { actor: '1' });
+    assert.equal(await dump(db), closed);
+  } finally { await db.close(); }
+});
+
+// Tampering with closed-month rows needs the guards off; the fixture only.
+const unguarded = sql => `alter table ledger_transactions disable trigger ledger_transactions_month_guard;
+  alter table ledger_movements disable trigger ledger_movements_month_guard; ${sql};
+  alter table ledger_transactions enable trigger ledger_transactions_month_guard;
+  alter table ledger_movements enable trigger ledger_movements_month_guard`;
+
+test('⑪ August openings #3~#6 are verified individually; a wrong account, amount or extra movement stops the first run', async () => {
+  const cases = [
+    [/JULY_OPENING_AUGUST_BASELINE_MISMATCH: transaction #3 \(store_cash\)/,
+      'update ledger_transactions set amount=amount+1 where id=3; update ledger_transactions set amount=amount-1 where id=4; update ledger_movements set amount=amount+1 where id=1; update ledger_movements set amount=amount-1 where id=2'],
+    [/JULY_OPENING_AUGUST_BASELINE_MISMATCH: transaction #5/, "update ledger_transactions set source_key='2026-08-01:other' where id=5"],
+    [/JULY_OPENING_AUGUST_BASELINE_MISMATCH: transaction #6/, "update ledger_transactions set status='cancelled' where id=6"],
+    [/JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #3 \(store_cash\): 1 movements/, 'update ledger_movements set fund_account_id=2 where id=1'],
+    [/JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #3/, 'update ledger_movements set fund_account_id=3 where id=1; update ledger_movements set fund_account_id=1 where id=3'],
+    [/JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #4 \(vuong_personal_custody\): 1 movements/, 'update ledger_movements set amount=amount+7 where id=2'],
+    [/JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #6 \(baba_corporate_bank\): 3 movements/,
+      'insert into ledger_movements(transaction_id,fund_account_id,amount) values(6,1,1000),(6,5,-1000)'],
+    [/JULY_OPENING_AUGUST_MOVEMENT_MISMATCH: transaction #5 \(cho_personal_custody\): 0 movements/, 'delete from ledger_movements where id=3'],
+  ];
+  for (const [pattern, edit] of cases) {
+    const db = await database();
+    try {
+      await db.exec(unguarded(edit));
+      const total = (await db.query('select sum(amount)::bigint s from ledger_transactions where id in (3,4,5,6)')).rows[0].s;
+      if (edit.startsWith('update ledger_transactions set amount')) assert.equal(Number(total), 300_353_642, 'sum unchanged');
+      const before = await dump(db);
+      await rejects(db, pattern);
+      assert.equal(await dump(db), before, edit);
+      assert.equal((await seedRows(db)).length, 0);
+    } finally { await db.close(); }
+  }
+});
+
 test('script stays a one-off: no migration folder, no ON CONFLICT, no guard bypass, single transaction', () => {
   const code = SCRIPT.replace(/--[^\n]*/g, '');
   assert.doesNotMatch(code, /ON CONFLICT|DISABLE TRIGGER|session_replication_role|supabase\/migrations/i);
   assert.equal(SCRIPT.match(/^BEGIN;$/gm)?.length, 1);
   assert.equal(SCRIPT.match(/^COMMIT;$/gm)?.length, 1);
   assert.match(SCRIPT, /pg_advisory_xact_lock\(hashtext\('baba:ledger:july-opening-4funds-20261106'\)\)/);
-  assert.match(SCRIPT, /PERFORM public\.ledger_assert_month_open_v1\(c_business_date\);/);
+  assert.equal(SCRIPT.match(/PERFORM public\.ledger_assert_month_open_v1\(c_business_date\);/g)?.length, 1);
+  assert.ok(SCRIPT.indexOf('ledger_assert_month_open_v1(c_business_date)') < SCRIPT.indexOf('IF v_existing=0 THEN'), 'July check runs before the fresh/re-run branch');
   assert.match(SCRIPT, /SET LOCAL lock_timeout = '5s';/);
   assert.match(SCRIPT, /SET LOCAL statement_timeout = '30s';/);
   assert.doesNotMatch(SCRIPT, /card_clearing"|"fund_account_id":4/);
