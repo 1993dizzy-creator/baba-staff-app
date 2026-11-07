@@ -6,8 +6,39 @@ SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='120s';
 SET LOCAL baba.july_restore_actor='__ACTOR_USER_ID__';
 SET LOCAL baba.july_restore_approval='__OWNER_APPROVAL__';
-CREATE TEMP TABLE july_restore_input(payload jsonb NOT NULL) ON COMMIT DROP;
+CREATE TEMP TABLE july_restore_input(payload jsonb NOT NULL, approved_payload_canonical text NOT NULL) ON COMMIT DROP;
 INSERT INTO july_restore_input VALUES (__REVIEWED_PAYLOAD__);
+
+-- Validate the reviewed envelope BEFORE acquiring any operating-table write lock.
+DO $approved_batch$
+DECLARE
+  manifest jsonb; canonical text; actual_rows bigint[]; actual_delta jsonb;
+  safe49 constant boolean := '__SAFE49_PROFILE__';
+  expected_contract constant jsonb := '__APPROVED_49_CONTRACT__';
+BEGIN
+  SELECT payload,approved_payload_canonical INTO STRICT manifest,canonical FROM july_restore_input;
+  IF encode(sha256(convert_to(canonical,'UTF8')),'hex')<>'__APPROVED_PAYLOAD_DIGEST__'
+    OR canonical::jsonb IS DISTINCT FROM manifest
+    OR manifest->>'bundleDigest' IS DISTINCT FROM '__APPROVED_BUNDLE_DIGEST__' THEN RAISE EXCEPTION 'JULY_APPROVED_PAYLOAD_MISMATCH'; END IF;
+  IF safe49 THEN
+    IF manifest->'batch49Contract' IS DISTINCT FROM expected_contract OR jsonb_array_length(manifest->'actions')<>49 THEN RAISE EXCEPTION 'JULY_BATCH_49_REQUIRED'; END IF;
+    SELECT array_agg((r->>'row')::bigint ORDER BY (r->>'row')::bigint) INTO actual_rows
+      FROM jsonb_array_elements(manifest->'actions') act,jsonb_array_elements(act->'rows') r;
+    IF actual_rows IS DISTINCT FROM ARRAY(SELECT value::bigint FROM jsonb_array_elements_text(expected_contract->'rows'))
+      OR (SELECT count(DISTINCT r->>'key') FROM jsonb_array_elements(manifest->'actions') act,jsonb_array_elements(act->'rows') r)<>49
+      OR (SELECT count(DISTINCT act->>'key') FROM jsonb_array_elements(manifest->'actions') act)<>49
+      OR (SELECT count(DISTINCT act->>'economicKey') FROM jsonb_array_elements(manifest->'actions') act)<>49 THEN RAISE EXCEPTION 'JULY_BATCH_ROW_OR_SUBMISSION_DUPLICATE'; END IF;
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(manifest->'actions') act WHERE act->>'kind' NOT IN('expense','meal','income','transfer')
+      OR jsonb_array_length(act->'rows')<>1 OR act->'rowNumbers' IS DISTINCT FROM jsonb_build_array((act->'rows'->0->>'row')::bigint)
+      OR act->>'key' IS DISTINCT FROM 'sheet-row-'||(act->'rows'->0->>'row')
+      OR act->>'economicKey' IS DISTINCT FROM act->'rows'->0->>'key'
+      OR act->'rows'->0->>'key' IS DISTINCT FROM 'sheet:1BRT2ul07GftjqVPwcIf35o3LDJ6RjPIdWL_YeiRqDx4:tab:829182003:row:'||(act->'rows'->0->>'row')) THEN RAISE EXCEPTION 'JULY_BATCH_SUBMISSION_SCOPE'; END IF;
+    SELECT jsonb_object_agg(account,amount) INTO actual_delta FROM (
+      SELECT e->>'account' account,sum((e->>'amount')::numeric) amount
+      FROM jsonb_array_elements(manifest->'actions') act,jsonb_array_elements(act->'effects') e GROUP BY e->>'account') x;
+    IF actual_delta IS DISTINCT FROM expected_contract->'fundDelta' THEN RAISE EXCEPTION 'JULY_BATCH_APPROVED_DELTA_MISMATCH'; END IF;
+  END IF;
+END $approved_batch$;
 
 -- Preserve existing rows in full, not merely their counts or sums. Only selected
 -- July payables may change; allocations and all pre-existing card links may not.
@@ -16,9 +47,11 @@ DO $capture_ids$
 DECLARE n text;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('baba:ledger:july-restore-v1'));
-  LOCK TABLE public.ledger_transactions,public.ledger_movements,public.ledger_audit_logs,
-    public.ledger_payables,public.ledger_payable_allocations,public.ledger_card_reconciliations,
-    public.ledger_card_reconciliation_lines,public.ledger_candidates IN SHARE ROW EXCLUSIVE MODE;
+  LOCK TABLE public.ledger_transactions,public.ledger_movements,public.ledger_audit_logs IN SHARE ROW EXCLUSIVE MODE;
+  IF NOT '__SAFE49_PROFILE__'::boolean THEN
+    LOCK TABLE public.ledger_payables,public.ledger_payable_allocations,public.ledger_card_reconciliations,
+      public.ledger_card_reconciliation_lines,public.ledger_candidates IN SHARE ROW EXCLUSIVE MODE;
+  END IF;
   FOREACH n IN ARRAY ARRAY['ledger_transactions','ledger_movements','ledger_audit_logs',
     'ledger_payable_allocations','ledger_card_reconciliations','ledger_card_reconciliation_lines'] LOOP
     EXECUTE format('INSERT INTO july_original_ids SELECT %L,array_agg(id) FROM public.%I',n,n);
@@ -32,9 +65,11 @@ BEGIN
     EXECUTE format('SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM public.%I x WHERE id=ANY($1)',r.name) INTO j USING r.ids;
     result:=result||jsonb_build_object(r.name,j);
   END LOOP;
-  -- Hash whole read-only source/protection tables, including all columns.
-  FOR r IN SELECT unnest(ARRAY['ledger_fund_accounts','ledger_month_closures','ledger_month_closure_history',
-    'inventory_logs','inventory','pos_sales_receipts','pos_sales_receipt_lines','pos_sales_receipt_payments']) name LOOP
+  -- The reviewed 49 use manual RPC only: no inventory/POS writer is reachable.
+  -- Keep ledger/closure/card protection; avoid two whole operational-source scans.
+  FOR r IN SELECT unnest(ARRAY['ledger_fund_accounts','ledger_month_closures','ledger_month_closure_history']
+    || CASE WHEN '__SAFE49_PROFILE__'::boolean THEN ARRAY[]::text[] ELSE
+       ARRAY['inventory_logs','inventory','pos_sales_receipts','pos_sales_receipt_lines','pos_sales_receipt_payments'] END) name LOOP
     IF to_regclass('public.'||r.name) IS NULL THEN RAISE EXCEPTION 'JULY_PROTECTION_TABLE_MISSING: %',r.name; END IF;
     EXECUTE format('SELECT to_jsonb(md5(coalesce(string_agg(to_jsonb(x)::text,''|'' ORDER BY to_jsonb(x)::text),''''))) FROM public.%I x',r.name) INTO j;
     result:=result||jsonb_build_object(r.name,j);
@@ -60,6 +95,8 @@ DECLARE
   expected_effects jsonb; actual_effects jsonb; expected_record jsonb; actual_record jsonb;
   created_count int:=0; linked_count int:=0; unchanged_count int:=0; applied boolean;
   before_card numeric; after_card numeric;
+  before_batch_funds jsonb; after_batch_funds jsonb; remaining_delta jsonb:='{"store_cash":0,"vuong_personal_custody":0,"cho_personal_custody":0,"baba_corporate_bank":0}';
+  safe49 constant boolean := '__SAFE49_PROFILE__';
 BEGIN
   SELECT payload INTO STRICT manifest FROM july_restore_input;
   actor:=current_setting('baba.july_restore_actor',true)::bigint;
@@ -67,7 +104,7 @@ BEGIN
   IF actor IS NULL OR NOT EXISTS(SELECT 1 FROM public.users WHERE id=actor AND is_active AND app_login_enabled AND lower(role::text) IN ('owner','master')) THEN
     RAISE EXCEPTION 'JULY_ACTOR_REQUIRED';
   END IF;
-  IF approval IS DISTINCT FROM 'APPROVED:july-restore:'||(manifest->>'bundleDigest') THEN RAISE EXCEPTION 'JULY_SEPARATE_APPROVAL_REQUIRED'; END IF;
+  IF approval IS DISTINCT FROM ('APPROVED:july-restore:'||(manifest->>'bundleDigest')||(CASE WHEN safe49 THEN ':__APPROVED_PAYLOAD_DIGEST__' ELSE '' END)) THEN RAISE EXCEPTION 'JULY_SEPARATE_APPROVAL_REQUIRED'; END IF;
   IF manifest->>'status' IS DISTINCT FROM 'REVIEWABLE' OR (manifest->>'sourceRows')::int<>395 THEN RAISE EXCEPTION 'JULY_INCOMPLETE_SOURCE'; END IF;
   IF to_regclass('supabase_migrations.schema_migrations') IS NULL THEN RAISE EXCEPTION 'JULY_BOUNDARY_HISTORY_MISSING'; END IF;
   IF NOT EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations WHERE version='20261105153442') THEN RAISE EXCEPTION 'JULY_BOUNDARY_MIGRATION_REQUIRED'; END IF;
@@ -109,6 +146,12 @@ BEGIN
     IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'categories' THEN RAISE EXCEPTION 'JULY_RUNTIME_CATEGORY_DRIFT'; END IF;
   END IF;
   before_state:=pg_temp.july_protected();
+  IF safe49 THEN
+    SELECT jsonb_object_agg(code,balance) INTO before_batch_funds FROM (
+      SELECT f.code,coalesce(sum(m.amount) FILTER(WHERE t.status='confirmed'),0) balance
+      FROM public.ledger_fund_accounts f LEFT JOIN public.ledger_movements m ON m.fund_account_id=f.id LEFT JOIN public.ledger_transactions t ON t.id=m.transaction_id
+      WHERE f.code IN('store_cash','vuong_personal_custody','cho_personal_custody','baba_corporate_bank') GROUP BY f.code) x;
+  END IF;
   SELECT coalesce(sum(m.amount),0) INTO before_card FROM public.ledger_movements m
     JOIN public.ledger_transactions t ON t.id=m.transaction_id JOIN public.ledger_fund_accounts f ON f.id=m.fund_account_id
     WHERE f.code='card_clearing' AND t.status='confirmed';
@@ -126,6 +169,11 @@ BEGIN
      WHERE l.action='july_restore_row' AND l.reason IN(SELECT value->>'key' FROM jsonb_array_elements(a->'rows'));
     IF audit_count NOT IN(0,expected_count) THEN RAISE EXCEPTION 'JULY_PARTIAL_OR_DUPLICATE_ROW_AUDIT'; END IF;
     applied:=audit_count=expected_count;
+    IF safe49 AND NOT applied THEN
+      FOR effect IN SELECT value FROM jsonb_array_elements(a->'effects') LOOP
+        remaining_delta:=jsonb_set(remaining_delta,ARRAY[effect->>'account'],to_jsonb((remaining_delta->>(effect->>'account'))::numeric+(effect->>'amount')::numeric));
+      END LOOP;
+    END IF;
     IF applied THEN
       IF (SELECT count(DISTINCT reason) FROM public.ledger_audit_logs l WHERE l.action='july_restore_row'
         AND l.reason IN(SELECT value->>'key' FROM jsonb_array_elements(a->'rows')))<>expected_count THEN RAISE EXCEPTION 'JULY_DUPLICATE_ROW_AUDIT'; END IF;
@@ -220,6 +268,16 @@ BEGIN
       END LOOP;
     END IF;
   END LOOP;
+  IF safe49 THEN
+    IF created_count+unchanged_count<>49 OR linked_count<>0
+      OR (SELECT count(*) FROM public.ledger_audit_logs l WHERE l.action='july_restore_row' AND l.reason IN(
+        SELECT r->>'key' FROM jsonb_array_elements(manifest->'actions') act,jsonb_array_elements(act->'rows') r))<>49 THEN RAISE EXCEPTION 'JULY_BATCH_49_POSTFLIGHT'; END IF;
+    SELECT jsonb_object_agg(code,balance) INTO after_batch_funds FROM (
+      SELECT f.code,coalesce(sum(m.amount) FILTER(WHERE t.status='confirmed'),0) balance
+      FROM public.ledger_fund_accounts f LEFT JOIN public.ledger_movements m ON m.fund_account_id=f.id LEFT JOIN public.ledger_transactions t ON t.id=m.transaction_id
+      WHERE f.code IN('store_cash','vuong_personal_custody','cho_personal_custody','baba_corporate_bank') GROUP BY f.code) x;
+    IF EXISTS(SELECT 1 FROM jsonb_each_text(remaining_delta) d WHERE (after_batch_funds->>d.key)::numeric-(before_batch_funds->>d.key)::numeric<>d.value::numeric) THEN RAISE EXCEPTION 'JULY_BATCH_FUND_DELTA_MISMATCH'; END IF;
+  END IF;
   IF pg_temp.july_protected() IS DISTINCT FROM before_state THEN RAISE EXCEPTION 'JULY_PROTECTED_STATE_CHANGED'; END IF;
   SELECT jsonb_object_agg(code,balance) INTO after_cash FROM (
     SELECT f.code,coalesce(sum(m.amount) FILTER(WHERE t.status='confirmed' AND t.business_date>='2026-08-01'),0) balance

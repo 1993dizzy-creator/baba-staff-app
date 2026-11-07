@@ -99,3 +99,26 @@ $env:JULY_INPUT_DIR='C:/workspace/baba-july-inputs-2026'
 $env:JULY_REVIEW_DIR='C:/workspace/baba-july-inputs-2026/runtime-review-20261107-final'
 node --experimental-strip-types --test tests/july-restore-runtime-review.test.mjs
 ```
+
+## GPT 원문 PASS 후 보완 — 49행 전체 검산·보호 성능
+
+금액·날짜·계정 매핑·RPC 인자의 기존 PASS를 재사용했다. 승인된 bundle의 SHA-256은 `72ef76c0716d488ee2372259f742087c375ee33550acc3b0cb418c26b1b62a8d`로 유지한다. 이전 SQL과 새 SQL의 actions 및 runtimePreflight를 비교해 데이터가 같음을 확인했다. 운영 재조회와 기존 395행/31일 검산은 하지 않았다.
+
+- 실행 전 잠금을 잡기 **전에** 승인 원본행 집합이 정확히 49개인지 확인한다. 원본 행번호·원본 키·제출 키·경제 사건 키는 모두 유일해야 하며 `rowNumbers`, 원본행 키와 `sheet-row-N` 제출 키가 서로 대응해야 한다. 49행에는 기존 manual RPC 유형만 허용한다.
+- 렌더링 시 bundle 원문과 `bundleDigest`를 검증하고 승인된 bundle digest를 고정한다. SQL에서는 `bundleDigest`가 포함된 실제 실행 payload의 canonical JSON과 SHA-256을 별도로 고정·검사한다. 승인 문자열도 `APPROVED:july-restore:<bundleDigest>:<executionPayloadDigest>`로 두 digest를 모두 포함해야 한다. payload만 바꾸고 기존 bundleDigest를 남기면 거절된다. 실제 승인 placeholder는 채우지 않았다.
+- 49개 action의 전체 계정 효과가 **현금 −15,650,800 / Vượng −50,000 / Cho +4,570,800 / 법인 −94,655₫**인지 먼저 확인한다. 기표 전후 실제 4계정 잔액 차이를 미등록 action의 승인 효과와 다시 비교한다. 처음 실행은 위 예상 증감, 동일 재실행은 0₫이어야 한다. 처리 건수 및 최종 원본행 audit 수도 49개로 검사한다. 기존 멱등성·원자 롤백을 유지한다.
+- 승인된 49행은 POS·입고 writer를 호출하지 않으므로 이 프로필에서 POS 3테이블과 입고/재고 2테이블의 전체 반복 해시를 제거했다. 다른 유형의 기존 일반 템플릿 경로는 보호 범위를 축소하지 않았다. 기존 전표·movement·audit 원문 비교, 8~10월 마감/이력, 현재 시재, 기존 카드정산·배분, 현재 카드 잔액 보호는 유지한다.
+- 명시적인 `SHARE ROW EXCLUSIVE` 잠금은 실제 쓰는 전표·movement·audit **3테이블만** 유지한다. 후보·후불·배분·카드정산 5테이블의 배치 전용 쓰기 잠금은 49행 프로필에서 제거했다. 데이터 검증 및 payload 해시는 잠금 전에 끝내며 기존 lock/statement timeout도 유지한다. 운영 성능 수치는 측정하지 않았다.
+
+변경 범위 검사 **4개 PASS**: 승인 데이터/행/제출 키 변조 거절, 예상과 다른 추가 7월 자금이동 전체 롤백, 49행 기표·재실행·snapshot drift 거절, POS·입고 테이블 없이 실행 및 불필요한 추가 쓰기 잠금 부재/마감·카드 배분 보호를 확인했다. 기존 매핑·RPC·395행 검산 PASS는 재실행하거나 새 통과 수에 합산하지 않았다. 수정 렌더러/테스트 ESLint도 통과했다.
+
+최종 SQL: `C:\workspace\baba-july-inputs-2026\approved49-controls-20261107\safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql`. 같은 폴더의 `verification.json`에 승인된 bundle digest, 새 execution payload digest, 49개 행번호와 예상 증감을 기록했다. 이전 SQL/산출물은 덮어쓰지 않았다. 운영 DB 실행·Main 병합·Push·배포는 수행하지 않았다.
+
+관련 검사만 재현:
+
+```powershell
+$env:JULY_QA_PACKAGE_JSON='C:/workspace/baba-staff-app/package.json'
+$env:JULY_INPUT_DIR='C:/workspace/baba-july-inputs-2026'
+$env:JULY_REVIEW_DIR='C:/workspace/baba-july-inputs-2026/approved49-controls-20261107'
+node --experimental-strip-types --test --test-name-pattern '49-row|49 safeguards' tests/july-restore-runtime-review.test.mjs
+```

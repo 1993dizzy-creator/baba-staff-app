@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {reviewJulyRuntime} from '../lib/ledger/july-restore-runtime-review.mjs';
+import {renderJulyBatch} from '../scripts/ledger/july-restore-dry-run.mjs';
+import {digest,stable} from '../lib/ledger/july-restore-plan.ts';
 const root=process.env.JULY_INPUT_DIR;
 const enabled=Boolean(root);
 const read=path=>JSON.parse(readFileSync(path,'utf8'));
@@ -75,12 +77,17 @@ async function fixture(observations){
  return db;
 }
 const snapshotDb=async db=>(await db.query(`select jsonb_build_object('tx',(select jsonb_agg(to_jsonb(t) order by id) from ledger_transactions t),'mov',(select jsonb_agg(to_jsonb(m) order by id) from ledger_movements m),'audit',(select jsonb_agg(to_jsonb(a) order by id) from ledger_audit_logs a),'links',(select jsonb_agg(to_jsonb(l) order by id) from ledger_card_reconciliation_lines l)) x`)).rows[0].x;
+const payloadHash=sql=>/encode\(sha256[\s\S]*?<>'([a-f0-9]{64})'/.exec(sql)?.[1];
+const approved=raw=>{
+ const bundleHash=/manifest->>'bundleDigest' IS DISTINCT FROM '([a-f0-9]{64})'/.exec(raw)?.[1];
+ return raw.replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__',`APPROVED:july-restore:${bundleHash}:${payloadHash(raw)}`);
+};
 test('49-row rendered subset: exact expected fund changes, replay no-op, injected failure rolls all 49 back',{skip:!enabled},async()=>{
  const output=process.env.JULY_REVIEW_DIR||root+'/runtime-review-20261107-final';
- const observations=inputs(),summary=read(output+'/runtime-summary.json');
+ const observations=inputs(),summary=read(root+'/runtime-review-20261107-final/runtime-summary.json');
  const raw=readFileSync(output+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql','utf8');
  assert.ok(raw.includes('"runtimePreflight"'));
- const sql=raw.replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__','APPROVED:july-restore:'+summary.readyManifestDigest);
+ const sql=payloadHash(raw)?approved(raw):raw.replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__','APPROVED:july-restore:'+summary.readyManifestDigest);
  const db=await fixture(observations.snapshot);
  try{
    const before=await snapshotDb(db);
@@ -99,5 +106,56 @@ test('49-row rendered subset: exact expected fund changes, replay no-op, injecte
    await db.exec("insert into ledger_transactions(operation_id,type,status,business_date,occurred_at,recognition_month,amount,category_id,source_type,source_key,created_by,confirmed_by) values(gen_random_uuid(),'expense','confirmed','2026-07-31','2026-07-31T03:00:00+07:00','2026-07-01',100,25,'manual','another-writer',2,2)");
    const changed=await snapshotDb(db);
    await assert.rejects(db.exec(sql),/JULY_RUNTIME_TRANSACTION_DRIFT/);await db.exec('ROLLBACK');assert.deepEqual(await snapshotDb(db),changed);
+ }finally{await db.close();}
+});
+
+const controlFile=()=>readFileSync(process.env.JULY_REVIEW_DIR+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql','utf8');
+const insertPattern=/INSERT INTO july_restore_input VALUES \('((?:[^']|'')*)'::jsonb,'((?:[^']|'')*)'\);/;
+const getPayload=sql=>JSON.parse(insertPattern.exec(sql)[1].replaceAll("''","'"));
+function altered(sql,change,{rebind=false}={}){
+ const payload=getPayload(sql);change(payload);const canonical=stable(payload),quote=s=>"'"+s.replaceAll("'","''")+"'";
+ const previous=payloadHash(sql);
+ let next=sql.replace(insertPattern,()=>`INSERT INTO july_restore_input VALUES (${quote(canonical)}::jsonb,${quote(canonical)});`);
+ if(rebind)next=next.replaceAll(previous,digest(payload));return next;
+}
+async function rejectedUnchanged(db,raw,pattern){const before=await snapshotDb(db);await assert.rejects(db.exec(approved(raw)),pattern);await db.exec('ROLLBACK');assert.deepEqual(await snapshotDb(db),before);}
+
+test('49 safeguards: reviewed bundle/payload binding, exact rows and unique submission keys',{skip:!enabled},async()=>{
+ const raw=controlFile(),db=await fixture(inputs().snapshot);
+ try{
+  await rejectedUnchanged(db,altered(raw,p=>p.actions[0].date='2026-07-02'),/JULY_APPROVED_PAYLOAD_MISMATCH/);
+  await rejectedUnchanged(db,altered(raw,p=>p.bundleDigest='f'.repeat(64),{rebind:true}),/JULY_APPROVED_PAYLOAD_MISMATCH/);
+  await rejectedUnchanged(db,altered(raw,p=>p.actions.pop(),{rebind:true}),/JULY_BATCH_49_REQUIRED/);
+  await rejectedUnchanged(db,altered(raw,p=>p.actions.push(p.actions[0]),{rebind:true}),/JULY_BATCH_49_REQUIRED/);
+  await rejectedUnchanged(db,altered(raw,p=>{p.actions[1].rows=p.actions[0].rows;p.actions[1].rowNumbers=p.actions[0].rowNumbers;},{rebind:true}),/JULY_BATCH_ROW_OR_SUBMISSION_DUPLICATE/);
+  await rejectedUnchanged(db,altered(raw,p=>p.actions[1].key=p.actions[0].key,{rebind:true}),/JULY_BATCH_ROW_OR_SUBMISSION_DUPLICATE/);
+  await rejectedUnchanged(db,altered(raw,p=>p.actions[0].effects[0].amount='-1',{rebind:true}),/JULY_BATCH_APPROVED_DELTA_MISMATCH/);
+  const bundle=read(root+'/runtime-review-20261107-final/safe-subset-bundle.json'),oldDigest=digest(bundle);
+  bundle.actions.find(a=>a.kind==='meal').amount='1';
+  assert.throws(()=>renderJulyBatch(bundle,{status:'REVIEWABLE',digest:oldDigest}),/BUNDLE_DIGEST_MISMATCH/);
+  assert.throws(()=>renderJulyBatch(bundle,{status:'REVIEWABLE',digest:digest(bundle)}),/REVIEWED_49_BUNDLE_REQUIRED/);
+ }finally{await db.close();}
+});
+
+test('49 safeguards: batch-level fund changes catch an unexpected July movement and roll back',{skip:!enabled},async()=>{
+ const db=await fixture(inputs().snapshot);try{
+  const injection=`INSERT INTO public.ledger_transactions(operation_id,type,status,business_date,occurred_at,amount,source_type,source_key,created_by,confirmed_by)
+    VALUES(gen_random_uuid(),'transfer','confirmed','2026-07-31','2026-07-31T03:00:00+07:00',1,'manual','test-extra-transfer',2,2) RETURNING id INTO account_id;
+    INSERT INTO public.ledger_movements(transaction_id,fund_account_id,amount) VALUES(account_id,1,-1),(account_id,3,1);
+  `;
+  const sql=controlFile().replace('IF created_count+unchanged_count<>49',injection+'IF created_count+unchanged_count<>49');
+  await rejectedUnchanged(db,sql,/JULY_BATCH_FUND_DELTA_MISMATCH/);
+ }finally{await db.close();}
+});
+
+test('49 safeguards: no operational-source scan/extra write locks; closures and card allocation stay protected',{skip:!enabled},async()=>{
+ const db=await fixture(inputs().snapshot);try{
+  await db.exec('drop table pos_sales_receipt_payments,pos_sales_receipt_lines,pos_sales_receipts,inventory_logs,inventory');
+  const raw=controlFile();
+  const lockCheck=`IF EXISTS(SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE c.relname IN('ledger_payables','ledger_payable_allocations','ledger_card_reconciliations','ledger_card_reconciliation_lines','ledger_candidates') AND l.mode='ShareRowExclusiveLock') THEN RAISE EXCEPTION 'UNNEEDED_WRITE_LOCK'; END IF; `;
+  await db.exec(approved(raw.replace('before_state:=pg_temp.july_protected();',lockCheck+'before_state:=pg_temp.july_protected();')));
+  const before=await snapshotDb(db);await db.exec(approved(raw));assert.deepEqual(await snapshotDb(db),before);
+  await rejectedUnchanged(db,raw.replace('IF pg_temp.july_protected()',"UPDATE ledger_month_closures SET summary_snapshot='{}' WHERE month='2026-08-01'; IF pg_temp.july_protected()"),/JULY_PROTECTED_STATE_CHANGED/);
+  await rejectedUnchanged(db,raw.replace('IF pg_temp.july_protected()',"UPDATE ledger_card_reconciliation_lines SET allocated_gross_amount=allocated_gross_amount+1; IF pg_temp.july_protected()"),/JULY_PROTECTED_STATE_CHANGED/);
  }finally{await db.close();}
 });
