@@ -38,3 +38,5 @@
 .historyStats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;min-width:0}.historyStats .miniCard strong{font-size:13px}
 /* Fee state: cost booked vs fee confirmed, as two plain rows (no badges). */
 .feeState{display:grid;gap:3px;margin:0;padding:7px 9px;border:1px solid #eef0f3;border-radius:9px;background:#f9fafb}.feeState div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12px;min-width:0}.feeState dt{flex-shrink:0;color:#6b7280}.feeState dd{margin:0;font-weight:700;text-align:right;min-width:0;overflow-wrap:anywhere}.feeStateDone{color:#1f6b3a}
+/* Card payment settlement confirmation (inline, no extra colour). */
+.settlePanel{display:grid;gap:6px;padding:9px;border:1px solid #d1d5db;border-radius:10px;background:#fff;min-width:0}.settlePanel>strong{font-size:12px}.settlePanel .hint{margin:0}

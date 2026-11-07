@@ -1,11 +1,11 @@
-import { CARD_FEE_AUTO_CLOSE_MIN_RATE, type AutoCardFeeMonth } from "./card-fee-policy";
+import type { AutoCardFeeMonth } from "./card-fee-policy";
 import { calculateCardGross, calculateMonthlySettlementDifference, cardMoney, type CardAllocationLine, type CardReconciliation, type CardSale } from "./card-settlements";
 
 export type CardFeeClosure = {
   id: number; fee_month: string; fee_amount: number | string; status: string; expense_transaction_id: number | null;
   finalization_business_date?: string | null; confirmed_at: string; confirmed_by: number; cancelled_at: string | null; cancel_reason: string | null; memo: string | null;
 };
-export type CardFeeBlocker = "current_month" | "future_month" | "month_closed" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed";
+export type CardFeeBlocker = "current_month" | "future_month" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed" | "provisional_fee" | "nothing_to_settle";
 
 const monthOf = (date: string) => date.slice(0, 7);
 const nextMonthStart = (month: string) => {
@@ -14,8 +14,9 @@ const nextMonthStart = (month: string) => {
   return date.toISOString().slice(0, 10);
 };
 
-// Preview of ledger_confirm_card_fee_month_v1 for one sale month. The RPC recomputes the fee
-// under lock; this only explains the state. `lines` must include deposit lines and active
+// Preview of ledger_complete_card_month_v1 (card payment settlement) for one sale month: the fee is
+// the month's actual remainder after its last deposit. The RPC recomputes under lock; this only
+// explains the state. Closed months can be settled too (post-close finalization). `lines` must include deposit lines and active
 // month-end fee lines (loadCardAllocationLines) so outstanding matches the RPC.
 export function buildCardFeeMonthState(input: {
   month: string; currentMonth: string; closedMonths: ReadonlySet<string>;
@@ -35,19 +36,23 @@ export function buildCardFeeMonthState(input: {
   const confirmedMonths = new Set(closures.filter(row => row.status === "confirmed").map(row => monthOf(row.fee_month)));
   const monthClosed = closedMonths.has(month);
   const legacy = reconciliations.filter(row => (row.status === "unmatched" || row.status === "partial") && row.deposit_date >= start);
-  const earlierMonth = gross.sales
-    .filter(sale => sale.business_date < start && sale.outstandingGrossAmount > 0)
-    .map(sale => monthOf(sale.business_date))
-    .filter(saleMonth => !closedMonths.has(saleMonth) && !confirmedMonths.has(saleMonth))
-    .sort()[0] ?? null;
+  const provisional = (m: string) => input.provisionalFees?.[m] ?? 0;
+  const earlierOutstanding = new Map<string, number>();
+  for (const sale of gross.sales) if (sale.business_date < start && sale.outstandingGrossAmount > 0) earlierOutstanding.set(monthOf(sale.business_date), cardMoney((earlierOutstanding.get(monthOf(sale.business_date)) ?? 0) + sale.outstandingGrossAmount));
+  // Closed target (settlement RPC): any older unsettled month beyond its provisional fee.
+  // Open target (manual confirmation RPC): older open months only.
+  const earlierMonth = [...earlierOutstanding]
+    .filter(([saleMonth, outstanding]) => !confirmedMonths.has(saleMonth) && (monthClosed ? outstanding - provisional(saleMonth) > 0 : !closedMonths.has(saleMonth)))
+    .map(([saleMonth]) => saleMonth).sort()[0] ?? null;
   const blocker: CardFeeBlocker | null = month > currentMonth ? "future_month"
     : month === currentMonth ? "current_month"
-      : monthClosed ? "month_closed"
-        // Same order as ledger_confirm_card_fee_month_v1.
+        // Same order as ledger_complete_card_month_v1.
         : legacy.length ? "legacy_unallocated_deposits"
           : earlierMonth ? "earlier_month_unconfirmed"
             : monthCardGross <= 0 ? "no_card_sales"
-              : null;
+              : provisional(month) !== 0 ? "provisional_fee"
+                : currentOutstanding <= 0 ? "nothing_to_settle"
+                  : null;
   const closureFee = closure ? cardMoney(Number(closure.fee_amount)) : 0;
   const autoFeeMonths: AutoCardFeeMonth[] = [...closedMonths].filter(m => m < currentMonth && !confirmedMonths.has(m)).sort().map(m => ({
     month: m, reviewRequired: reconciliations.some(r => (r.status === "unmatched" || r.status === "partial") && r.deposit_date >= `${m}-01`), gross: sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+Number(s.amount),0),
@@ -55,9 +60,9 @@ export function buildCardFeeMonthState(input: {
     ...(input.provisionalFees?.[m] ? { provisionalFee: input.provisionalFees[m] } : {}),
   })).filter(row => row.gross > 0 && row.outstanding > 0);
   const remainingRate = monthCardGross > 0 ? currentOutstanding / monthCardGross : null;
+  // No rate window any more: an unsettled month simply waits for its settlement step.
   const autoStatus = closure ? "confirmed" : month >= currentMonth ? "current_month"
-    : legacy.length || (remainingRate !== null && remainingRate < CARD_FEE_AUTO_CLOSE_MIN_RATE) ? "review_required"
-      : !monthClosed ? "awaiting_month_close" : "pending";
+    : legacy.length ? "review_required" : !monthClosed ? "awaiting_month_close" : "settlement_pending";
   return {
     autoFeeMonths, remainingRate, autoStatus,
     confirmedRate: closure && monthCardGross > 0 ? cardMoney(Number(closure.fee_amount)) / monthCardGross : null,

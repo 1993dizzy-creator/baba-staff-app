@@ -49,11 +49,22 @@ test('active fee lines remove outstanding and define the final fee; cancelled cl
     [{ reconciliation_id: -9, pos_card_transaction_id: 1, allocated_gross_amount: '300.5', reconciliation: { status: 'card_fee', deposit_date: '2026-02-28' } }]);
 });
 
-test('month state blockers mirror the confirm RPC order', () => {
+test('month state blockers mirror the settlement RPC order', () => {
   const sales = [sale(1, '2026-07-10', 500), sale(2, '2026-08-10', 1000)];
   assert.equal(state({ sales, month: '2026-09' }).blockerReason, 'current_month');
   assert.equal(state({ sales, month: '2026-10' }).blockerReason, 'future_month');
-  assert.equal(state({ sales, closedMonths: new Set(['2026-08']) }).blockerReason, 'month_closed');
+  // A closed month is settleable now (post-close settlement); an older unsettled month still comes first.
+  assert.equal(state({ sales, closedMonths: new Set(['2026-08']) }).blockerReason, 'earlier_month_unconfirmed');
+  assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']) }).blockerReason, 'earlier_month_unconfirmed', 'closed but unsettled older month');
+  const settleable = state({ sales, closedMonths: new Set(['2026-07', '2026-08']), closures: [closure(3, '2026-07', 500)] });
+  assert.deepEqual([settleable.blockerReason, settleable.canConfirm, settleable.autoStatus], [null, true, 'settlement_pending']);
+  // October style: a provisional older month does not block, the provisional month itself cannot be settled.
+  assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']), provisionalFees: { '2026-07': 500 } }).blockerReason, null);
+  assert.equal(state({ sales, month: '2026-07', currentMonth: '2026-09', closedMonths: new Set(['2026-07']), provisionalFees: { '2026-07': 500 } }).blockerReason, 'provisional_fee');
+  const paid = state({ sales: [sale(2, '2026-08-10', 1000)], lines: [line(1, 2, 1000, 'auto_allocated', '2026-08-20')], reconciliations: [rec(1, 'auto_allocated', '2026-08-20', 1000, 1000)], closedMonths: new Set(['2026-08']) });
+  assert.deepEqual([paid.blockerReason, paid.canConfirm], ['nothing_to_settle', false]);
+  // The 1.8% window no longer marks review; only unresolved legacy deposits do.
+  assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']), closures: [closure(3, '2026-07', 500)] }).autoStatus, 'settlement_pending');
   assert.equal(state({ sales, reconciliations: [rec(5, 'unmatched', '2026-08-20', 100, 0)] }).blockerReason, 'legacy_unallocated_deposits');
   assert.equal(state({ sales, reconciliations: [rec(5, 'unmatched', '2026-07-31', 100, 0)] }).blockerReason, 'earlier_month_unconfirmed', 'a legacy deposit before the month cannot pay it');
   const earlier = state({ sales });
@@ -93,9 +104,11 @@ test('month-end card snapshot settles fee lines in their fee month only', () => 
   assert.equal(calculateMonthCloseCardSnapshot(cards, lines, sales, '2026-09-01').settlementDifference, 0, 'fee lines are not matched differences');
 });
 
-function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = false } = {}) {
+function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = false, parity = { sales: { card: 1000 }, ledger: { card: 1000 } } } = {}) {
   const calls = [];
   const route = load('app/api/admin/ledger/card-fees/route.ts', {
+    // POS/ledger card parity is re-checked before settlement.
+    '@/lib/ledger/pos-sales': { loadPosLedgerParity: async month => { calls.push({ name: 'parity', args: month }); if (parity instanceof Error) throw parity; return parity; } },
     '@/lib/ledger/card-fee-closures': { buildCardFeeMonthState: () => ({ month: '2026-08' }) },
     // GET-only read-only analysis; POST must not touch it.
     '@/lib/ledger/card-fee-estimate': { buildCardFeeEstimate: () => { throw new Error('estimate is GET-only'); }, CARD_FEE_EXPENSE_CATEGORY_NAME: '카드 정산 차액' },
@@ -114,17 +127,26 @@ function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = fa
   return { calls, route, post, cancelPost };
 }
 
-test('card fee POST sends only month and memo to the confirm RPC and maps its statuses', async () => {
+test('card fee POST checks POS parity, sends only month and memo to the settlement RPC and maps its statuses', async () => {
   const ok = feeApi({ rpcResult: { status: 'confirmed', feeAmount: 300 } });
   const response = await ok.post({ month: '2026-08', memo: 'bank checked' });
   assert.equal(response.status, 201);
-  assert.deepEqual(ok.calls, [{ name: 'ledger_confirm_card_fee_month_v1', args: { p_month: '2026-08-01', p_memo: 'bank checked', p_actor_user_id: 7 } }]);
+  assert.deepEqual(ok.calls, [{ name: 'parity', args: '2026-08' }, { name: 'ledger_complete_card_month_v1', args: { p_month: '2026-08-01', p_memo: 'bank checked', p_actor_user_id: 7 } }]);
+  // A POS cancellation/refund/edit after sync blocks settlement before the RPC.
+  const mismatch = feeApi({ parity: { sales: { card: 900 }, ledger: { card: 1000 } } });
+  const blocked = await mismatch.post({ month: '2026-08' });
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).code, 'POS_LEDGER_CARD_MISMATCH');
+  assert.deepEqual(mismatch.calls.map(call => call.name), ['parity']);
+  const unavailable = feeApi({ parity: new Error('POS_SOURCE_SNAPSHOT_INCOMPLETE') });
+  assert.equal((await (await unavailable.post({ month: '2026-08' })).json()).code, 'POS_SOURCE_UNAVAILABLE');
+  assert.deepEqual(unavailable.calls.map(call => call.name), ['parity']);
   for (const body of [{ month: '2026-08', feeAmount: 300 }, { month: '2026-8' }, { memo: 'x' }, { month: '2026-08', memo: 5 }]) {
     const state = feeApi();
     assert.equal((await state.post(body)).status, 400, JSON.stringify(body));
     assert.equal(state.calls.length, 0);
   }
-  for (const [status, http] of [['forbidden', 403], ['current_month', 409], ['month_closed', 409], ['already_confirmed', 409], ['legacy_unallocated_deposits', 409], ['earlier_month_unconfirmed', 409], ['insufficient_card_pending', 409], ['no_card_sales', 409], ['invalid_month', 400]]) {
+  for (const [status, http] of [['forbidden', 403], ['current_month', 409], ['month_closed', 409], ['already_confirmed', 409], ['legacy_unallocated_deposits', 409], ['earlier_month_unconfirmed', 409], ['insufficient_card_pending', 409], ['no_card_sales', 409], ['nothing_to_settle', 409], ['no_settlement_deposit', 409], ['provisional_fee_exists', 409], ['invalid_month', 400]]) {
     const result = await feeApi({ rpcResult: { status } }).post({ month: '2026-08' });
     assert.equal(result.status, http, status);
     assert.equal((await result.json()).code, status.toUpperCase());

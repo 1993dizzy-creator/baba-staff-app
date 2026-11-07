@@ -1,10 +1,10 @@
 "use client";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import styles from "./card-settlements.module.css";
 
-// Unified card fee view for a past month: two KPIs (estimate, rate vs store average),
-// compact status, and collapsed breakdown. CardFeeHistory shows actual historical rates
-// by sale month. Read-only: nothing here books, confirms or cancels.
+// Unified card fee view for a past month: two KPIs (difference, rate vs store average), cost/fee
+// state, collapsed breakdown and the explicit card payment settlement step (the page posts it).
+// CardFeeHistory shows actual historical rates by sale month.
 export type CardFeeEstimateView = {
   gross: number; confirmedFee: number; unconfirmedEstimate: number; currentEstimate: number; rate: number | null;
   manualExpenses: { id: number; amount: number; memo: string | null }[];
@@ -28,6 +28,9 @@ const text = {
     duplicate: "수기 비용과 공식 확정이 겹칠 수 있습니다. 중복계상 여부를 확인하세요.",
     details: "세부 내역 · 수기 전표", gross: "월 카드매출", confirmedTotal: "확정 수수료", historicalPart: "└ 기존 확정", monthEndPart: "└ 월말 확정",
     unconfirmed: "미확정 차액(미정산 잔액)", manual: "수기 비용 전표", unrecognized: "└ 비용 미반영 차액",
+    settle: "카드대금 입금 완료 · 수수료 확정", settleTitle: "카드대금 정산완료", settleGross: "정산 대상 카드매출", settleDeposits: "실제 입금 반영",
+    settleFee: "확정할 수수료", settleRate: "확정 후 수수료율", settleNote: "이 달 카드매출의 마지막 입금까지 등록한 뒤 확정하세요. 확정할 때 POS와 장부 카드매출이 일치하는지 다시 확인하고, 확정 후의 입금은 다음 달 매출부터 배분됩니다.",
+    settleBack: "돌아가기", settleConfirm: "수수료 확정",
     history: "역대 카드수수료율", lowest: "최저", highest: "최고", confirmedMonths: "확정 {n}개월 · 매출 가중",
     noHistory: "집계 중 · 아직 확정된 달이 없습니다.", monthCol: "매출월", rateCol: "수수료율", statusCol: "상태",
     statusConfirmed: "확정", statusProvisional: "잠정 · 평균 제외", statusPending: "확정 전", statusOpen: "월마감 전", statusPartial: "참고 · 카드매출 {n}일",
@@ -41,6 +44,9 @@ const text = {
     duplicate: "Chi phí thủ công có thể trùng với xác nhận chính thức. Hãy kiểm tra ghi trùng.",
     details: "Chi tiết · Bút toán thủ công", gross: "Doanh thu thẻ tháng", confirmedTotal: "Phí đã xác nhận", historicalPart: "└ Đã xác nhận trước", monthEndPart: "└ Xác nhận cuối tháng",
     unconfirmed: "Chênh lệch chưa xác nhận (còn chưa quyết toán)", manual: "Bút toán chi phí thủ công", unrecognized: "└ Chênh lệch chưa ghi chi phí",
+    settle: "Đã nhận đủ tiền thẻ · Xác nhận phí", settleTitle: "Hoàn tất quyết toán tiền thẻ", settleGross: "Doanh thu thẻ cần quyết toán", settleDeposits: "Tiền thực nhận đã trừ",
+    settleFee: "Phí sẽ xác nhận", settleRate: "Tỷ lệ phí sau xác nhận", settleNote: "Chỉ xác nhận sau khi đã ghi nhận khoản tiền thẻ cuối cùng của tháng này. Khi xác nhận, hệ thống kiểm tra lại doanh thu thẻ POS và sổ cái; tiền về sau đó được trừ vào doanh thu tháng sau.",
+    settleBack: "Quay lại", settleConfirm: "Xác nhận phí",
     history: "Tỷ lệ phí thẻ các tháng", lowest: "Thấp nhất", highest: "Cao nhất", confirmedMonths: "{n} tháng đã xác nhận · theo doanh thu",
     noHistory: "Đang tổng hợp · chưa có tháng nào được xác nhận.", monthCol: "Tháng bán", rateCol: "Tỷ lệ phí", statusCol: "Trạng thái",
     statusConfirmed: "Đã xác nhận", statusProvisional: "Tạm tính · không tính TB", statusPending: "Chưa xác nhận", statusOpen: "Chưa chốt sổ", statusPartial: "Tham khảo · {n} ngày bán thẻ",
@@ -56,10 +62,12 @@ function monthLabel(month: string, lang: Lang, latestYear: string) {
   return year === latestYear ? `${number}월` : `${year.slice(2)}년 ${number}월`;
 }
 
-export default function CardFeeAnalysis({ fee, lang, notices = [], footer }: {
+export default function CardFeeAnalysis({ fee, lang, notices = [], footer, canSettle = false, settling = false, onSettle }: {
   fee: CardFeeView; lang: Lang; notices?: readonly string[]; footer?: ReactNode;
+  canSettle?: boolean; settling?: boolean; onSettle?: () => void | Promise<void>;
 }) {
   const t = text[lang], estimate = fee.estimate;
+  const [settleOpen, setSettleOpen] = useState(false);
   // KPI numbers are the existing API values; nothing is recalculated here.
   const confirmed = Boolean(fee.closure);
   const kpiAmount = estimate?.currentEstimate ?? (confirmed ? fee.finalConfirmedFee ?? 0 : fee.projectedTotalFee);
@@ -86,6 +94,20 @@ export default function CardFeeAnalysis({ fee, lang, notices = [], footer }: {
     {estimate?.duplicateRisk ? <p role="status" className={styles.validation}>{t.duplicate}</p> : null}
     {notices.map(notice => <p key={notice} role="status" className={styles.validation}>{notice}</p>)}
     {footer}
+    {canSettle && onSettle && estimate && !confirmed ? (settleOpen ? <section className={styles.settlePanel} aria-label={t.settleTitle}>
+      <strong>{t.settleTitle}</strong>
+      <dl className={styles.feeRows}>
+        <div><dt>{t.settleGross}</dt><dd>{money(estimate.gross)}</dd></div>
+        <div><dt>{t.settleDeposits}</dt><dd>{money(Math.max(0, estimate.gross - fee.currentOutstanding - fee.historicalConfirmedFee))}</dd></div>
+        <div className={styles.feeTotal}><dt>{t.settleFee}</dt><dd>{money(fee.currentOutstanding)}</dd></div>
+        {estimate.gross > 0 ? <div><dt>{t.settleRate}</dt><dd>{percent((fee.historicalConfirmedFee + fee.currentOutstanding) / estimate.gross)}</dd></div> : null}
+      </dl>
+      <p className={styles.hint}>{t.settleNote}</p>
+      <div className={styles.actions}>
+        <button type="button" className={styles.secondary} disabled={settling} onClick={() => setSettleOpen(false)}>{t.settleBack}</button>
+        <button type="button" className={styles.primary} disabled={settling} onClick={() => void onSettle()}>{t.settleConfirm}</button>
+      </div>
+    </section> : <button type="button" className={styles.primary} style={{ width: "100%" }} disabled={settling} onClick={() => setSettleOpen(true)}>{t.settle}</button>) : null}
     <details className={styles.feeDetails}>
       <summary>{t.details}</summary>
       <dl className={styles.feeRows}>

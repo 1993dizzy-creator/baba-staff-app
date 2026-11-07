@@ -3,6 +3,7 @@ import { buildCardFeeEstimate, CARD_FEE_EXPENSE_CATEGORY_NAME } from "@/lib/ledg
 import { buildCardFeeHistory } from "@/lib/ledger/card-fee-history";
 import { loadCardAllocationLines, loadCardRows, loadCardSales } from "@/lib/ledger/card-settlement-data";
 import { sumCardMoney, type CardReconciliation } from "@/lib/ledger/card-settlements";
+import { loadPosLedgerParity } from "@/lib/ledger/pos-sales";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
@@ -67,13 +68,21 @@ export async function POST(request: Request) {
   const auth = await requireLedgerActor();
   if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-  // The fee amount is never accepted from the client; the RPC recomputes it under lock.
+  // Card payment settlement after the month's last deposit. The fee amount is never accepted from the
+  // client: the RPC books the month's actual remainder under lock, once.
   if (!body || Object.keys(body).some(key => !["month", "memo"].includes(key)) || typeof body.month !== "string" || !MONTH.test(body.month)
     || (body.memo !== undefined && body.memo !== null && typeof body.memo !== "string")) {
     return ledgerJson({ ok: false, code: "INVALID_BODY" }, 400);
   }
   try {
-    const { data, error } = await supabaseServer.rpc("ledger_confirm_card_fee_month_v1", {
+    // Cancellations, refunds or edits after sync would make the remainder something other than a fee.
+    let parity: Awaited<ReturnType<typeof loadPosLedgerParity>>;
+    try { parity = await loadPosLedgerParity(body.month); }
+    catch (cause) { console.error("[LEDGER_CARD_SETTLEMENT_POS_SOURCE_FAILED]", cause); return ledgerJson({ ok: false, code: "POS_SOURCE_UNAVAILABLE" }, 409); }
+    if (parity.sales.card !== parity.ledger.card) {
+      return ledgerJson({ ok: false, code: "POS_LEDGER_CARD_MISMATCH", posCard: parity.sales.card, ledgerCard: parity.ledger.card }, 409);
+    }
+    const { data, error } = await supabaseServer.rpc("ledger_complete_card_month_v1", {
       p_month: `${body.month}-01`, p_memo: typeof body.memo === "string" ? body.memo : null, p_actor_user_id: auth.actor.id,
     });
     if (error) throw error;
@@ -81,7 +90,7 @@ export async function POST(request: Request) {
     if (result.status !== "confirmed") {
       const status = String(result.status ?? "CARD_FEE_CONFIRM_FAILED");
       const httpStatus = status === "forbidden" ? 403
-        : ["current_month", "future_month", "month_closed", "already_confirmed", "provisional_fee_exists", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales"].includes(status) ? 409
+        : ["current_month", "future_month", "month_closed", "already_confirmed", "provisional_fee_exists", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales", "nothing_to_settle", "no_settlement_deposit"].includes(status) ? 409
           : 400;
       return ledgerJson({ ok: false, code: status.toUpperCase(), result }, httpStatus);
     }

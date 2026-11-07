@@ -138,3 +138,16 @@ test('Vietnamese card and history have no Korean UI text', () => {
   assert.doesNotMatch(html.replace('[잠정 추정·추후 정산검증]', ''), /[가-힣]/);
   assert.doesNotMatch(html, BANNED);
 });
+
+test('settleable month offers the explicit card payment settlement step; provisional or confirmed months do not', () => {
+  const mod = load(componentPath, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'), './card-settlements.module.css': { default: new Proxy({}, { get: (_, key) => String(key) }) } });
+  const estimate = buildCardFeeEstimate({ monthCardGross: 100000000, currentOutstanding: 2150000, historicalConfirmedFee: 0, monthEndFee: 0, hasClosure: false, manualExpenses: [] });
+  const fee = { month: '2026-08', monthClosed: true, historicalConfirmedFee: 0, monthEndFee: 0, currentOutstanding: 2150000, projectedTotalFee: 2150000, finalConfirmedFee: null, remainingRate: 0.0215, confirmedRate: null, closure: null, estimate };
+  const html = renderToStaticMarkup(React.createElement(mod.default, { fee, lang: 'ko', canSettle: true, onSettle: () => {} }));
+  assert.ok(html.includes('>카드대금 입금 완료 · 수수료 확정</button>'));
+  assert.doesNotMatch(html, /카드대금 정산완료/, 'confirmation panel opens only on click');
+  const vi = renderToStaticMarkup(React.createElement(mod.default, { fee, lang: 'vi', canSettle: true, onSettle: () => {} }));
+  assert.ok(vi.includes('>Đã nhận đủ tiền thẻ · Xác nhận phí</button>'));
+  // October (provisional) and any month without canSettle show no settlement button.
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(mod.default, { fee: { ...fee, estimate: october() }, lang: 'ko', canSettle: false, onSettle: () => {} })), /수수료 확정<\/button>/);
+});

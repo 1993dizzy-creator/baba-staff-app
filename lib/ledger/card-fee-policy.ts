@@ -1,14 +1,11 @@
 import { cardMoney, sumCardMoney, type CardDepositAutoAllocationRow } from "./card-settlements.ts";
 
-export const CARD_FEE_TARGET_RATE = 0.0215;
-export const CARD_FEE_AUTO_CLOSE_MIN_RATE = 0.018;
-export const CARD_FEE_AUTO_CLOSE_MAX_RATE = 0.025;
-
 // provisionalFee: confirmed manual card-fee expense already taken from card clearing for this sale month.
 export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean; provisionalFee?: number };
 
-// Same planning contract as the RPC, before any deposit/fee write. A fee already
-// in range is preserved; an overshoot reserves target, not all remaining gross.
+// Same planning contract as ledger_create_card_deposit_auto_allocate_v1: the deposit pays only real
+// principal, oldest sale first. No card fee is planned here; a fee is booked only by the explicit
+// month settlement after the month's last deposit. `fees` stays (always empty) for callers.
 export function planCardDepositWithFees(
   sales: readonly { id: number; business_date: string; outstandingGrossAmount: number | string }[],
   amount: number, depositDate: string, feeMonths: readonly AutoCardFeeMonth[],
@@ -30,23 +27,12 @@ export function planCardDepositWithFees(
     const monthSales = eligible.filter(sale => sale.business_date.startsWith(month));
     const outstanding = sumCardMoney(monthSales.map(sale => sale.outstandingGrossAmount));
     const feeMonth = feeMonths.find(row => row.month===month && month<depositDate.slice(0,7));
-    let payment = Math.min(remaining,outstanding), fee=0;
+    let payment = Math.min(remaining,outstanding);
     const provisional = feeMonth?.provisionalFee ?? 0;
     if (provisional !== 0) {
-      // Already expensed and out of card clearing: never repaid, never fee'd again (RPC provisional_fee).
+      // Already expensed and out of card clearing: never repaid (RPC provisional_fee guard).
       if (!feeMonth || feeMonth.reviewRequired || provisional < 0 || provisional > outstanding) return result("review_required");
       payment = Math.min(remaining, cardMoney(outstanding - provisional));
-    } else if (feeMonth) {
-      const rate=outstanding/feeMonth.gross, after=(outstanding-payment)/feeMonth.gross;
-      if (feeMonth.reviewRequired || feeMonth.gross<=0) return result("review_required");
-      // Below the reference range: left for review, not a deposit blocker; FIFO continues.
-      if (rate<CARD_FEE_AUTO_CLOSE_MIN_RATE) payment=0;
-      else if (rate<=CARD_FEE_AUTO_CLOSE_MAX_RATE) { fee=outstanding; payment=0; }
-      else if (after<=CARD_FEE_AUTO_CLOSE_MAX_RATE) {
-        fee=after>=CARD_FEE_AUTO_CLOSE_MIN_RATE ? cardMoney(outstanding-payment) : cardMoney(feeMonth.gross*CARD_FEE_TARGET_RATE);
-        payment=cardMoney(outstanding-fee);
-      }
-      if (fee>0) fees.push({month,amount:fee});
     }
     remaining=cardMoney(remaining-payment);
     for (const sale of monthSales) {

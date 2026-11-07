@@ -199,6 +199,8 @@ test('guarded: automatic cancellation, legacy blockers and the running month beh
   } finally { await running.close(); }
 });
 
+// The TS preview follows the current policy (20261108100000: FIFO principal only), so parity runs on the full chain.
+const settlementPolicy = readFileSync('supabase/migrations/20261108100000_card_fee_actual_deposit_settlement.sql', 'utf8');
 test('TS deposit preview plans the same allocations as the guarded RPC', async () => {
   const { planCardDepositWithFees } = await import('../lib/ledger/card-fee-policy.ts');
   for (const [label, setup, feeMonth, deposit] of [
@@ -208,6 +210,7 @@ test('TS deposit preview plans the same allocations as the guarded RPC', async (
   ]) {
     const db = await fixture();
     try {
+      await db.exec(settlementPolicy);
       await setup(db);
       const plan = planCardDepositWithFees(await outstanding(db), deposit, '2026-09-05', [feeMonth]);
       const result = await autoDeposit(db, deposit, '2026-09-05');

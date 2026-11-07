@@ -35,7 +35,8 @@ const cardText = {
     cancelHint:"카드 입금 기록을 취소합니다. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다. 기록은 취소 이력으로 보존됩니다.",historicalDifferenceCancelHint:"이 입금에 기록된 과거 정산 차액도 함께 역분개됩니다.",
     cardFee:"카드 수수료",feeCurrentMonthHint:"이번 달 수수료는 월마감 후 카드입금이 들어오면 계산됩니다.",feeNoSales:"선택월 카드매출이 없어 수수료 확정이 필요 없습니다.",
     feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
-    feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",
+    feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",feeSettled:"카드대금 정산을 완료하고 실제 수수료를 확정했습니다.",settleFailed:"정산 실패",
+    settlePosMismatch:"POS와 장부 카드매출이 달라 확정하지 않았습니다. 매출 동기화를 먼저 확인하세요.",settleNoDeposit:"이 달 매출에 배분된 익월 카드입금이 없어 확정할 수 없습니다.",
     feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
   },
   vi: {
@@ -52,7 +53,8 @@ const cardText = {
     cancelHint:"Hủy bản ghi tiền thẻ về. Bút toán tiền về sẽ được đảo và doanh thu thẻ đã trừ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",historicalDifferenceCancelHint:"Chênh lệch quyết toán cũ của khoản này cũng sẽ được đảo.",
     cardFee:"Phí thẻ",feeCurrentMonthHint:"Phí tháng này được tính khi có tiền thẻ về sau khi chốt sổ.",feeNoSales:"Tháng đã chọn không có doanh thu thẻ nên không cần xác nhận phí.",
     feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
-    feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",
+    feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",feeSettled:"Đã hoàn tất quyết toán tiền thẻ và xác nhận phí thực tế.",settleFailed:"Quyết toán thất bại",
+    settlePosMismatch:"Doanh thu thẻ POS và sổ cái khác nhau nên chưa xác nhận. Hãy kiểm tra đồng bộ doanh thu trước.",settleNoDeposit:"Chưa có tiền thẻ về sau tháng này được trừ vào doanh thu tháng này nên chưa thể xác nhận.",
     feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
   },
 } as const;
@@ -115,6 +117,17 @@ function CardSettlementsContent() {
       setFeeCancelOpen(false); setFeeCancelReason(""); setMessage(t.feeCancelled);
       await reloadAll();
     } catch (e) { setMessage(`${t.cancelFailed}: ${(e as Error).message}`); } finally { setWorking(false); }
+  }
+  // Card payment settlement: the server re-checks POS/ledger parity and books the actual remainder once.
+  async function settleFee() {
+    if (!fee || fee.closure || working) return;
+    setWorking(true); setMessage("");
+    try {
+      const r = await fetch("/api/admin/ledger/card-fees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ month }) }), b = await r.json();
+      if (!r.ok) throw new Error(b.code==="POS_LEDGER_CARD_MISMATCH"?t.settlePosMismatch:b.code==="NO_SETTLEMENT_DEPOSIT"?t.settleNoDeposit:b.code);
+      setMessage(t.feeSettled);
+      await reloadAll();
+    } catch (e) { setMessage(`${t.settleFailed}: ${(e as Error).message}`); } finally { setWorking(false); }
   }
   function selectMonth(nextMonth:string) {
     if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(nextMonth))return;
@@ -204,7 +217,7 @@ function CardSettlementsContent() {
         {!fee?<p className={styles.empty}>{t.loading}</p>
         :fee.blockerReason==="current_month"||fee.blockerReason==="future_month"?<p className={styles.hint}>{t.feeCurrentMonthHint}</p>
         :!fee.hasCardSales?<p className={styles.hint}>{t.feeNoSales}</p>
-        :<CardFeeAnalysis key={month} fee={fee} lang={lang}
+        :<CardFeeAnalysis key={month} fee={fee} lang={lang} canSettle={fee.canConfirm} settling={working} onSettle={settleFee}
           notices={[fee.closure?null:fee.autoStatus==="review_required"?(lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."):null,fee.closure?null:feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)].filter((notice):notice is string=>Boolean(notice))}
           footer={fee.closure?(fee.canCancel?<button ref={feeButtonRef} type="button" disabled={working} className={styles.secondary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeCancelReason("");setFeeCancelOpen(true);}}>{t.cancelFee}</button>:<p className={styles.hint}>{t.feeReadOnly}</p>):null}/>}
         {/* Actual historical rates by sale month; shown for any selected month. */}
