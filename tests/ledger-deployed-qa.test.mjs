@@ -296,7 +296,9 @@ test('closed October card fee section keeps its pending view and adds the read-o
   const fee={month:'2026-10',autoFeeMonths:[],autoStatus:'pending',remainingRate:5699112/192125640,confirmedRate:null,hasCardSales:true,historicalConfirmedFee:0,currentOutstanding:5699112,projectedTotalFee:5699112,monthEndFee:0,finalConfirmedFee:null,monthClosed:true,earlierUnconfirmedMonth:null,blockerReason:'month_closed',canConfirm:false,canCancel:false,closure:null,estimate};
   const state=pageFixture(cardPath,{0:'2026-10',1:data,19:fee});
   // One unified fee card: estimate KPI, provisional + P0 protection status, no stale auto-confirm wording.
-  for(const label of ['<span>추정 수수료</span><strong>5.699.112 ₫</strong>','🧾 잠정 비용 처리 #4119','🛡️ 자동 중복 확정 보호','⏳ 공식 확정 미완료','⚠️ 참고 범위 초과 · 목표 대비 +1.568.411 ₫','POS 영수증 검토 후보']) assert.ok(state.html.includes(label),label);
+  for(const label of ['<span>추정 수수료</span><strong>5.699.112 ₫</strong>','매장 평균 집계 중','🧾 잠정 비용 처리 #4119','🛡️ 자동 중복 확정 보호','⏳ 공식 확정 미완료']) assert.ok(state.html.includes(label),label);
+  // Reference-rate comparison and receipt review were replaced by actual historical rates.
+  assert.doesNotMatch(state.html,/참고 범위|POS 영수증|예상 수수료/);
   assert.doesNotMatch(state.html,/자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소/);
   assert.equal((state.html.match(/<h2>💳 카드 수수료<\/h2>/g)||[]).length,1);
   assert.ok(state.html.indexOf('추정 수수료')<state.html.indexOf('카드 입금 내역'));

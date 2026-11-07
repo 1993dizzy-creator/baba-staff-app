@@ -10,12 +10,12 @@ import styles from "./card-settlements.module.css";
 import { groupCardDeposits } from "@/lib/ledger/card-deposit-display";
 import { CARD_AUTO_ALLOCATED_STATUS, sumCardMoney } from "@/lib/ledger/card-settlements";
 import type { AutoCardFeeMonth } from "@/lib/ledger/card-fee-policy";
-import CardFeeAnalysis, { type CardFeeEstimateView } from "./CardFeeAnalysis";
+import CardFeeAnalysis, { CardFeeHistory, type CardFeeEstimateView, type CardFeeHistoryView } from "./CardFeeAnalysis";
 type Account = { id: number; code: string; display_name: string };
 type Sale = { id: number; business_date: string; amount: number; allocatedGrossAmount: number; outstandingGrossAmount: number };
 type Rec = { id: number; deposit_date: string; deposit_amount: number; matched_gross_amount: number; difference_amount: number; status: string; confirmed_at: string | null; confirmed_by: number | null; cancelled_at: string | null; cancelled_by: number | null; cancel_reason: string | null; memo: string | null; destination: { display_name: string } | null };
 type Data = { month:string; accounts: Account[]; sales: Sale[]; monthlySales: Sale[]; priorUnreconciledSales: Sale[]; totalReconciliationCount:number; totalHistoryCount:number; totalCancelledCount:number; reconciliations: Rec[]; summary: { monthlyCardGross: number; monthlyReconciledGross: number; monthlySettledGross:number; monthlyUnreconciledGross: number; totalUnreconciledGross: number; cardPendingBalance: number; actualCardDeposits: number; monthlyUnmatchedDeposits: number; monthlyCompletedGross: number; monthlyCompletedDeposit: number; monthlyCompletedDifference: number; actualDifferenceRate: number | null } };
-type FeeState = { autoFeeMonths:AutoCardFeeMonth[]; autoStatus:string; remainingRate:number|null; confirmedRate:number|null;  month:string; hasCardSales:boolean; historicalConfirmedFee:number; currentOutstanding:number; projectedTotalFee:number; monthEndFee:number; finalConfirmedFee:number|null; monthClosed:boolean; earlierUnconfirmedMonth:string|null; blockerReason:string|null; canConfirm:boolean; canCancel:boolean; closure:{ id:number; fee_amount:number|string; confirmed_at:string; memo?:string|null; finalization_business_date?:string|null }|null; estimate?:CardFeeEstimateView };
+type FeeState = { autoFeeMonths:AutoCardFeeMonth[]; autoStatus:string; remainingRate:number|null; confirmedRate:number|null;  month:string; hasCardSales:boolean; historicalConfirmedFee:number; currentOutstanding:number; projectedTotalFee:number; monthEndFee:number; finalConfirmedFee:number|null; monthClosed:boolean; earlierUnconfirmedMonth:string|null; blockerReason:string|null; canConfirm:boolean; canCancel:boolean; closure:{ id:number; fee_amount:number|string; confirmed_at:string; memo?:string|null; finalization_business_date?:string|null }|null; estimate?:CardFeeEstimateView; feeHistory?:CardFeeHistoryView };
 type DepositLine ={ id: number; pos_card_transaction_id: number; allocated_gross_amount: number | string; sale: { id: number; business_date: string; amount: number | string } | null };
 const monthNow = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 const money = (n: number) => `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(n)} ₫`;
@@ -198,7 +198,7 @@ function CardSettlementsContent() {
           <Card title={`🌐 ${t.currentUnsettled}`} value={money(data.summary.totalUnreconciledGross)}/>
         </div>
       </section>
-      {/* Card fees per sale month: one unified card (KPIs, status, reference table, collapsed details and POS review). */}
+      {/* Card fees per sale month: one unified card (KPIs, status, collapsed details) and the historical rates below. */}
       <section className={styles.card} aria-label={t.cardFee}>
         <h2>💳 {t.cardFee}</h2>
         {!fee?<p className={styles.empty}>{t.loading}</p>
@@ -207,6 +207,8 @@ function CardSettlementsContent() {
         :<CardFeeAnalysis key={month} fee={fee} lang={lang}
           notices={[fee.closure?null:fee.autoStatus==="review_required"?(lang==="vi"?"Cần kiểm tra dữ liệu quyết toán thẻ.":"카드 정산 데이터를 확인해주세요."):null,fee.closure?null:feeBlockerText(fee.blockerReason,fee.earlierUnconfirmedMonth,t)].filter((notice):notice is string=>Boolean(notice))}
           footer={fee.closure?(fee.canCancel?<button ref={feeButtonRef} type="button" disabled={working} className={styles.secondary} style={{width:"100%"}} onClick={()=>{setMessage("");setFeeCancelReason("");setFeeCancelOpen(true);}}>{t.cancelFee}</button>:<p className={styles.hint}>{t.feeReadOnly}</p>):null}/>}
+        {/* Actual historical rates by sale month; shown for any selected month. */}
+        {fee?.feeHistory?<CardFeeHistory history={fee.feeHistory} lang={lang}/>:null}
       </section>
       {data.priorUnreconciledSales.length?<p className={styles.hint}>↪️ {t.priorUnsettled} {money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</p>:null}
       <section className={styles.card} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>

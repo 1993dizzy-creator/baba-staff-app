@@ -1,5 +1,6 @@
 import { buildCardFeeMonthState, type CardFeeClosure } from "@/lib/ledger/card-fee-closures";
 import { buildCardFeeEstimate, CARD_FEE_EXPENSE_CATEGORY_NAME } from "@/lib/ledger/card-fee-estimate";
+import { buildCardFeeHistory } from "@/lib/ledger/card-fee-history";
 import { loadCardAllocationLines, loadCardRows, loadCardSales } from "@/lib/ledger/card-settlement-data";
 import { sumCardMoney, type CardReconciliation } from "@/lib/ledger/card-settlements";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
@@ -29,17 +30,33 @@ export async function GET(request: Request) {
       .map(row => ({ id: row.id, month: row.recognition_month.slice(0, 7), amount: Number(row.amount) * (row.economic_effect_sign === -1 ? -1 : 1), memo: row.memo ? row.memo.slice(0, 80) : null }));
     const provisionalFees: Record<string, number> = {};
     for (const row of manualFees) provisionalFees[row.month] = sumCardMoney([provisionalFees[row.month] ?? 0, row.amount]);
-    const state = buildCardFeeMonthState({
-      month, currentMonth: currentMonth(),
-      closedMonths: new Set((closedMonths as { month: string }[]).map(row => row.month.slice(0, 7))),
+    const now = currentMonth();
+    const closed = new Set((closedMonths as { month: string }[]).map(row => row.month.slice(0, 7)));
+    const stateFor = (target: string) => buildCardFeeMonthState({
+      month: target, currentMonth: now, closedMonths: closed,
       sales, lines, reconciliations: reconciliations as CardReconciliation[], closures: closures as CardFeeClosure[], provisionalFees,
+    });
+    const state = stateFor(month);
+    // Historical rates by sale month from the same month state (matched differences + closure).
+    const saleMonths = [...new Set(sales.map(sale => sale.business_date.slice(0, 7)))].filter(saleMonth => saleMonth < now).sort();
+    const feeHistory = buildCardFeeHistory({
+      currentMonth: now,
+      months: saleMonths.map(saleMonth => {
+        const row = saleMonth === month ? state : stateFor(saleMonth);
+        return {
+          month: saleMonth, gross: row.monthCardGross, historicalConfirmedFee: row.historicalConfirmedFee, monthEndFee: row.monthEndFee,
+          hasClosure: Boolean(row.closure), currentOutstanding: row.currentOutstanding, monthClosed: row.monthClosed,
+          provisionalFee: provisionalFees[saleMonth] ?? 0,
+          saleDays: new Set(sales.filter(sale => sale.business_date.startsWith(saleMonth) && Number(sale.amount) > 0).map(sale => sale.business_date)).size,
+        };
+      }),
     });
     const estimate = buildCardFeeEstimate({
       monthCardGross: state.monthCardGross, currentOutstanding: state.currentOutstanding, historicalConfirmedFee: state.historicalConfirmedFee,
       monthEndFee: state.monthEndFee, hasClosure: Boolean(state.closure),
       manualExpenses: manualFees.filter(row => row.month === month).map(({ id, amount, memo }) => ({ id, amount, memo })),
     });
-    return ledgerJson({ ok: true, ...state, estimate, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
+    return ledgerJson({ ok: true, ...state, estimate, feeHistory, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
   } catch (error) {
     console.error("[LEDGER_CARD_FEES_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "CARD_FEES_LOAD_FAILED" }, 500);
