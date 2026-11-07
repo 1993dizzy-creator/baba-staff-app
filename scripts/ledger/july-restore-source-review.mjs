@@ -1,7 +1,7 @@
 // Offline adapter for the owner's November 7 export. No DB/HTTP/env loading.
 // node --experimental-strip-types scripts/ledger/july-restore-source-review.mjs <inputs-dir> <new-results-dir>
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
-import {resolve,join} from 'node:path';
+import {resolve,join,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {JULY_SHEET,JULY_TAB,OPENING,CLOSING,FUNDS,CLASS_COUNTS,rowKey} from '../../lib/ledger/july-restore-plan.ts';
@@ -130,6 +130,8 @@ export function reviewJulySources(inputDir) {
 }
 
 export function saveJulySourceReview(review,outputDir) {
+  const rel=relative(fileURLToPath(new URL('../../.local/',import.meta.url)),resolve(outputDir));
+  if(!rel||rel.startsWith('..')||isAbsolute(rel))throw Error('WORKTREE_LOCAL_OUTPUT_REQUIRED');
   if(existsSync(outputDir))throw Error('OUTPUT_ALREADY_EXISTS');mkdirSync(outputDir,{recursive:true});
   writeFileSync(join(outputDir,'summary.json'),JSON.stringify(review.summary,null,2));
   writeFileSync(join(outputDir,'395-row-dry-run.json'),JSON.stringify(review.rows,null,2));

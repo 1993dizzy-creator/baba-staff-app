@@ -85,7 +85,7 @@ const approved=raw=>{
 test('49-row rendered subset: exact expected fund changes, replay no-op, injected failure rolls all 49 back',{skip:!enabled},async()=>{
  const output=process.env.JULY_REVIEW_DIR||root+'/runtime-review-20261107-final';
  const observations=inputs(),summary=read(root+'/runtime-review-20261107-final/runtime-summary.json');
- const raw=readFileSync(output+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql','utf8');
+ const raw=readFileSync(output+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.DO-NOT-RERUN.sql','utf8');
  assert.ok(raw.includes('"runtimePreflight"'));
  const sql=payloadHash(raw)?approved(raw):raw.replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__','APPROVED:july-restore:'+summary.readyManifestDigest);
  const db=await fixture(observations.snapshot);
@@ -109,7 +109,7 @@ test('49-row rendered subset: exact expected fund changes, replay no-op, injecte
  }finally{await db.close();}
 });
 
-const controlFile=()=>readFileSync(process.env.JULY_REVIEW_DIR+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql','utf8');
+const controlFile=()=>readFileSync(process.env.JULY_REVIEW_DIR+'/safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.DO-NOT-RERUN.sql','utf8');
 const insertPattern=/INSERT INTO july_restore_input VALUES \('((?:[^']|'')*)'::jsonb,'((?:[^']|'')*)'\);/;
 const getPayload=sql=>JSON.parse(insertPattern.exec(sql)[1].replaceAll("''","'"));
 function altered(sql,change,{rebind=false}={}){

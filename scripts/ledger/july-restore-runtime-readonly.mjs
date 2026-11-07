@@ -1,11 +1,12 @@
 // Operator-only GET snapshot. Run from the existing env-owning repository:
-// node --env-file=.env.local <worktree>/scripts/ledger/july-restore-runtime-readonly.mjs <new-folder-outside-git>
+// node --env-file=.env.local <worktree>/scripts/ledger/july-restore-runtime-readonly.mjs <worktree>/.local/july-restore/<new-folder>
 // No RPC, POST, authentication refresh, DB/POS writes, retry, or env copying.
 import {createRequire} from 'node:module';
 import {mkdirSync,writeFileSync,existsSync} from 'node:fs';
 import {resolve,join,relative,isAbsolute} from 'node:path';
+import {fileURLToPath} from 'node:url';
 const output=resolve(process.argv[2]||'');
-const referenceRoot=resolve('C:/workspace/baba-july-inputs-2026');
+const referenceRoot=fileURLToPath(new URL('../../.local/july-restore/',import.meta.url));
 const rel=relative(referenceRoot,output);
 if(!process.argv[2]||!rel||rel.startsWith('..')||isAbsolute(rel)||existsSync(output))throw Error('NEW_REFERENCE_SUBFOLDER_REQUIRED');
 const require=createRequire(join(process.cwd(),'package.json'));

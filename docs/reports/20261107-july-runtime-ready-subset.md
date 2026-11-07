@@ -1,5 +1,7 @@
 # 7월 복원 후속 — 운영 읽기 확인 및 안전한 49행 배치
 
+> 후속 상태: 사용자가 49행 #4227~#4275 등록 완료(49/49 PASS)를 확인했다. 49행 SQL 재실행 금지. 아래는 당시 개발 기록이며 보존 파일 경로/이름만 갱신했다. MD5 보호 스냅샷·90초 timeout을 사용한 운영본과의 차이는 [정리 기록](20261107-july-local-artifact-relocation.md)에 남겼다.
+
 **49행 등록 준비 가능, 카드 배치 차단 유지.** 기준은 `6d290d39`의 395행 Dry-run이다. 기존 395행 매핑·31일 검산·710건 입고 조사는 반복하지 않았다. 기존 결과의 원본 파일 해시가 유지되는지만 확인하고 후보 82행/연결 대상 148행의 현재 DB 근거를 추가했다.
 
 ## 조회 범위와 증거
@@ -11,7 +13,7 @@
 - 6~7월 기존 POS 영수증 1,143건, 결제 1,124건을 읽었다. 이는 이번 요청의 고유 키 연결·6월 카드 확인 범위다. 입고원장은 다시 전수 조회하지 않았다.
 - 카드 movement 196행, 관련 전표 196건, 정산 69건, 배분 144행, 수수료 마감 1건/배분 3행을 읽어 기존 연결 관계를 고정했다.
 
-원본 관측은 저장소 밖 `C:\workspace\baba-july-inputs-2026\runtime-20261107-r1`에만 있다. 최종 분석·실행 초안은 `runtime-review-20261107-final`에 있다. Git에는 코드·집계·해시·이 보고서만 넣는다. 원본 `dry-run-20261107-v2`는 그대로 보존했다.
+원본 관측은 저장소 밖 `C:\workspace\baba-wt-codex-july-restore\.local\july-restore\runtime-20261107-r1`에만 있다. 최종 분석·실행 초안은 `runtime-review-20261107-final`에 있다. Git에는 코드·집계·해시·이 보고서만 넣는다. 원본 `dry-run-20261107-v2`는 그대로 보존했다.
 
 ## 등록 후보 82행 확정 결과
 
@@ -77,7 +79,7 @@
 | POS 카드·카드입금 | 이월 근거 미확정으로 차단 |
 | 입고/후불 151행 및 기타 기존 예외 | 기존 확인 조건 유지, 이번 배치 제외 |
 
-`safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql`은 49행만 포함한다. 운영자 ID와 별도 승인 placeholder가 남아 있으며, 이번에 실행하지 않았다. 기존 395행 bundle과 캐시된 124개 일별 목표를 재사용해 실행 초안만 만들었고 전체 완료로 표시하지 않는다.
+`safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.DO-NOT-RERUN.sql`은 49행만 포함한다. 운영자 ID와 별도 승인 placeholder가 남아 있으며, 이번에 실행하지 않았다. 기존 395행 bundle과 캐시된 124개 일별 목표를 재사용해 실행 초안만 만들었고 전체 완료로 표시하지 않는다.
 
 실행 전에는 관측 당시의 7월 전표 6건·movement 5행·후보 0건, 계정 상태, 사용 카테고리가 같아야 한다. 다른 작성자가 다른 source_key로 7월 전표나 pending 후보를 추가해도 snapshot drift로 배치가 중단된다. 동일 배치의 정상 재실행은 자기 원본행 audit가 가리키는 신규 전표만 제외하고 검사해 no-op을 유지한다. 최종 SQL의 계정 및 카테고리 stale 검사, 기존 경계 Migration 이력·7월 미마감·운영자 권한·현재 카드 및 8월 이후 자금 불변 검사도 유지한다. 조회 이후 변경이 있으면 관련 읽기 증거를 갱신해야 하며 임의 무시하지 않는다.
 
@@ -93,10 +95,10 @@
 
 ```powershell
 # 새로운 운영 조회 없이 캐시만 분석한다. 새 결과 폴더를 사용한다.
-node --experimental-strip-types scripts/ledger/july-restore-runtime-review.mjs C:/workspace/baba-july-inputs-2026 C:/workspace/baba-july-inputs-2026/runtime-20261107-r1 C:/workspace/baba-july-inputs-2026/<new-folder>
+node --experimental-strip-types scripts/ledger/july-restore-runtime-review.mjs .local/july-restore .local/july-restore/runtime-20261107-r1 .local/july-restore/<new-folder>
 $env:JULY_QA_PACKAGE_JSON='C:/workspace/baba-staff-app/package.json'
-$env:JULY_INPUT_DIR='C:/workspace/baba-july-inputs-2026'
-$env:JULY_REVIEW_DIR='C:/workspace/baba-july-inputs-2026/runtime-review-20261107-final'
+$env:JULY_INPUT_DIR='.local/july-restore'
+$env:JULY_REVIEW_DIR='.local/july-restore/runtime-review-20261107-final'
 node --experimental-strip-types --test tests/july-restore-runtime-review.test.mjs
 ```
 
@@ -112,13 +114,13 @@ node --experimental-strip-types --test tests/july-restore-runtime-review.test.mj
 
 변경 범위 검사 **4개 PASS**: 승인 데이터/행/제출 키 변조 거절, 예상과 다른 추가 7월 자금이동 전체 롤백, 49행 기표·재실행·snapshot drift 거절, POS·입고 테이블 없이 실행 및 불필요한 추가 쓰기 잠금 부재/마감·카드 배분 보호를 확인했다. 기존 매핑·RPC·395행 검산 PASS는 재실행하거나 새 통과 수에 합산하지 않았다. 수정 렌더러/테스트 ESLint도 통과했다.
 
-최종 SQL: `C:\workspace\baba-july-inputs-2026\approved49-controls-20261107\safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.sql`. 같은 폴더의 `verification.json`에 승인된 bundle digest, 새 execution payload digest, 49개 행번호와 예상 증감을 기록했다. 이전 SQL/산출물은 덮어쓰지 않았다. 운영 DB 실행·Main 병합·Push·배포는 수행하지 않았다.
+최종 SQL: `C:\workspace\baba-wt-codex-july-restore\.local\july-restore\approved49-controls-20261107\safe-subset-REQUIRES-SEPARATE-DB-APPROVAL.DO-NOT-RERUN.sql`. 같은 폴더의 `verification.json`에 승인된 bundle digest, 새 execution payload digest, 49개 행번호와 예상 증감을 기록했다. 이전 SQL/산출물은 덮어쓰지 않았다. 운영 DB 실행·Main 병합·Push·배포는 수행하지 않았다.
 
 관련 검사만 재현:
 
 ```powershell
 $env:JULY_QA_PACKAGE_JSON='C:/workspace/baba-staff-app/package.json'
-$env:JULY_INPUT_DIR='C:/workspace/baba-july-inputs-2026'
-$env:JULY_REVIEW_DIR='C:/workspace/baba-july-inputs-2026/approved49-controls-20261107'
+$env:JULY_INPUT_DIR='.local/july-restore'
+$env:JULY_REVIEW_DIR='.local/july-restore/approved49-controls-20261107'
 node --experimental-strip-types --test --test-name-pattern '49-row|49 safeguards' tests/july-restore-runtime-review.test.mjs
 ```

@@ -1,10 +1,12 @@
 # 2026년 7월 395행 Dry-run 및 유형별 복원 계획
 
+> 후속 상태: 사용자가 49행 #4227~#4275 등록 완료(49/49 PASS)를 확인했다. 49행 SQL 재실행 금지. 아래는 당시 개발 기록이며 자료 경로만 `.local/july-restore`로 갱신했다. 운영 사용본과 보존 이력은 [정리 기록](20261107-july-local-artifact-relocation.md)을 따른다.
+
 2026-11-07. **원본 395행 Dry-run PASS, 운영 실행 BLOCKED.** 제공된 ZIP의 기존 매핑을 재사용했다. 운영 DB 조회·쓰기, POS 호출, Migration 실행, Main 수정·병합, Push·배포는 하지 않았다. 710건 입고 조사와 원시 시트 전수조사를 반복하지 않았다.
 
 ## 자료와 산출물
 
-- 참고자료: `C:\workspace\baba-july-inputs-2026`. 사용자 지정 ZIP을 이 경로에 풀었다. 원본 4파일과 이전 결과는 덮어쓰지 않았다.
+- 참고자료: `C:\workspace\baba-wt-codex-july-restore\.local\july-restore`. 사용자 지정 ZIP을 이 경로에 풀었다. 원본 4파일과 이전 결과는 덮어쓰지 않았다.
 - 최종 로컬 산출물: 같은 경로의 `dry-run-20261107-v2` 폴더. `395-row-dry-run.csv/json`은 395행 전부의 원본 키·날짜·계정 증감·매핑 메모·참조 토큰·상태·중복 위험·실행 선행조건을 보존한다. `31-day-reconciliation.csv`는 155개 날짜/계정 증감과 124개 업무자금 기말 비교를 담는다. 상세 금융 원본과 행별 결과는 Git에 넣지 않았다.
 - Git의 집계 증거: `scripts/ledger/evidence/20261107-july-restore-summary.json`. 원본 파일 SHA-256, 상태별 건수, 배치별 계정 증감, 검산 결과를 담는다.
 - 최신 작업: `C:\workspace\baba-wt-codex-july-restore`, `codex/july-ledger-batch-restore-20261107`, 기준 Main `5eacaac88d9dd1cee5e9b2763654e16e7173aefc`.
@@ -77,9 +79,9 @@ CSV와 Markdown 395행의 원본 행번호·일자·매핑 분류·메모·계�
 재현 명령(모두 로컬):
 
 ```powershell
-node --experimental-strip-types scripts/ledger/july-restore-source-review.mjs C:/workspace/baba-july-inputs-2026 C:/workspace/baba-july-inputs-2026/<new-results-folder>
+node --experimental-strip-types scripts/ledger/july-restore-source-review.mjs .local/july-restore .local/july-restore/<new-results-folder>
 $env:JULY_QA_PACKAGE_JSON='C:/workspace/baba-staff-app/package.json'
-$env:JULY_INPUT_DIR='C:/workspace/baba-july-inputs-2026'
+$env:JULY_INPUT_DIR='.local/july-restore'
 node --experimental-strip-types --test tests/july-restore.test.mjs tests/july-restore-source-review.test.mjs
 ```
 

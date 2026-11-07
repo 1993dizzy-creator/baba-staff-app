@@ -1,7 +1,7 @@
 // Offline only. Never loads env files or executes SQL / connects to a database.
 // node --experimental-strip-types scripts/ledger/july-restore-dry-run.mjs <bundle.json> <output-directory>
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
-import {resolve,join} from 'node:path';
+import {resolve,join,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {planJulyRestore,rowKey,digest,stable} from '../../lib/ledger/july-restore-plan.ts';
 
@@ -39,7 +39,9 @@ export function renderJulyBatch(bundle,plan) {
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const [, ,input,out]=process.argv;
   if(!input||!out) throw Error('Usage: <bundle.json> <new-output-directory>');
-  const output=resolve(out);if(existsSync(output))throw Error('OUTPUT_ALREADY_EXISTS');
+  const output=resolve(out),rel=relative(fileURLToPath(new URL('../../.local/',import.meta.url)),output);
+  if(!rel||rel.startsWith('..')||isAbsolute(rel))throw Error('WORKTREE_LOCAL_OUTPUT_REQUIRED');
+  if(existsSync(output))throw Error('OUTPUT_ALREADY_EXISTS');
   const bundle=JSON.parse(readFileSync(input,'utf8'));const plan=planJulyRestore(bundle);
   mkdirSync(output,{recursive:true});
   writeFileSync(join(output,'dry-run.json'),JSON.stringify(plan,null,2));

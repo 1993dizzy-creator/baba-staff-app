@@ -3,13 +3,14 @@
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
 import {resolve,join,relative,isAbsolute} from 'node:path';
 import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {reviewJulyRuntime} from '../../lib/ledger/july-restore-runtime-review.mjs';
 import {parseCsv} from './july-restore-source-review.mjs';
 import {digest,JULY_SHEET,JULY_TAB} from '../../lib/ledger/july-restore-plan.ts';
 import {renderJulyBatch} from './july-restore-dry-run.mjs';
 const [, ,inputArg,runtimeArg,outArg]=process.argv;
 if(!inputArg||!runtimeArg||!outArg)throw Error('Usage: <inputs> <GET-runtime-folder> <new-output-folder>');
-const input=resolve(inputArg),runtime=resolve(runtimeArg),out=resolve(outArg),rel=relative(input,out);
+const input=resolve(inputArg),runtime=resolve(runtimeArg),out=resolve(outArg),rel=relative(fileURLToPath(new URL('../../.local/',import.meta.url)),out);
 if(!rel||rel.startsWith('..')||isAbsolute(rel)||existsSync(out))throw Error('NEW_REFERENCE_SUBFOLDER_REQUIRED');
 const read=(folder,name)=>JSON.parse(readFileSync(join(folder,name),'utf8'));
 const baselineDir=join(input,'dry-run-20261107-v2'),baseline=read(baselineDir,'395-row-dry-run.json'),oldSummary=read(baselineDir,'summary.json');
