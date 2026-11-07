@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {sha,csv} from './july-restore-phase2.mjs';
 import {parseCsv} from './july-restore-source-review.mjs';
 import {rpcContracts,functionFrom} from './july-restore-rpc-contracts.mjs';
+import {productionAdvanceContract} from './july-restore-phase4-advance-contract.mjs';
 export const FUNDS=['store_cash','vuong_personal_custody','cho_personal_custody','baba_corporate_bank'];
 export const READY=[26,33,75,78,181,207,252,289,299];
 const TRANSFERS=[26,75,78,181,207];
@@ -17,7 +18,7 @@ export function contracts4(){
  const read=n=>readFileSync(new URL('../../supabase/migrations/'+n,import.meta.url),'utf8').replaceAll('\r\n','\n');
  const one=(file,name,signature)=>{const r=functionFrom(read(file),name);return {...r,signature,hash:sha(r.body)};};
  return {manual:rpcContracts().manual,
- advance:one('20260929090000_add_ledger_payroll_advance_payment.sql','public.ledger_create_payroll_advance_payment_v1','public.ledger_create_payroll_advance_payment_v1(text,bigint,numeric,timestamptz,bigint,text,bigint)'),
+ advance:productionAdvanceContract(one('20260929090000_add_ledger_payroll_advance_payment.sql','public.ledger_create_payroll_advance_payment_v1','public.ledger_create_payroll_advance_payment_v1(text,bigint,numeric,timestamptz,bigint,text,bigint)')),
  rent:one('20261028140000_add_rent_contracts.sql','public.ledger_link_rent_payment_v1','public.ledger_link_rent_payment_v1(bigint,bigint,bigint,text,bigint)'),
  rentActor:one('20261028140000_add_rent_contracts.sql','public.ledger_rent_actor_can_write_v1','public.ledger_rent_actor_can_write_v1(bigint)')};
 }
@@ -79,7 +80,7 @@ export function phase4Plan(prior,phase3,capture,targetCsv){
  }));
  const bundle={profile:'july-phase4-20261107',completedRows:completed.sort((a,b)=>a-b),actions,fundDelta:delta,closures:t.closures,accounts:t.accounts,category:t.categories.find(c=>c.id===70),rentPayment:payment,rentContract:contract,employees:t.relevantUsers.filter(u=>[4,10].includes(u.id)),rpcContracts:Object.fromEntries(Object.entries(contracts4()).map(([k,v])=>[k,{signature:v.signature,hash:v.hash}]))};
  const payload={bundle,bundleCanonical:JSON.stringify(bundle),bundleDigest:sha(bundle)};
- return {rows,payload,daily,summary:{count:250,completed:145,readyRows:READY,totals,existingDelta,residualBefore,residualAfter,matchingBefore:daily.filter(d=>d.matchBefore).length,matchingAfter:daily.filter(d=>d.matchAfter).length,newlyMatching:daily.filter(d=>!d.matchBefore&&d.matchAfter).map(d=>({date:d.date,account:d.account})),rpcLiveDefinitionRead:false,executionStatus:'BLOCKED_PENDING_OWNER_APPROVAL_AND_LIVE_RPC_PREFLIGHT',readOnlyHttpResponses:capture.requests.length,top10:rows.filter(r=>!r.executable).sort((a,b)=>b.phase4Amount-a.phase4Amount).slice(0,10).map(r=>({row:r.row,description:r.description,amount:r.phase4Amount,reason:r.phase4Reason}))}};
+ return {rows,payload,daily,summary:{count:250,completed:145,readyRows:READY,totals,existingDelta,residualBefore,residualAfter,matchingBefore:daily.filter(d=>d.matchBefore).length,matchingAfter:daily.filter(d=>d.matchAfter).length,newlyMatching:daily.filter(d=>!d.matchBefore&&d.matchAfter).map(d=>({date:d.date,account:d.account})),rpcLiveDefinitionRead:false,executionStatus:'READY_PENDING_OWNER_DB_APPROVAL',rpcContractValidation:'Owner production snapshot SHA matched; executable tokens equal; other three RPCs owner PASS',readOnlyHttpResponses:capture.requests.length,top10:rows.filter(r=>!r.executable).sort((a,b)=>b.phase4Amount-a.phase4Amount).slice(0,10).map(r=>({row:r.row,description:r.description,amount:r.phase4Amount,reason:r.phase4Reason}))}};
 }
 export function renderPhase4(payload){
  const literal=s=>"'"+s.replaceAll("'","''")+"'",canonical=JSON.stringify(payload);

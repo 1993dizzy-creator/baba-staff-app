@@ -8,6 +8,8 @@ import {phase4Plan,renderPhase4,contracts4,READY,FUNDS} from '../scripts/ledger/
 import {sha} from '../scripts/ledger/july-restore-phase2.mjs';
 import {parseCsv} from '../scripts/ledger/july-restore-source-review.mjs';
 import {renderPhase3} from '../scripts/ledger/july-restore-phase3-plan.mjs';
+import {advanceProductionBody,advanceProductionHash,advanceContractTokens,productionAdvanceContract} from '../scripts/ledger/july-restore-phase4-advance-contract.mjs';
+import {functionFrom} from '../scripts/ledger/july-restore-rpc-contracts.mjs';
 const root=process.env.JULY_PHASE4_INPUT_DIR;
 const opts={skip:!root};
 const read=p=>readFileSync(p,'utf8'),load=p=>JSON.parse(read(join(root,p)));
@@ -68,6 +70,37 @@ async function fixture(){
 async function execute(db,sql){try{return await db.exec(sql);}catch(e){const pos=Number(e.position||0);throw Error(e.message+(pos?' near '+sql.slice(Math.max(0,pos-100),pos+100):'')+(e.where?' '+e.where:''));}}
 async function rollbackFailure(db,sql,pattern){const before=await dump(db);await assert.rejects(execute(db,sql),pattern);await db.exec('ROLLBACK');assert.equal(await dump(db),before);}
 
+test('production advance snapshot hash, executable contract equality and exact nine-action preservation',opts,()=>{
+ const original=functionFrom(read('supabase/migrations/20260929090000_add_ledger_payroll_advance_payment.sql').replaceAll('\r\n','\n'),'public.ledger_create_payroll_advance_payment_v1');
+ assert.equal(sha(original.body),'5448e85692dbd737685283ac00db2b7e47232e34225004679dfb18fe34542590');
+ assert.equal(sha(advanceProductionBody),advanceProductionHash);
+ assert.deepEqual(advanceContractTokens(original.body),advanceContractTokens(advanceProductionBody));
+ assert.throws(()=>productionAdvanceContract({...original,body:original.body.replace("'owner', 'master'","'staff', 'master'")}),/ADVANCE_EXECUTABLE_CONTRACT_CHANGED/);
+ const before=load('phase4-advance-contract-review-20261107/bundle.json.before'),after=load('phase4-final-20261107-r2/bundle.json');
+ const b=structuredClone(before.bundle);b.rpcContracts.advance.hash=advanceProductionHash;assert.deepEqual(after.bundle,b);
+ assert.deepEqual(after.bundle.actions,before.bundle.actions);assert.deepEqual(after.bundle.actions.map(a=>a.actionHash),before.bundle.actions.map(a=>a.actionHash));
+ assert.equal(after.bundle.actions.length,9);assert.equal(after.bundle.actions.reduce((s,a)=>s+a.amount,0),324100000);
+ assert.equal(Object.values(after.bundle.fundDelta).reduce((s,n)=>s+n,0),-303300000);
+ assert.notEqual(after.bundleDigest,before.bundleDigest);assert.notEqual(sha(after),sha(before));
+ const oldSql=read(join(root,'phase4-advance-contract-review-20261107/next-batch-REQUIRES-OWNER-DB-APPROVAL.sql.before'));
+ assert.equal(renderPhase4(after),renderPhase4(before).replaceAll(JSON.stringify(before).replaceAll("'","''"),()=>JSON.stringify(after).replaceAll("'","''")).replaceAll(sha(before),sha(after)));
+ assert.equal(renderPhase4(before),oldSql); // Template/guards are byte-identical.
+});
+test('production advance RPC: real prosrc hash, staff rejection, request replay/conflict, paid-month guard and atomic writes',opts,async()=>{
+ const {db}=await fixture();try{
+  const h=(await db.query("select encode(sha256(convert_to(replace(prosrc,E'\\r\\n',E'\\n'),'UTF8')),'hex') h from pg_proc where oid='public.ledger_create_payroll_advance_payment_v1(text,bigint,numeric,timestamptz,bigint,text,bigint)'::regprocedure")).rows[0].h;assert.equal(h,advanceProductionHash);
+  const call=async(req,user,amount,actor=2,date='2026-07-20T12:00:00+07')=>(await db.query('select ledger_create_payroll_advance_payment_v1($1,$2,$3,$4,1,$5,$6) r',[req,user,amount,date,'local contract QA',actor])).rows[0].r;
+  const req='11111111-2222-3333-4444-555555555555',before=await dump(db);
+  assert.equal((await call(req,4,1000000,3)).status,'forbidden');assert.equal(await dump(db),before);
+  assert.equal((await call(req,4,1000000)).status,'created');const applied=await dump(db);
+  assert.equal((await call(req,4,1000000)).status,'duplicate');assert.equal(await dump(db),applied);
+  assert.equal((await call(req,4,1000001)).status,'request_conflict');assert.equal(await dump(db),applied);
+  await db.exec("insert into paid_payroll_months values(10,'2026-07-01');");const locked=await dump(db);
+  assert.equal((await call('99999999-2222-3333-4444-555555555555',10,2000000)).status,'payroll_locked');assert.equal(await dump(db),locked);
+  const tx=(await db.query("select * from ledger_transactions where source_key like 'payroll-advance-payment:%' and id>=6000")).rows;assert.equal(tx.length,1);assert.equal(tx[0].recognition_month,null);assert.equal(tx[0].category_id,null);
+ }finally{await db.close();}
+});
+
 test('250-row route conservation, prior33 preserved, no capital/card guess, exact 124 target cells',opts,()=>{
  const {result,prior,phase3,capture,target}=evidence();
  assert.deepEqual(result.summary.readyRows,READY);assert.equal(result.rows.length,250);
@@ -101,6 +134,8 @@ test('approval placeholders, changed action/bundle/hash/scope and unauthorized a
   assert.match(renderPhase4(payload),/__ACTOR_USER_ID__/);assert.match(renderPhase4(payload),/__OWNER_APPROVAL__/);
   await rollbackFailure(db,renderPhase4(payload),/JULY_PHASE4_APPROVAL/);
   await rollbackFailure(db,approved(payload).replace("baba.july_phase4_actor='2'","baba.july_phase4_actor='3'"),/JULY_PHASE4_OWNER/);
+  const oldApproval=sha(load('phase4-advance-contract-review-20261107/bundle.json.before'));
+  await rollbackFailure(db,renderPhase4(payload).replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__','APPROVED:'+oldApproval),/JULY_PHASE4_APPROVAL/);
   const bad=structuredClone(payload);bad.bundle.actions[0].effects[0].amount='-1';
   await rollbackFailure(db,approved(bad),/JULY_PHASE4_APPROVAL/);
   const duplicate=structuredClone(payload);duplicate.bundle.actions[1]=duplicate.bundle.actions[0];duplicate.bundleCanonical=JSON.stringify(duplicate.bundle);duplicate.bundleDigest=sha(duplicate.bundle);
