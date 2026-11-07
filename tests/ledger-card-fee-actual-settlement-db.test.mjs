@@ -283,3 +283,24 @@ test('a cancelled deposit is not an actual next-month deposit for settlement', a
     assert.deepEqual(await snapshot(db), before);
   } finally { await db.close(); }
 });
+
+test('a mixed-month deposit (like production #22: Aug + Sep lines) is a valid settlement deposit for the earlier month', async () => {
+  // History under the old policy: one September deposit paid August's tail and September's start,
+  // reserving an August fee; that fee is later cancelled, leaving August's remainder to settle.
+  const db = await fixture({ settled: false });
+  try {
+    await prepare(db, 3000000); await seedSale(db, 10000000, '2026-09-02');
+    const mixed = await autoDeposit(db, 4000000, '2026-09-05');
+    const months = (await db.query("select to_char(t.business_date,'YYYY-MM') m, sum(l.allocated_gross_amount)::numeric amt from ledger_card_reconciliation_lines l join ledger_transactions t on t.id=l.pos_card_transaction_id where l.reconciliation_id=$1 group by 1 order by 1", [mixed.reconciliationId])).rows;
+    assert.deepEqual(months.map(row => [row.m, Number(row.amt)]), [['2026-08', 850000], ['2026-09', 3150000]], 'deposit spans two sale months');
+    await db.exec(settlement);
+    assert.equal((await cancelFee(db, mixed.autoFeeClosures[0].closureId, 'settle on actual deposits')).status, 'cancelled');
+    assert.equal(await monthOutstanding(db, '2026-08'), 2150000);
+    const result = await complete(db, '2026-08', 1, { fee: 2150000 });
+    assert.equal(result.status, 'confirmed');
+    assert.equal(Number(result.settlementDepositReconciliationId), Number(mixed.reconciliationId), 'the mixed deposit is accepted as the month\'s last deposit');
+    assert.equal(Number(result.feeAmount), 2150000);
+    assert.equal(await monthOutstanding(db, '2026-08'), 0);
+    assert.equal(await monthOutstanding(db, '2026-09'), 6850000, 'September lines of the same deposit stay untouched');
+  } finally { await db.close(); }
+});
