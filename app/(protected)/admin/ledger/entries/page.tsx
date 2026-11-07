@@ -1353,7 +1353,8 @@ function LedgerEntriesContent() {
                   ) : null}
                 </span>
                 <strong>{money(currentBalanceTotal)}</strong>
-                <i aria-hidden>{balanceExpanded ? "⌃" : "⌄"}</i>
+                {/* Chevron follows the real open state: down while collapsed, up while the detail is open. */}
+                <i aria-hidden data-chevron={balanceExpanded ? "up" : "down"}><svg className={styles.balanceChevron} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d={balanceExpanded ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} /></svg></i>
               </button>
               {balanceExpanded ? <div className={styles.balanceDetail} id="ledger-current-balance-detail">
                 <div className={styles.balanceAccounts}>
