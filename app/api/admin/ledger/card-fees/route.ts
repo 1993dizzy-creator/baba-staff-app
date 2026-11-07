@@ -1,6 +1,7 @@
 import { buildCardFeeMonthState, type CardFeeClosure } from "@/lib/ledger/card-fee-closures";
 import { buildCardFeeEstimate, CARD_FEE_EXPENSE_CATEGORY_NAME } from "@/lib/ledger/card-fee-estimate";
 import { buildCardFeeHistory } from "@/lib/ledger/card-fee-history";
+import { CARD_FEE_ESTIMATE_EXCEPTION_ACTION, parseCardFeeEstimateExceptions } from "@/lib/ledger/card-fee-exception";
 import { loadCardAllocationLines, loadCardRows, loadCardSales } from "@/lib/ledger/card-settlement-data";
 import { sumCardMoney, type CardReconciliation } from "@/lib/ledger/card-settlements";
 import { loadPosLedgerParity } from "@/lib/ledger/pos-sales";
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   try {
     // All sales/lines: earlier open months with outstanding gross block confirmation (FIFO order).
-    const [sales, lines, reconciliations, closures, closedMonths, manualFeeRows] = await Promise.all([
+    const [sales, lines, reconciliations, closures, closedMonths, manualFeeRows, exceptionRows] = await Promise.all([
       loadCardSales(),
       loadCardAllocationLines(),
       loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_date,deposit_amount,matched_gross_amount,difference_amount,status").order("id").range(from, to)),
@@ -26,7 +27,12 @@ export async function GET(request: Request) {
       // shown in the analysis and every month feeds the deposit preview. Never re-booked here.
       loadCardRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,memo,recognition_month,category:ledger_categories!inner(name)")
         .eq("status", "confirmed").eq("source_type", "manual").eq("category.name", CARD_FEE_EXPENSE_CATEGORY_NAME).order("id").range(from, to)),
+      // One-off estimate-exception closings (append-only audit rows, e.g. October 2026).
+      loadCardRows((from, to) => supabaseServer.from("ledger_audit_logs").select("id,after_snapshot,reason,created_at")
+        .eq("action", CARD_FEE_ESTIMATE_EXCEPTION_ACTION).order("id").range(from, to)),
     ]);
+    const exceptions = parseCardFeeEstimateExceptions(exceptionRows as { id: number; after_snapshot: unknown; reason: string | null; created_at: string }[]);
+    const exceptionMonths = new Set(exceptions.map(row => row.month));
     const manualFees = (manualFeeRows as { id: number; amount: number | string; economic_effect_sign: number | null; memo: string | null; recognition_month: string }[])
       .map(row => ({ id: row.id, month: row.recognition_month.slice(0, 7), amount: Number(row.amount) * (row.economic_effect_sign === -1 ? -1 : 1), memo: row.memo ? row.memo.slice(0, 80) : null }));
     const provisionalFees: Record<string, number> = {};
@@ -36,6 +42,7 @@ export async function GET(request: Request) {
     const stateFor = (target: string) => buildCardFeeMonthState({
       month: target, currentMonth: now, closedMonths: closed,
       sales, lines, reconciliations: reconciliations as CardReconciliation[], closures: closures as CardFeeClosure[], provisionalFees,
+      estimateExceptionMonths: exceptionMonths,
     });
     const state = stateFor(month);
     // Historical rates by sale month from the same month state (matched differences + closure).
@@ -47,7 +54,7 @@ export async function GET(request: Request) {
         return {
           month: saleMonth, gross: row.monthCardGross, historicalConfirmedFee: row.historicalConfirmedFee, monthEndFee: row.monthEndFee,
           hasClosure: Boolean(row.closure), currentOutstanding: row.currentOutstanding, monthClosed: row.monthClosed,
-          provisionalFee: provisionalFees[saleMonth] ?? 0,
+          provisionalFee: provisionalFees[saleMonth] ?? 0, estimateException: exceptionMonths.has(saleMonth),
           saleDays: new Set(sales.filter(sale => sale.business_date.startsWith(saleMonth) && Number(sale.amount) > 0).map(sale => sale.business_date)).size,
         };
       }),
@@ -57,7 +64,8 @@ export async function GET(request: Request) {
       monthEndFee: state.monthEndFee, hasClosure: Boolean(state.closure),
       manualExpenses: manualFees.filter(row => row.month === month).map(({ id, amount, memo }) => ({ id, amount, memo })),
     });
-    return ledgerJson({ ok: true, ...state, estimate, feeHistory, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
+    const estimateException = exceptions.find(row => row.month === month) ?? null;
+    return ledgerJson({ ok: true, ...state, estimate, feeHistory, estimateException, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
   } catch (error) {
     console.error("[LEDGER_CARD_FEES_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "CARD_FEES_LOAD_FAILED" }, 500);

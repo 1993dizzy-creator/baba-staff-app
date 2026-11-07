@@ -118,6 +118,7 @@ function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = fa
     // GET-only read-only analysis; POST must not touch it.
     '@/lib/ledger/card-fee-estimate': { buildCardFeeEstimate: () => { throw new Error('estimate is GET-only'); }, CARD_FEE_EXPENSE_CATEGORY_NAME: '카드 정산 차액' },
     '@/lib/ledger/card-fee-history': { buildCardFeeHistory: () => { throw new Error('history is GET-only'); } },
+    '@/lib/ledger/card-fee-exception': { CARD_FEE_ESTIMATE_EXCEPTION_ACTION: 'card_fee_month_estimate_exception', parseCardFeeEstimateExceptions: () => { throw new Error('exception is GET-only'); } },
     '@/lib/ledger/card-settlement-data': { loadCardAllocationLines: async () => [], loadCardRows: async () => [], loadCardSales: async () => [] },
     '@/lib/ledger/card-settlements': {},
     '@/lib/ledger/server': { requireLedgerActor: async () => denied ? { response: Response.json({ ok: false }, { status: 403 }) } : { actor: { id: 7 } }, ledgerJson: (body, status = 200) => Response.json(body, { status }) },
@@ -178,4 +179,27 @@ test('card fee cancel requires a reason and forwards only the canonical RPC argu
 test('closed post-close automatic closure exposes cancellation while closed legacy closure remains read-only',()=>{
  const input={closedMonths:new Set(['2026-08']),sales:[sale(1,'2026-08-20',100000000)]};const legacy=closure(1,'2026-08',2150000);
  assert.equal(state({...input,closures:[legacy]}).canCancel,false);assert.equal(state({...input,closures:[{...legacy,finalization_business_date:'2026-09-05'}]}).canCancel,true);
+});
+
+test('settlement status is derived on every read: next-month first deposit starts confirmation, nothing books itself', () => {
+  const sales = [sale(2, '2026-08-10', 1000)];
+  const base = { sales, closedMonths: new Set(['2026-08']) };
+  // No deposit after August yet: waiting for the next-month deposit.
+  assert.equal(state(base).settlementStatus, 'awaiting_deposit');
+  // First September deposit registered (not yet allocated to August): confirmation can start, not confirm.
+  const unlinked = state({ ...base, reconciliations: [rec(9, 'auto_allocated', '2026-09-02', 100, 100)] });
+  assert.deepEqual([unlinked.settlementStatus, unlinked.canConfirm, unlinked.blockerReason], ['awaiting_confirmation', false, 'no_settlement_deposit']);
+  // A cancelled deposit does not start it.
+  assert.equal(state({ ...base, reconciliations: [rec(9, 'cancelled', '2026-09-02', 100, 100)] }).settlementStatus, 'awaiting_deposit');
+  // Allocated to August: one confirmation is possible.
+  const linked = state({ ...base, lines: [line(9, 2, 100, 'auto_allocated', '2026-09-02')], reconciliations: [rec(9, 'auto_allocated', '2026-09-02', 100, 100)] });
+  assert.deepEqual([linked.settlementStatus, linked.canConfirm], ['awaiting_confirmation', true]);
+  // Fully paid, an official closure, the running month, a review reason, and October's exception.
+  assert.equal(state({ ...base, lines: [line(9, 2, 1000, 'auto_allocated', '2026-09-02')], reconciliations: [rec(9, 'auto_allocated', '2026-09-02', 1000, 1000)] }).settlementStatus, 'confirmed');
+  assert.equal(state({ ...base, closures: [closure(4, '2026-08', 1000)] }).settlementStatus, 'confirmed');
+  assert.equal(state({ ...base, month: '2026-09', sales: [sale(3, '2026-09-02', 500)] }).settlementStatus, 'current_month');
+  assert.equal(state({ ...base, reconciliations: [rec(5, 'unmatched', '2026-08-20', 100, 0)] }).settlementStatus, 'review_required');
+  assert.equal(state({ ...base, provisionalFees: { '2026-08': 1000 } }).settlementStatus, 'review_required');
+  const october = state({ ...base, provisionalFees: { '2026-08': 1000 }, estimateExceptionMonths: new Set(['2026-08']) });
+  assert.deepEqual([october.settlementStatus, october.canConfirm], ['estimate_exception', false]);
 });

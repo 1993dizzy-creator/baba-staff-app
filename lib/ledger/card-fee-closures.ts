@@ -5,6 +5,9 @@ export type CardFeeClosure = {
   id: number; fee_month: string; fee_amount: number | string; status: string; expense_transaction_id: number | null;
   finalization_business_date?: string | null; confirmed_at: string; confirmed_by: number; cancelled_at: string | null; cancel_reason: string | null; memo: string | null;
 };
+// Settlement progress for a sale month, derived on every read (nothing is booked automatically):
+// next-month first deposit -> awaiting_confirmation; the admin's one confirmation books the fee.
+export type CardSettlementStatus = "current_month" | "no_card_sales" | "awaiting_deposit" | "awaiting_confirmation" | "confirmed" | "review_required" | "estimate_exception";
 export type CardFeeBlocker = "current_month" | "future_month" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed" | "provisional_fee" | "nothing_to_settle" | "no_settlement_deposit";
 
 const monthOf = (date: string) => date.slice(0, 7);
@@ -24,6 +27,8 @@ export function buildCardFeeMonthState(input: {
   closures: readonly CardFeeClosure[];
   // Provisional manual card-fee expense per sale month (YYYY-MM); mirrors ledger_card_fee_private.provisional_fee.
   provisionalFees?: Readonly<Record<string, number>>;
+  // Months closed on the provisional estimate by the one-off exception record (e.g. October 2026).
+  estimateExceptionMonths?: ReadonlySet<string>;
 }) {
   const { month, currentMonth, closedMonths, sales, lines, reconciliations, closures } = input;
   const start = `${month}-01`, end = nextMonthStart(month);
@@ -65,11 +70,22 @@ export function buildCardFeeMonthState(input: {
     ...(input.provisionalFees?.[m] ? { provisionalFee: input.provisionalFees[m] } : {}),
   })).filter(row => row.gross > 0 && row.outstanding > 0);
   const remainingRate = monthCardGross > 0 ? currentOutstanding / monthCardGross : null;
+  // Business month ends at 03:00 (currentMonth is the business month). The first non-cancelled deposit
+  // dated after the month starts the check, even before it is allocated to this month's sales.
+  const hasNextMonthDeposit = reconciliations.some(row => row.status !== "cancelled" && row.deposit_date >= end);
+  const settlementStatus: CardSettlementStatus = closure ? "confirmed"
+    : month >= currentMonth ? "current_month"
+      : monthCardGross <= 0 ? "no_card_sales"
+        : input.estimateExceptionMonths?.has(month) ? "estimate_exception"
+          : blocker === "provisional_fee" || blocker === "legacy_unallocated_deposits" || blocker === "earlier_month_unconfirmed" ? "review_required"
+            // Fully paid by deposits (historical matched differences only): nothing left to confirm.
+            : currentOutstanding <= 0 ? "confirmed"
+              : !hasNextMonthDeposit ? "awaiting_deposit" : "awaiting_confirmation";
   // No rate window any more: an unsettled month simply waits for its settlement step.
   const autoStatus = closure ? "confirmed" : month >= currentMonth ? "current_month"
     : legacy.length ? "review_required" : !monthClosed ? "awaiting_month_close" : "settlement_pending";
   return {
-    autoFeeMonths, remainingRate, autoStatus,
+    autoFeeMonths, remainingRate, autoStatus, settlementStatus,
     confirmedRate: closure && monthCardGross > 0 ? cardMoney(Number(closure.fee_amount)) / monthCardGross : null,
     month,
     hasCardSales: monthCardGross > 0,

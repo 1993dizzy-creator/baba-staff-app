@@ -51,3 +51,4 @@
 .historyTableBox{min-width:0;overflow-x:hidden;border-radius:8px}.historyTableScroll{max-height:calc(28px + 5 * 27px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
 .historyTableBox .feeTable thead th{position:sticky;top:0;z-index:1;background:#fbfbfc}.historyTableBox .feeTable th,.historyTableBox .feeTable td{height:16px}
 @media(max-width:360px){.historyStats .miniCard{padding:7px 6px}.historyStats .miniCard strong{font-size:12px}}
+.feeStateReview{color:#9a3412}

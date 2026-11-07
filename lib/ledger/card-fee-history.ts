@@ -6,17 +6,19 @@ import { cardMoney } from "./card-settlements.ts";
 // values buildCardFeeMonthState already returns, so nothing is counted twice.
 // Only confirmed months enter the store average; it updates by itself when a month confirms.
 export const CARD_FEE_HISTORY_MIN_SALE_DAYS = 7;
-export type CardFeeHistoryStatus = "confirmed" | "provisional" | "pending" | "open" | "partial";
+export type CardFeeHistoryStatus = "confirmed" | "provisional" | "estimate_exception" | "pending" | "open" | "partial";
 export type CardFeeHistoryInput = {
   month: string; gross: number; saleDays: number; historicalConfirmedFee: number; monthEndFee: number;
   hasClosure: boolean; currentOutstanding: number; monthClosed: boolean; provisionalFee: number;
+  // Closed on the provisional estimate (one-off exception record): shown, never averaged.
+  estimateException?: boolean;
 };
 
 function statusOf(row: CardFeeHistoryInput): CardFeeHistoryStatus {
   // A partial first month (e.g. one recorded sales day) is a reference only.
   if (row.saleDays < CARD_FEE_HISTORY_MIN_SALE_DAYS) return "partial";
   if (row.hasClosure) return "confirmed";
-  if (row.provisionalFee !== 0) return "provisional";
+  if (row.provisionalFee !== 0) return row.estimateException ? "estimate_exception" : "provisional";
   if (!row.monthClosed) return "open";
   // Closed with nothing left: every sale was matched, the historical differences are final.
   return row.currentOutstanding === 0 ? "confirmed" : "pending";
@@ -29,7 +31,7 @@ export function buildCardFeeHistory(input: { months: readonly CardFeeHistoryInpu
       const status = statusOf(row);
       const officialFee = cardMoney(row.historicalConfirmedFee + (row.hasClosure ? row.monthEndFee : 0));
       // Provisional months show the manual estimate; pending/open months have no fee yet.
-      const fee = status === "provisional" ? cardMoney(officialFee + row.provisionalFee)
+      const fee = status === "provisional" || status === "estimate_exception" ? cardMoney(officialFee + row.provisionalFee)
         : status === "pending" || status === "open" ? null : officialFee;
       return { month: row.month, gross: row.gross, saleDays: row.saleDays, status, fee, rate: fee === null ? null : fee / row.gross };
     })

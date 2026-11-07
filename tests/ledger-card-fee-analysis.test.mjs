@@ -83,13 +83,13 @@ test('reference-rate comparison and receipt review are removed; history is serve
   assert.equal(existsSync('lib/ledger/card-fee-receipt-candidates.ts'), false);
   const route = readFileSync(feeRoutePath, 'utf8');
   assert.match(route, /buildCardFeeHistory\(/);
-  assert.match(route, /feeHistory, history:/);
+  assert.match(route, /feeHistory, estimateException, history:/);
   for (const source of [readFileSync(pagePath, 'utf8'), readFileSync(componentPath, 'utf8')]) assert.doesNotMatch(source, /receipt-candidates|scenarios|rangeStatus|targetRate/);
 });
 
 function render(lang, feeOverrides = {}, history = buildCardFeeHistory({ months: productionMonths(), currentMonth: '2026-11' })) {
   const mod = load(componentPath, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'), './card-settlements.module.css': { default: new Proxy({}, { get: (_, key) => String(key) }) } });
-  const fee = { month: '2026-10', monthClosed: true, autoStatus: 'pending', historicalConfirmedFee: 0, monthEndFee: 0, currentOutstanding: 5699112, projectedTotalFee: 5699112, finalConfirmedFee: null, remainingRate: 5699112 / 192125640, confirmedRate: null, closure: null, estimate: october(), feeHistory: history, ...feeOverrides };
+  const fee = { month: '2026-10', monthClosed: true, autoStatus: 'pending', historicalConfirmedFee: 0, monthEndFee: 0, currentOutstanding: 5699112, projectedTotalFee: 5699112, finalConfirmedFee: null, remainingRate: 5699112 / 192125640, confirmedRate: null, closure: null, estimate: october(), feeHistory: history, settlementStatus: 'review_required', ...feeOverrides };
   return renderToStaticMarkup(React.createElement(React.Fragment, null, React.createElement(mod.default, { fee, lang }), history ? React.createElement(mod.CardFeeHistory, { history, lang }) : null));
 }
 const BANNED = /자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소|Chờ xác nhận tự động|Cần hủy bút toán thủ công/;
@@ -102,7 +102,7 @@ test('October card: plain cost wording, no store-average note, tidy settlement d
   has('<span>잠정 차액률</span><strong>2.97%</strong></article>');
   assert.doesNotMatch(html.slice(0, html.indexOf('📈')), /매장 평균|kpiNote/);
   // Cost state in plain words, no voucher term or id in the default view.
-  has('<dl class="feeState"><div><dt>비용 처리</dt><dd>임시 비용 반영 · 5.699.112 ₫</dd></div><div><dt>수수료 확정</dt><dd>미확정</dd></div></dl>');
+  has('<dl class="feeState"><div><dt>비용 처리</dt><dd>임시 비용 반영 · 5.699.112 ₫</dd></div><div><dt>정산 상태</dt><dd class="feeStateReview">확인 필요</dd></div></dl>');
   assert.doesNotMatch(html, /수기 전표|수기 비용 전표|#4119|\[잠정 추정/);
   has('같은 금액이 자동 확정으로 다시 비용 처리되지 않도록 보호됩니다.');
   // Settlement detail: collapsed, four amounts only.
@@ -157,7 +157,7 @@ test('confirmed month and a month without data use the same plain wording', () =
 
 test('Vietnamese card and history have no Korean text', () => {
   const html = render('vi');
-  for (const label of ['Chênh lệch quyết toán tạm tính', '<dt>Chi phí</dt><dd>Ghi chi phí tạm · 5.699.112 ₫</dd>', '<dt>Xác nhận phí</dt><dd>Chưa xác nhận</dd>', '<summary>Chi tiết quyết toán</summary>', '<span>Trung bình</span><strong>2.11%</strong>', '<small>(T8/2026)</small>', '>T10/2026<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
+  for (const label of ['Chênh lệch quyết toán tạm tính', '<dt>Chi phí</dt><dd>Ghi chi phí tạm · 5.699.112 ₫</dd>', '<dt>Trạng thái quyết toán</dt><dd class="feeStateReview">Cần kiểm tra</dd>', '<summary>Chi tiết quyết toán</summary>', '<span>Trung bình</span><strong>2.11%</strong>', '<small>(T8/2026)</small>', '>T10/2026<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
     assert.ok(html.includes(label), label);
   // No memo is shown any more, so the whole Vietnamese view is free of Korean.
   assert.doesNotMatch(html, /[가-힣]/);
@@ -165,17 +165,37 @@ test('Vietnamese card and history have no Korean text', () => {
   assert.doesNotMatch(html, BANNED);
 });
 
-test('settleable month offers the explicit card payment settlement step; provisional or confirmed months do not', () => {
+test('settlement block: statuses, numbers and the single confirmation; October exception never offers it', () => {
   const mod = load(componentPath, { react: React, 'react/jsx-runtime': require('react/jsx-runtime'), './card-settlements.module.css': { default: new Proxy({}, { get: (_, key) => String(key) }) } });
   const estimate = buildCardFeeEstimate({ monthCardGross: 100000000, currentOutstanding: 2150000, historicalConfirmedFee: 0, monthEndFee: 0, hasClosure: false, manualExpenses: [] });
   const fee = { month: '2026-08', monthClosed: true, historicalConfirmedFee: 0, monthEndFee: 0, currentOutstanding: 2150000, projectedTotalFee: 2150000, finalConfirmedFee: null, remainingRate: 0.0215, confirmedRate: null, closure: null, estimate };
-  const html = renderToStaticMarkup(React.createElement(mod.default, { fee, lang: 'ko', canSettle: true, onSettle: () => {} }));
-  assert.ok(html.includes('>카드대금 입금 완료 · 수수료 확정</button>'));
-  assert.doesNotMatch(html, /카드대금 정산완료/, 'confirmation panel opens only on click');
-  const vi = renderToStaticMarkup(React.createElement(mod.default, { fee, lang: 'vi', canSettle: true, onSettle: () => {} }));
-  assert.ok(vi.includes('>Đã nhận đủ tiền thẻ · Xác nhận phí</button>'));
-  // October (provisional) and any month without canSettle show no settlement button.
-  assert.doesNotMatch(renderToStaticMarkup(React.createElement(mod.default, { fee: { ...fee, estimate: october() }, lang: 'ko', canSettle: false, onSettle: () => {} })), /수수료 확정<\/button>/);
+  const view = (props, lang = 'ko') => renderToStaticMarkup(React.createElement(mod.default, { lang, onSettle: () => {}, ...props }));
+  // Awaiting confirmation (next-month deposit linked): numbers + checkbox + one button, no typed amount.
+  const ready = view({ fee: { ...fee, settlementStatus: 'awaiting_confirmation' }, canSettle: true });
+  for (const part of ['<dt>정산 상태</dt><dd>확인 대기</dd>', '<dt>전월 카드매출</dt><dd>100.000.000 ₫</dd>', '<dt>실제 입금 반영액</dt><dd>97.850.000 ₫</dd>', '<dt>남은 정산 차액</dt><dd>2.150.000 ₫</dd>', '<dt>예상 수수료율</dt><dd>2.15%</dd>', '이 달 카드대금이 모두 입금된 것을 확인했습니다.', '>카드수수료 확정</button>']) assert.ok(ready.includes(part), part);
+  assert.match(ready, /<button type="button" class="primary" style="width:100%" disabled="">카드수수료 확정<\/button>/, 'disabled until ticked');
+  assert.doesNotMatch(ready, /<input[^>]*type="(number|text)"/, 'fee amount and rate are never typed');
+  assert.doesNotMatch(ready, /<details/);
+  // Awaiting deposit: numbers, explanation, no button.
+  const waiting = view({ fee: { ...fee, settlementStatus: 'awaiting_deposit' }, canSettle: false });
+  assert.ok(waiting.includes('<dt>정산 상태</dt><dd>입금 대기</dd>') && waiting.includes('익월 첫 카드입금이 등록되면 확인 대기로 바뀝니다.'));
+  assert.doesNotMatch(waiting, /카드수수료 확정<\/button>|type="checkbox"/);
+  // Next-month deposit registered but not yet allocated to this month: waiting confirmation, cannot confirm.
+  const notLinked = view({ fee: { ...fee, settlementStatus: 'awaiting_confirmation' }, canSettle: false });
+  assert.ok(notLinked.includes('익월 입금이 아직 이 달 카드매출에 배분되지 않아 확정할 수 없습니다.'));
+  assert.doesNotMatch(notLinked, /카드수수료 확정<\/button>/);
+  // VI wording.
+  const vi = view({ fee: { ...fee, settlementStatus: 'awaiting_confirmation' }, canSettle: true }, 'vi');
+  for (const part of ['Chờ xác nhận', 'Tôi đã kiểm tra toàn bộ tiền thẻ của tháng này đã về.', '>Xác nhận phí thẻ</button>', 'Doanh thu thẻ tháng trước']) assert.ok(vi.includes(part), part);
+  assert.doesNotMatch(vi, /[가-힣]/);
+  // October after the one-off record: estimate exception, details view, no settlement controls.
+  const exception = view({ fee: { ...fee, estimate: october(), currentOutstanding: 5699112, settlementStatus: 'estimate_exception', estimateException: { amount: 5699112, reason: 'x', recordedAt: '2026-11-08T00:00:00Z' } }, canSettle: false });
+  for (const part of ['<dt>정산 상태</dt><dd>예외 마감 · 추정 기준</dd>', '<span>추정 기준 수수료</span>', '실제 카드사 수수료를 확인하지 못해 임시 비용 5.699.112 ₫ 기준으로 마감했습니다. 공식 확인된 수수료가 아니며 평균 수수료율에서 제외됩니다.', '<summary>정산 상세</summary>']) assert.ok(exception.includes(part), part);
+  assert.doesNotMatch(exception, /카드수수료 확정<\/button>|type="checkbox"|같은 금액이 자동 확정으로/);
+  // Confirmed month: done, no controls.
+  const done = view({ fee: { ...fee, currentOutstanding: 0, closure: { confirmed_at: '2026-09-05T03:00:00Z', finalization_business_date: '2026-09-05' }, finalConfirmedFee: 2150000, monthEndFee: 2150000, settlementStatus: 'confirmed' }, canSettle: false });
+  assert.ok(done.includes('<dd class="feeStateDone">확정 완료 · 자동 · '));
+  assert.doesNotMatch(done, /카드수수료 확정<\/button>/);
 });
 
 test('settlement confirm stays disabled until the final deposit is ticked and sends the shown amount', () => {
