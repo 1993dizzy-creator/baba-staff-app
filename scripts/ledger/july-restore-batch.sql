@@ -81,6 +81,33 @@ BEGIN
       AND f.code=expected_record->>'account' AND m.amount=t.amount
       AND (SELECT count(*) FROM public.ledger_movements WHERE transaction_id=t.id)=1) THEN RAISE EXCEPTION 'JULY_OPENING_MISMATCH'; END IF;
   END LOOP;
+  -- Runtime-reviewed subsets reject newly added July entries/movements, even
+  -- when another writer used a different source key after the GET observation.
+  -- Exact replays exclude only transactions audited by THIS selected row set.
+  IF manifest ? 'runtimePreflight' THEN
+    SELECT coalesce(jsonb_agg(jsonb_build_object('id',t.id,'type',t.type,'status',t.status,
+      'business_date',t.business_date,'recognition_month',t.recognition_month,'amount',t.amount,
+      'category_id',t.category_id,'source_type',t.source_type,'source_key',t.source_key) ORDER BY t.id),'[]')
+      INTO actual_record FROM public.ledger_transactions t
+      WHERE (t.business_date BETWEEN date '2026-07-01' AND date '2026-07-31' OR t.recognition_month=date '2026-07-01')
+      AND NOT EXISTS(SELECT 1 FROM public.ledger_audit_logs l WHERE l.action='july_restore_row' AND l.entity_id=t.id
+        AND l.reason IN(SELECT selected_row.value->>'key' FROM jsonb_array_elements(manifest->'actions') selected_action(value),jsonb_array_elements(selected_action.value->'rows') selected_row(value)));
+    IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'transactions' THEN RAISE EXCEPTION 'JULY_RUNTIME_TRANSACTION_DRIFT'; END IF;
+    SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY c.id),'[]') INTO actual_record
+      FROM public.ledger_candidates c WHERE c.business_date BETWEEN date '2026-07-01' AND date '2026-07-31';
+    IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'candidates' THEN RAISE EXCEPTION 'JULY_RUNTIME_CANDIDATE_DRIFT'; END IF;
+    SELECT coalesce(jsonb_agg(jsonb_build_object('id',m.id,'transaction_id',m.transaction_id,'fund_account_id',m.fund_account_id,'amount',m.amount) ORDER BY m.id),'[]')
+      INTO actual_record FROM public.ledger_movements m
+      WHERE m.transaction_id IN(SELECT (x->>'id')::bigint FROM jsonb_array_elements(manifest->'runtimePreflight'->'transactions') x);
+    IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'movements' THEN RAISE EXCEPTION 'JULY_RUNTIME_MOVEMENT_DRIFT'; END IF;
+    SELECT jsonb_agg(jsonb_build_object('id',f.id,'code',f.code,'type',f.type,'is_active',f.is_active,
+      'is_business_fund',f.is_business_fund,'active_from',f.active_from,'active_to',f.active_to) ORDER BY f.id)
+      INTO actual_record FROM public.ledger_fund_accounts f WHERE f.id IN(SELECT (x->>'id')::bigint FROM jsonb_array_elements(manifest->'runtimePreflight'->'accounts') x);
+    IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'accounts' THEN RAISE EXCEPTION 'JULY_RUNTIME_ACCOUNT_DRIFT'; END IF;
+    SELECT jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'kind',c.kind,'is_active',c.is_active) ORDER BY c.id)
+      INTO actual_record FROM public.ledger_categories c WHERE c.id IN(SELECT (x->>'id')::bigint FROM jsonb_array_elements(manifest->'runtimePreflight'->'categories') x);
+    IF actual_record IS DISTINCT FROM manifest->'runtimePreflight'->'categories' THEN RAISE EXCEPTION 'JULY_RUNTIME_CATEGORY_DRIFT'; END IF;
+  END IF;
   before_state:=pg_temp.july_protected();
   SELECT coalesce(sum(m.amount),0) INTO before_card FROM public.ledger_movements m
     JOIN public.ledger_transactions t ON t.id=m.transaction_id JOIN public.ledger_fund_accounts f ON f.id=m.fund_account_id

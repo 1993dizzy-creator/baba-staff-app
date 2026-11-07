@@ -13,6 +13,7 @@ export function renderJulyBatch(bundle,plan) {
   // in Git has no IDs yet; never assume the four IDs map to this account order.
   if(!Array.isArray(bundle.openings)||bundle.openings.length!==4 || openings.some(x=>!bundle.openings.some(y=>y.account===x.account&&y.amount===x.amount&&[4207,4208,4209,4210].includes(y.id)))||new Set(bundle.openings.map(x=>x.id)).size!==4) throw Error('APPROVED_OPENING_ID_MAPPING_REQUIRED');
   const payload={status:plan.status,sourceRows:plan.sourceRows,bundleDigest:plan.digest,openings:bundle.openings,fullRestoreReady:plan.fullRestoreReady,daily:plan.daily,
+    ...(bundle.runtimePreflight?{runtimePreflight:bundle.runtimePreflight}:{}),
     actions:plan.decisions.filter(d=>['ready','linked'].includes(d.status)).map(d=>({...d.action,rows:bundle.rows.filter(r=>d.action.rowNumbers.includes(r.row)).map(r=>({...r,key:rowKey(r)}))}))};
   if(!payload.actions.length) throw Error('NO_REVIEWED_ACTIONS');
   let sql=readFileSync(new URL('./july-restore-batch.sql',import.meta.url),'utf8');
