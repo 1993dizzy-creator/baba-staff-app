@@ -83,11 +83,13 @@ export function phase4Plan(prior,phase3,capture,targetCsv){
  return {rows,payload,daily,summary:{count:250,completed:145,readyRows:READY,totals,existingDelta,residualBefore,residualAfter,matchingBefore:daily.filter(d=>d.matchBefore).length,matchingAfter:daily.filter(d=>d.matchAfter).length,newlyMatching:daily.filter(d=>!d.matchBefore&&d.matchAfter).map(d=>({date:d.date,account:d.account})),rpcLiveDefinitionRead:false,executionStatus:'READY_PENDING_OWNER_DB_APPROVAL',rpcContractValidation:'Owner production snapshot SHA matched; executable tokens equal; other three RPCs owner PASS',readOnlyHttpResponses:capture.requests.length,top10:rows.filter(r=>!r.executable).sort((a,b)=>b.phase4Amount-a.phase4Amount).slice(0,10).map(r=>({row:r.row,description:r.description,amount:r.phase4Amount,reason:r.phase4Reason}))}};
 }
 export function renderPhase4(payload){
+ if(existsSync(new URL('../../.local/july-restore/phase4-final-20261107-r2/README-APPLIED-DO-NOT-RERUN.md',import.meta.url)))throw Error('PHASE4_ALREADY_APPLIED_DO_NOT_RENDER');
  const literal=s=>"'"+s.replaceAll("'","''")+"'",canonical=JSON.stringify(payload);
  return readFileSync(new URL('./july-restore-phase4-batch.sql',import.meta.url),'utf8').replaceAll('__PAYLOAD_LITERAL__',()=>literal(canonical)).replaceAll('__PAYLOAD_DIGEST__',sha(canonical));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const root=fileURLToPath(new URL('../../.local/july-restore/',import.meta.url)),out=resolve(process.argv[2]||''),rel=relative(root,out);
+ if(existsSync(join(root,'phase4-final-20261107-r2/README-APPLIED-DO-NOT-RERUN.md')))throw Error('PHASE4_ALREADY_APPLIED_DO_NOT_RENDER');
  if(!process.argv[2]||!rel||rel.startsWith('..')||isAbsolute(rel)||existsSync(out))throw Error('NEW_LOCAL_FOLDER_REQUIRED');
  const load=p=>JSON.parse(readFileSync(join(root,p),'utf8'));
  const result=phase4Plan(load('phase3-final-20261107-r2/remaining-312.json'),load('phase3-final-20261107-r2/bundle.json'),load('phase4-runtime-20261107-r2/runtime-readonly.json'),readFileSync(join(root,'july_2026_daily_targets.csv'),'utf8'));
