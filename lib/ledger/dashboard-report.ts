@@ -62,7 +62,9 @@ export type DashboardLedgerData = {
     otherFundAdjustment: number;
     operatingIncomeMovement: number;
     actualCashOutflowMovement?: number;
+    unclassifiedCashMovement?: number;
   };
+  cashImport?: { rows: number; cashReconciled: boolean; economicClosed: boolean; economicPending: number } | null;
 };
 
 export type BreakdownRow = {
@@ -321,6 +323,7 @@ export function buildDashboardReport(
     income,
     expenses,
     cashFlow: {
+      unclassifiedCashMovement: numberValue(current.cashReport.unclassifiedCashMovement),
       openingBalance: sumBusinessFundBalances(current.accounts, "openingBalance"),
       receivedIncome: current.summary.receivedIncome,
       investmentCashFlow: numberValue(current.cashReport.investmentCashFlow),
@@ -330,7 +333,8 @@ export function buildDashboardReport(
       reconciliationDifference: numberValue(sumBusinessFundBalances(current.accounts, "balance")) -
         (numberValue(sumBusinessFundBalances(current.accounts, "openingBalance")) +
           current.summary.receivedIncome - cashFlowOutflow +
-          numberValue(current.cashReport.investmentCashFlow) + numberValue(current.cashReport.otherFundAdjustment)),
+          numberValue(current.cashReport.investmentCashFlow) + numberValue(current.cashReport.otherFundAdjustment) + numberValue(current.cashReport.unclassifiedCashMovement)),
     },
+    cashImport: current.cashImport ?? null,
   };
 }

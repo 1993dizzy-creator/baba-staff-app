@@ -11,7 +11,7 @@ import { reservesByFundAccount } from "@/lib/ledger/reserve-balances";
 import { computeDisplayedExpense, computeReceivedIncome } from "@/lib/ledger/summary";
 import { computeActualCashOutflow } from "@/lib/ledger/cash-outflow";
 import { getBusinessDate, getBusinessMonthEndBoundary } from "@/lib/common/business-time";
-import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, normalizeFundMovementRows, type FundAccountReservePlan, type FundAccountViewMode, type FundMovement, type FundMovementSourceRow } from "@/lib/ledger/fund-account-view";
+import { buildFundAccountView, fundAccountViewMode, fundMovementInScope, fundOpeningBoundaries, normalizeFundMovementRows, type FundAccountReservePlan, type FundAccountViewMode, type FundMovement, type FundMovementSourceRow } from "@/lib/ledger/fund-account-view";
 import { buildDashboardCashReport, type PayableAllocationCategory } from "@/lib/ledger/dashboard-cash-report";
 import { prepaymentApplicationDate } from "@/lib/ledger/supplier-prepayments";
 import { buildAccrualReport, type AccrualCloseSnapshot, type AccrualCorrectionRow } from "@/lib/ledger/accrual-report";
@@ -66,13 +66,15 @@ function buildLedgerFundAccounts<T extends BuildFundAccountsInput["accounts"][nu
     entries: reserveEntriesByPlan.get(Number(plan.id)) ?? [],
   }));
   const accountCodes = new Map(accountRows.map(account => [Number(account.id), account.code]));
+  const normalizedMovements = normalizeFundMovementRows(movementRows);
+  const boundaries = fundOpeningBoundaries(normalizedMovements, month);
   const inScope = (row: FundMovement) =>
-    fundMovementInScope(accountCodes.get(Number(row.fund_account_id)), row.transaction?.business_date ?? "", month);
+    fundMovementInScope(accountCodes.get(Number(row.fund_account_id)), row.transaction?.business_date ?? "", month, boundaries.get(Number(row.fund_account_id)));
   return buildFundAccountView({
     accounts: accountRows,
     openingMovements: normalizeFundMovementRows(openingRows),
     priorConfirmedMovements: normalizeFundMovementRows(priorConfirmedMovements).filter(inScope),
-    movements: normalizeFundMovementRows(movementRows).filter(inScope),
+    movements: normalizedMovements.filter(inScope),
     reservePlans,
     groupReserves: reservesByFundAccount,
     mode: fundsViewMode,
@@ -140,7 +142,7 @@ export async function GET(request: Request) {
     const partnerPromise = supabaseServer.from("business_partners").select("id,name,partner_type,partner_subtype_id,payment_mode,default_fund_account_id,is_active").order("name");
     const partnerSubtypePromise = supabaseServer.from("business_partner_subtypes").select("id,code,emoji");
     const bridgePromise = supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id");
-    const movementsQuery = () => supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at,business_date)").eq("transaction.status", "confirmed");
+    const movementsQuery = () => supabaseServer.from("ledger_movements").select("fund_account_id,amount,transaction:ledger_transactions!inner(status,occurred_at,business_date,type)").eq("transaction.status", "confirmed");
     const movementsPromise = fundsViewMode === "closed_snapshot"
       ? Promise.resolve({ data: [], error: null })
       : loadLedgerAggregateRows((from, to) => {
@@ -187,9 +189,9 @@ export async function GET(request: Request) {
       return respond({ ok: true, month, scope: "accounts", fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, accounts });
     }
     const profitPromise = dashboardOnly
-      ? loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales", "expense_recognition"]).order("id", { ascending: true }).range(from, to))
-      : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]).order("id", { ascending: true }).range(from, to));
-    const recognitionProfitPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition").order("id", { ascending: true }).range(from, to));
+      ? loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id,source_type").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales", "expense_recognition"]).order("id", { ascending: true }).range(from, to))
+      : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id,source_type").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).in("type", ["income", "expense", "sales"]).order("id", { ascending: true }).range(from, to));
+    const recognitionProfitPromise = dashboardOnly ? Promise.resolve(EMPTY_ROWS) : loadLedgerAggregateRows((from, to) => supabaseServer.from("ledger_transactions").select("type,amount,economic_effect_sign,category_id,source_type").eq("status", "confirmed").gte("recognition_month", monthStart).lt("recognition_month", nextMonth).eq("type", "expense_recognition").order("id", { ascending: true }).range(from, to));
     // Card gross sales: this month's POS card-bucket sales (business_date scoped), before card-company fees.
     const cardGrossSalesPromise = loadCardSales(monthStart, nextMonth);
     // Actual card deposits: this month's real bank deposits from the card company (deposit_date scoped, not the sale's month).
@@ -256,9 +258,11 @@ export async function GET(request: Request) {
     const actualCardDeposits = sumCardMoney(actualCardDepositsResult.map(row => row.deposit_amount));
     const cardSettlementDifference = sumCardMoney(actualCardDepositsResult.filter(row => row.status === "matched").map(row => row.difference_amount ?? 0));
     const unsettledCardGross = unreconciledCardGross;
-    const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits);
+    const nonCashImportedIncome = profitRows.filter(row => row.source_type === "cash_import_recognition" && ["sales", "income"].includes(row.type)).reduce((sum, row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1), 0);
+    const receivedIncome = computeReceivedIncome(recognizedIncome, cardGrossSales, actualCardDeposits, nonCashImportedIncome);
+    const cashOtherIncome = otherIncome - profitRows.filter(row => row.source_type === "cash_import_recognition" && row.type === "income").reduce((sum, row) => sum + Number(row.amount) * Number(row.economic_effect_sign ?? 1), 0);
     const salesReceiptExplanation = calculateSalesReceiptExplanation({
-      posSales: salesIncome, actualSalesReceipts: receivedIncome - otherIncome,
+      posSales: salesIncome, actualSalesReceipts: receivedIncome - cashOtherIncome,
       monthEndUnsettledCardSales: cardGross.monthlyUnreconciledGross,
       allocations: priorMonthCardDepositAllocations as unknown as PriorMonthCardDepositAllocation[], start: monthStart, end: nextMonth,
     });
@@ -304,6 +308,11 @@ export async function GET(request: Request) {
       closeSummary: closureResult.data?.summary_snapshot,
     });
     const accountById = new Map(accounts.map(account => [Number(account.id), account]));
+    const importStatusResult = entriesOnly ? null : await supabaseServer.rpc("ledger_cash_import_status_v1", { p_month: monthStart, p_actor: auth.actor.id });
+    // Permit the code/structure approval steps to be deployed separately; do not
+    // conceal permission or data errors once the RPC is present.
+    if (importStatusResult?.error && !["PGRST202", "42883"].includes(importStatusResult.error.code)) throw importStatusResult.error;
+    const cashImport = importStatusResult?.error ? null : importStatusResult?.data ?? null;
     const partnerById = new Map((partnerResult.data ?? []).map(partner => [Number(partner.id), partner]));
     const partnerSubtypeById = new Map((partnerSubtypeResult.data ?? []).map(subtype => [Number(subtype.id), subtype]));
     const activeCategoryByName = new Map((categoriesResult.data ?? []).map(category => [String(category.name), category]));
@@ -352,13 +361,13 @@ export async function GET(request: Request) {
         ok: true, month, scope: "dashboard", accrual,
         fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth },
         salesReceiptExplanation,
-        summary: { income: recognizedIncome, expense, operatingProfit: recognizedIncome - expense, receivedIncome, actualCashOutflow, otherIncome, cardFeePending },
-        cashReport,
+        summary: { income: recognizedIncome, expense, operatingProfit: recognizedIncome - expense, receivedIncome, actualCashOutflow, otherIncome: cashOtherIncome, cardFeePending },
+        cashReport, cashImport,
         accounts: accounts.map(({ code, type, is_business_fund, balance, openingBalance }) => ({ code, type, is_business_fund, balance, openingBalance })),
         categories: (categoriesResult.data ?? []).map(({ id, name, kind, parent_id }) => ({ id, name, kind, parent_id })),
-        profitTransactions: profitRows.filter(row => row.type === "income"),
+        profitTransactions: profitRows.filter(row => row.type === "income" && row.source_type !== "cash_import_recognition"),
         partners: partners.map(({ ledgerPartyId, emoji }) => ({ ledgerPartyId, emoji })),
-        transactions: transactions.filter(row => row.type === "income").map(({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category }) => ({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category })),
+        transactions: transactions.filter(row => row.type === "income" && row.source_type !== "cash_import_recognition").map(({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category }) => ({ id, type, amount, economic_effect_sign, recognition_month, memo, party_id, category })),
       });
     }
     const correctionsByRoot = new Map<number, { amount: number; economicEffectSign: number }[]>();
@@ -413,7 +422,7 @@ export async function GET(request: Request) {
         accounts, categories: categoriesResult.data ?? [], partners, entries,
       });
     }
-    return respond({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, payrollPaymentGroupIssues, salesReceiptExplanation, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
+    return respond({ ok: true, month, fundsView: { month, mode: fundsViewMode, asOf: fundsViewMode === "live" ? now.toISOString() : monthEndCutoffAt, businessDateExclusive: fundsViewMode === "live" ? null : nextMonth }, inventoryProjectionIssues, payrollPaymentGroupIssues, salesReceiptExplanation, summary: { income: recognizedIncome, salesIncome, otherIncome, receivedIncome, expense, operatingProfit: recognizedIncome - expense, paidExpense, displayedExpense, actualCashOutflow, cardSettlementDifference, cardGrossSales, monthlySettledGross: cardGross.monthlySettledGross, reconciledCardGross, unreconciledCardGross, actualCardDeposits, unsettledCardGross, cardFeePending }, cashReport, cashImport, accounts, categories: categoriesResult.data ?? [], profitTransactions: profitRows, parties: partiesResult.data ?? [], partners, transactions: displayTransactions, entries });
   } catch (error) {
     console.error("[LEDGER_GET_FAILED]", error);
     return respond({ ok: false, code: "LEDGER_LOAD_FAILED" }, 500);
