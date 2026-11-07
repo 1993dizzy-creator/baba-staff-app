@@ -21,6 +21,8 @@ export function buildCardFeeMonthState(input: {
   month: string; currentMonth: string; closedMonths: ReadonlySet<string>;
   sales: readonly CardSale[]; lines: readonly CardAllocationLine[]; reconciliations: readonly CardReconciliation[];
   closures: readonly CardFeeClosure[];
+  // Provisional manual card-fee expense per sale month (YYYY-MM); mirrors ledger_card_fee_private.provisional_fee.
+  provisionalFees?: Readonly<Record<string, number>>;
 }) {
   const { month, currentMonth, closedMonths, sales, lines, reconciliations, closures } = input;
   const start = `${month}-01`, end = nextMonthStart(month);
@@ -50,6 +52,7 @@ export function buildCardFeeMonthState(input: {
   const autoFeeMonths: AutoCardFeeMonth[] = [...closedMonths].filter(m => m < currentMonth && !confirmedMonths.has(m)).sort().map(m => ({
     month: m, reviewRequired: reconciliations.some(r => (r.status === "unmatched" || r.status === "partial") && r.deposit_date >= `${m}-01`), gross: sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+Number(s.amount),0),
     outstanding: gross.sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+s.outstandingGrossAmount,0),
+    ...(input.provisionalFees?.[m] ? { provisionalFee: input.provisionalFees[m] } : {}),
   })).filter(row => row.gross > 0 && row.outstanding > 0);
   const remainingRate = monthCardGross > 0 ? currentOutstanding / monthCardGross : null;
   const autoStatus = closure ? "confirmed" : month >= currentMonth ? "current_month"

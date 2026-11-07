@@ -1,7 +1,7 @@
 import { buildCardFeeMonthState, type CardFeeClosure } from "@/lib/ledger/card-fee-closures";
 import { buildCardFeeEstimate, CARD_FEE_EXPENSE_CATEGORY_NAME } from "@/lib/ledger/card-fee-estimate";
 import { loadCardAllocationLines, loadCardRows, loadCardSales } from "@/lib/ledger/card-settlement-data";
-import type { CardReconciliation } from "@/lib/ledger/card-settlements";
+import { sumCardMoney, type CardReconciliation } from "@/lib/ledger/card-settlements";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
 import { supabaseServer } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
@@ -20,20 +20,24 @@ export async function GET(request: Request) {
       loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_date,deposit_amount,matched_gross_amount,difference_amount,status").order("id").range(from, to)),
       loadCardRows((from, to) => supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,expense_transaction_id,confirmed_at,confirmed_by,finalization_business_date,cancelled_at,cancel_reason,memo").order("id").range(from, to)),
       loadCardRows((from, to) => supabaseServer.from("ledger_month_closures").select("month,status").eq("status", "closed").order("month").range(from, to)),
-      // Manual expenses already booked as this month's card fee (e.g. a provisional estimate). Shown, never re-booked.
-      loadCardRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,memo,category:ledger_categories!inner(name)")
-        .eq("status", "confirmed").eq("source_type", "manual").eq("recognition_month", `${month}-01`).eq("category.name", CARD_FEE_EXPENSE_CATEGORY_NAME).order("id").range(from, to)),
+      // Manual expenses booked as a card fee (provisional estimates), every month: the selected month is
+      // shown in the analysis and every month feeds the deposit preview. Never re-booked here.
+      loadCardRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,memo,recognition_month,category:ledger_categories!inner(name)")
+        .eq("status", "confirmed").eq("source_type", "manual").eq("category.name", CARD_FEE_EXPENSE_CATEGORY_NAME).order("id").range(from, to)),
     ]);
+    const manualFees = (manualFeeRows as { id: number; amount: number | string; economic_effect_sign: number | null; memo: string | null; recognition_month: string }[])
+      .map(row => ({ id: row.id, month: row.recognition_month.slice(0, 7), amount: Number(row.amount) * (row.economic_effect_sign === -1 ? -1 : 1), memo: row.memo ? row.memo.slice(0, 80) : null }));
+    const provisionalFees: Record<string, number> = {};
+    for (const row of manualFees) provisionalFees[row.month] = sumCardMoney([provisionalFees[row.month] ?? 0, row.amount]);
     const state = buildCardFeeMonthState({
       month, currentMonth: currentMonth(),
       closedMonths: new Set((closedMonths as { month: string }[]).map(row => row.month.slice(0, 7))),
-      sales, lines, reconciliations: reconciliations as CardReconciliation[], closures: closures as CardFeeClosure[],
+      sales, lines, reconciliations: reconciliations as CardReconciliation[], closures: closures as CardFeeClosure[], provisionalFees,
     });
     const estimate = buildCardFeeEstimate({
       monthCardGross: state.monthCardGross, currentOutstanding: state.currentOutstanding, historicalConfirmedFee: state.historicalConfirmedFee,
       monthEndFee: state.monthEndFee, hasClosure: Boolean(state.closure),
-      manualExpenses: (manualFeeRows as { id: number; amount: number | string; economic_effect_sign: number | null; memo: string | null }[])
-        .map(row => ({ id: row.id, amount: Number(row.amount) * (row.economic_effect_sign === -1 ? -1 : 1), memo: row.memo ? row.memo.slice(0, 80) : null })),
+      manualExpenses: manualFees.filter(row => row.month === month).map(({ id, amount, memo }) => ({ id, amount, memo })),
     });
     return ledgerJson({ ok: true, ...state, estimate, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
   } catch (error) {
@@ -60,7 +64,7 @@ export async function POST(request: Request) {
     if (result.status !== "confirmed") {
       const status = String(result.status ?? "CARD_FEE_CONFIRM_FAILED");
       const httpStatus = status === "forbidden" ? 403
-        : ["current_month", "future_month", "month_closed", "already_confirmed", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales"].includes(status) ? 409
+        : ["current_month", "future_month", "month_closed", "already_confirmed", "provisional_fee_exists", "legacy_unallocated_deposits", "earlier_month_unconfirmed", "insufficient_card_pending", "no_card_sales"].includes(status) ? 409
           : 400;
       return ledgerJson({ ok: false, code: status.toUpperCase(), result }, httpStatus);
     }

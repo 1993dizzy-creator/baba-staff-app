@@ -73,8 +73,11 @@ test('card deposit fields block short, missing and review-required plans and hin
   assert.match(empty.html, /정산 가능 미정산 6\.245\.400 ₫/);
   assert.equal(empty.draft.canSubmit, false);
   assert.match(formFixture({ sources: data, states: { 0: '2026-09-13T10:00', 1: '100' } }).html, /입금일 이전의 미정산 카드매출이 없습니다\./);
-  // Closed-month fee check: a remaining rate below the auto-close minimum needs review, so nothing can be saved.
-  const review = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000 }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
+  // Closed-month remainder below the auto-close minimum is left for review (not payable), so this deposit has nothing to pay.
+  const below = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000 }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
+  assert.match(below.html, /미정산 카드매출 잔액이 실제 입금액보다 부족합니다./); assert.equal(below.draft.canSubmit, false);
+  // Unresolved legacy deposits after that month still need review, so nothing can be saved.
+  const review = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000, reviewRequired: true }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
   assert.match(review.html, /카드 정산 데이터를 확인해주세요\./); assert.equal(review.draft.canSubmit, false);
   // Sources still loading or failed: no preview numbers and no save.
   const loading = formFixture({ states: { 0: '2026-09-15T10:00', 1: '100' } });

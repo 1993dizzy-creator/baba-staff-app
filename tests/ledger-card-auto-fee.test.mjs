@@ -11,7 +11,11 @@ for(const [remaining,deposit,fee,allocations] of [[5000000,2850000,2150000,[2850
  const plan=planCardDepositWithFees(sales(remaining),deposit,'2026-09-05',feeMonths(remaining));assert.equal(plan.error,null);assert.equal(plan.fees[0]?.amount??0,fee);assert.deepEqual(plan.rows.map(row=>row.allocatedAmount),allocations);assert.equal(plan.totalAllocated,deposit);
 });
 test('preview current month, review, rounding and capacity use exact deposit invariant',()=>{
- assert.equal(planCardDepositWithFees(sales(1000000),500000,'2026-09-05',feeMonths(1000000)).error,'review_required');
+ // Below the reference range is a review reason, not a blocker: the remainder is skipped and FIFO pays the next month.
+ const below=planCardDepositWithFees(sales(1000000),500000,'2026-09-05',feeMonths(1000000));assert.equal(below.error,null);assert.deepEqual(below.rows.map(row=>[row.transactionId,row.allocatedAmount]),[[2,500000]]);assert.equal(below.fees.length,0);
+ assert.equal(planCardDepositWithFees(sales(1000000),500000,'2026-09-05',[{...feeMonths(1000000)[0],reviewRequired:true}]).error,'review_required');
+ // A provisional manual fee covering the remainder is never repaid or fee'd again.
+ const provisional=planCardDepositWithFees(sales(3000000),5000000,'2026-09-05',[{...feeMonths(3000000)[0],provisionalFee:3000000}]);assert.deepEqual(provisional.rows.map(row=>[row.transactionId,row.allocatedAmount]),[[2,5000000]]);assert.equal(provisional.fees.length,0);
  assert.equal(planCardDepositWithFees(sales(3000000,0),2000000,'2026-09-05',feeMonths(3000000)).error,'exceeds_outstanding');
  assert.equal(planCardDepositWithFees(sales(5000000),2850000,'2026-08-25',feeMonths(5000000)).fees.length,0);
  const plan=planCardDepositWithFees([{id:1,business_date:'2026-08-20',outstandingGrossAmount:0.3},{id:2,business_date:'2026-09-01',outstandingGrossAmount:1}],0.5,'2026-09-05',[{month:'2026-08',gross:10,outstanding:0.3}]);assert.equal(plan.totalAllocated,0.5);assert.equal(plan.fees[0].amount,0.215);

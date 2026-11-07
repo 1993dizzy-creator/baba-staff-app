@@ -4,7 +4,8 @@ export const CARD_FEE_TARGET_RATE = 0.0215;
 export const CARD_FEE_AUTO_CLOSE_MIN_RATE = 0.018;
 export const CARD_FEE_AUTO_CLOSE_MAX_RATE = 0.025;
 
-export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean };
+// provisionalFee: confirmed manual card-fee expense already taken from card clearing for this sale month.
+export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean; provisionalFee?: number };
 
 // Same planning contract as the RPC, before any deposit/fee write. A fee already
 // in range is preserved; an overshoot reserves target, not all remaining gross.
@@ -30,10 +31,17 @@ export function planCardDepositWithFees(
     const outstanding = sumCardMoney(monthSales.map(sale => sale.outstandingGrossAmount));
     const feeMonth = feeMonths.find(row => row.month===month && month<depositDate.slice(0,7));
     let payment = Math.min(remaining,outstanding), fee=0;
-    if (feeMonth) {
+    const provisional = feeMonth?.provisionalFee ?? 0;
+    if (provisional !== 0) {
+      // Already expensed and out of card clearing: never repaid, never fee'd again (RPC provisional_fee).
+      if (!feeMonth || provisional < 0 || provisional > outstanding) return result("review_required");
+      payment = Math.min(remaining, cardMoney(outstanding - provisional));
+    } else if (feeMonth) {
       const rate=outstanding/feeMonth.gross, after=(outstanding-payment)/feeMonth.gross;
-      if (feeMonth.reviewRequired || feeMonth.gross<=0 || rate<CARD_FEE_AUTO_CLOSE_MIN_RATE) return result("review_required");
-      if (rate<=CARD_FEE_AUTO_CLOSE_MAX_RATE) { fee=outstanding; payment=0; }
+      if (feeMonth.reviewRequired || feeMonth.gross<=0) return result("review_required");
+      // Below the reference range: left for review, not a deposit blocker; FIFO continues.
+      if (rate<CARD_FEE_AUTO_CLOSE_MIN_RATE) payment=0;
+      else if (rate<=CARD_FEE_AUTO_CLOSE_MAX_RATE) { fee=outstanding; payment=0; }
       else if (after<=CARD_FEE_AUTO_CLOSE_MAX_RATE) {
         fee=after>=CARD_FEE_AUTO_CLOSE_MIN_RATE ? cardMoney(outstanding-payment) : cardMoney(feeMonth.gross*CARD_FEE_TARGET_RATE);
         payment=cardMoney(outstanding-fee);
