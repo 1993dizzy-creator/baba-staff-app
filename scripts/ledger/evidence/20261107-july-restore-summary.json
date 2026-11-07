@@ -1,0 +1,195 @@
+{
+  "status": "PASS_SOURCE_DRY_RUN",
+  "executionStatus": "BLOCKED_PENDING_RUNTIME_EVIDENCE",
+  "sourceRows": 395,
+  "mappingRows": 395,
+  "sourceFiles": {
+    "README_Codex.txt": {
+      "sha256": "da0c9988a128d267b0ac4a88dac79699a9ac373fbd276a3a271e1befe112142b"
+    },
+    "july_2026_395_transactions.csv": {
+      "sha256": "f5009e75647e271c6217325e60766dabcfbfec20b770bcfedc0795abbc1a05f0"
+    },
+    "july_2026_395_mapping_full.md": {
+      "sha256": "148c42ed565ca07813759735c6f3ef408ed1726a066099131ef5c3875aa36296"
+    },
+    "july_2026_daily_targets.csv": {
+      "sha256": "4b7233b75f69f55862553c4f008ccca3c403300aa163588fb1ddac98ed47af40"
+    }
+  },
+  "historicalClassificationCounts": {
+    "card_deposit": 23,
+    "manual_candidate": 54,
+    "inventory_additional": 99,
+    "inventory_original": 17,
+    "meal": 31,
+    "pos_daily_split": 32,
+    "pos_card": 31,
+    "other": 108
+  },
+  "byGroup": {
+    "card_deposit": {
+      "rows": 23,
+      "statuses": {
+        "needs_link": 23
+      }
+    },
+    "other": {
+      "rows": 108,
+      "statuses": {
+        "hold": 10,
+        "needs_link": 94,
+        "registration_candidate": 4
+      }
+    },
+    "inventory_combined": {
+      "rows": 116,
+      "statuses": {
+        "needs_confirmation": 116
+      }
+    },
+    "manual_candidate": {
+      "rows": 54,
+      "statuses": {
+        "needs_confirmation": 35,
+        "registration_candidate": 19
+      }
+    },
+    "meal": {
+      "rows": 31,
+      "statuses": {
+        "registration_candidate": 31
+      }
+    },
+    "pos_daily_split": {
+      "rows": 32,
+      "statuses": {
+        "needs_link": 31,
+        "hold": 1
+      }
+    },
+    "pos_card": {
+      "rows": 31,
+      "statuses": {
+        "registration_candidate": 28,
+        "hold": 2,
+        "link_existing": 1
+      }
+    }
+  },
+  "byStatus": {
+    "needs_link": 148,
+    "hold": 13,
+    "needs_confirmation": 151,
+    "registration_candidate": 82,
+    "link_existing": 1
+  },
+  "batches": {
+    "B2_CARD": {
+      "rows": 23,
+      "statuses": {
+        "needs_link": 23
+      },
+      "deltas": {
+        "store_cash": "0",
+        "vuong_personal_custody": "0",
+        "cho_personal_custody": "0",
+        "baba_corporate_bank": "225970967"
+      }
+    },
+    "B3_SPECIAL": {
+      "rows": 12,
+      "statuses": {
+        "hold": 10,
+        "registration_candidate": 2
+      },
+      "deltas": {
+        "store_cash": "-191800800",
+        "vuong_personal_custody": "0",
+        "cho_personal_custody": "17070800",
+        "baba_corporate_bank": "-551479249"
+      }
+    },
+    "B1_INVENTORY": {
+      "rows": 116,
+      "statuses": {
+        "needs_confirmation": 116
+      },
+      "deltas": {
+        "store_cash": "-48456000",
+        "vuong_personal_custody": "-9365000",
+        "cho_personal_custody": "-14952000",
+        "baba_corporate_bank": "-248550658"
+      }
+    },
+    "B1_EXPENSE": {
+      "rows": 87,
+      "statuses": {
+        "needs_confirmation": 35,
+        "registration_candidate": 52
+      },
+      "deltas": {
+        "store_cash": "-20546000",
+        "vuong_personal_custody": "-7765000",
+        "cho_personal_custody": "0",
+        "baba_corporate_bank": "-39977175"
+      }
+    },
+    "B2_POS": {
+      "rows": 157,
+      "statuses": {
+        "needs_link": 125,
+        "registration_candidate": 28,
+        "hold": 3,
+        "link_existing": 1
+      },
+      "deltas": {
+        "store_cash": "153968600",
+        "vuong_personal_custody": "6238300",
+        "cho_personal_custody": "92501900",
+        "baba_corporate_bank": "336635140"
+      }
+    }
+  },
+  "controlTotals": {
+    "opening": "600859817",
+    "businessFundDelta": "-300506175",
+    "closing": "300353642",
+    "meal": "10050000",
+    "cardSales": "223562820",
+    "cardDeposits": "225970967",
+    "deltas": {
+      "store_cash": "-106834200",
+      "vuong_personal_custody": "-10891700",
+      "cho_personal_custody": "94620700",
+      "card_clearing": "223562820",
+      "baba_corporate_bank": "-277400975"
+    }
+  },
+  "candidateDeltas": {
+    "store_cash": "-16350800",
+    "vuong_personal_custody": "-5170000",
+    "cho_personal_custody": "4570800",
+    "baba_corporate_bank": "-94655"
+  },
+  "duplicateRiskRows": 318,
+  "cardCarryover": {
+    "existing1190": "3694200",
+    "newJulyCardSales": "219868620",
+    "julyDeposits": "225970967",
+    "unresolvedEffectOnCurrentClearing": "-6102347",
+    "executionGuard": "Reject any change to current card_clearing; no invented carryover/fee/balancing entry"
+  },
+  "checks": {
+    "mappingRowIdentityAndDate": 395,
+    "dailyAccountDeltaMatches": 155,
+    "dailyBusinessClosingMatches": 124,
+    "executedDbWrites": 0
+  },
+  "limitations": [
+    "registration_candidate is not executable approval or live DB verification",
+    "The export retains historical inventory counts 17 + 99 but no per-row original subclass field; keep combined 116 without guessing the split",
+    "#number references keep original context and are never automatically resolved as inventory IDs",
+    "No fake balancing entry, no allocation of POS summaries as independent receipts"
+  ]
+}
