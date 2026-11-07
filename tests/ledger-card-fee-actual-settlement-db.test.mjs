@@ -84,6 +84,7 @@ test('settlement after the last deposit books the actual remainder once and late
     assert.equal(await balance(db, 'baba_corporate_bank'), bank, 'no money moves to the bank on settlement');
     assert.equal(await monthOutstanding(db, '2026-08'), 0);
     assert.deepEqual((await db.query('select * from ledger_month_closures')).rows, closures, 'close snapshot untouched');
+    assert.equal(await monthOutstanding(db, '2026-09'), 10000000, 'only the settled month is booked; other months stay untouched');
     // Duplicate settlement is refused without writing.
     const before = await snapshot(db);
     assert.equal((await complete(db, '2026-08')).status, 'already_confirmed');
@@ -135,10 +136,15 @@ test('October-style provisional month is skipped by deposits and does not block 
   } finally { await db.close(); }
 });
 
-test('an open past month settles through the existing manual confirmation', async () => {
+test('an open past month needs the same next-month deposit, then settles through the existing manual confirmation', async () => {
   const db = await fixture();
   try {
-    await seedSale(db, 100000000, '2026-08-20'); await autoDeposit(db, 97000000, '2026-08-25');
+    await seedSale(db, 100000000, '2026-08-20'); await autoDeposit(db, 95000000, '2026-08-25');
+    // Same deposit rule as a closed month: no actual deposit after month end, no settlement.
+    const before = await snapshot(db);
+    assert.equal((await complete(db, '2026-08')).status, 'no_settlement_deposit');
+    assert.deepEqual(await snapshot(db), before);
+    await autoDeposit(db, 2000000, '2026-09-05');
     const result = await complete(db, '2026-08');
     assert.equal(result.status, 'confirmed');
     assert.equal(Number((await db.query("select fee_amount from ledger_card_fee_closures where status='confirmed'")).rows[0].fee_amount), 3000000);
@@ -194,7 +200,8 @@ test('settlement requires the explicit final-deposit confirmation and the exact 
     const db = await fixture();
     try {
       await seedSale(db, 100000000, '2026-08-20'); await autoDeposit(db, 95000000, '2026-08-25');
-      if (closedMonth) { await close(db, '2026-08'); await autoDeposit(db, 2850000, '2026-09-05'); }
+      if (closedMonth) await close(db, '2026-08');
+      await autoDeposit(db, 2850000, '2026-09-05');
       const remainder = await monthOutstanding(db, '2026-08');
       const before = await snapshot(db);
       // A bare remainder never settles: no confirmation, a stale amount or a bad amount writes nothing.
@@ -239,5 +246,40 @@ test('every card month boundary, including the reused manual confirmation, follo
         assert.equal(value, expected, `${label} at ${instant}`);
       }
     }
+  } finally { await db.close(); }
+});
+
+test('an unresolved legacy deposit blocks a new deposit in an ordinary month and writes nothing', async () => {
+  for (const settled of [true]) {
+    const db = await fixture({ settled });
+    try {
+      await seedSale(db, 10000000, '2026-09-10');
+      await legacyDeposit(db, 100000, '2026-09-12');
+      const before = await snapshot(db);
+      const bank = await balance(db, 'baba_corporate_bank'), clearing = await balance(db, 'card_clearing');
+      const result = await autoDeposit(db, 1000000, '2026-09-15');
+      assert.deepEqual([result.status, result.reason, result.feeMonth], ['card_fee_review_required', 'legacy_unallocated_deposits', '2026-09-01']);
+      assert.deepEqual(await snapshot(db), before, 'no deposit, movement, fee, allocation or audit');
+      assert.equal(await balance(db, 'baba_corporate_bank'), bank);
+      assert.equal(await balance(db, 'card_clearing'), clearing);
+    } finally { await db.close(); }
+  }
+  // A legacy deposit dated before the sale month cannot be money for it: ordinary FIFO continues.
+  const db = await fixture();
+  try {
+    await seedSale(db, 10000000, '2026-09-10'); await legacyDeposit(db, 100000, '2026-08-31');
+    assert.equal((await autoDeposit(db, 1000000, '2026-09-15')).status, 'created');
+  } finally { await db.close(); }
+});
+
+test('a cancelled deposit is not an actual next-month deposit for settlement', async () => {
+  const db = await fixture();
+  try {
+    await prepare(db);
+    const sep = await autoDeposit(db, 2850000, '2026-09-05');
+    assert.equal((await call(db, 'ledger_cancel_card_reconciliation_v1', [sep.reconciliationId, 'wrong bank line', 1])).status, 'cancelled');
+    const before = await snapshot(db);
+    assert.equal((await complete(db, '2026-08')).status, 'no_settlement_deposit');
+    assert.deepEqual(await snapshot(db), before);
   } finally { await db.close(); }
 });

@@ -16,8 +16,10 @@ test('preview provisional, review, rounding and capacity use exact deposit invar
  const provisional=planCardDepositWithFees(sales(3000000),5000000,'2026-09-05',[{...feeMonths(3000000)[0],provisionalFee:3000000}]);assert.deepEqual(provisional.rows.map(row=>[row.transactionId,row.allocatedAmount]),[[2,5000000]]);assert.deepEqual(provisional.fees,[]);
  assert.equal(planCardDepositWithFees(sales(3000000),500000,'2026-09-05',[{...feeMonths(3000000)[0],provisionalFee:3000000,reviewRequired:true}]).error,'review_required');
  assert.equal(planCardDepositWithFees(sales(3000000),500000,'2026-09-05',[{...feeMonths(3000000)[0],provisionalFee:4000000}]).error,'review_required');
- // Legacy review alone no longer blocks a plain FIFO deposit (no fee is guessed any more).
- assert.equal(planCardDepositWithFees(sales(1000000),500000,'2026-09-05',[{...feeMonths(1000000)[0],reviewRequired:true}]).error,null);
+ // An unresolved legacy deposit blocks paying that month (RPC guard), with or without a provisional fee.
+ assert.equal(planCardDepositWithFees(sales(1000000),500000,'2026-09-05',[{...feeMonths(1000000)[0],reviewRequired:true}]).error,'review_required');
+ // A legacy-review month that this deposit does not reach (nothing to pay there) does not block.
+ assert.equal(planCardDepositWithFees(sales(0),500000,'2026-09-05',[{...feeMonths(0)[0],reviewRequired:true}]).error,null);
  assert.equal(planCardDepositWithFees(sales(3000000,0),4000000,'2026-09-05',feeMonths(3000000)).error,'exceeds_outstanding');
  const plan=planCardDepositWithFees([{id:1,business_date:'2026-08-20',outstandingGrossAmount:0.3},{id:2,business_date:'2026-09-01',outstandingGrossAmount:1}],0.5,'2026-09-05',[{month:'2026-08',gross:10,outstanding:0.3}]);assert.equal(plan.totalAllocated,0.5);assert.deepEqual(plan.rows.map(row=>row.allocatedAmount),[0.3,0.2]);assert.deepEqual(plan.fees,[]);
  for(const amount of [0,-1,NaN,Infinity,0.0001])assert.equal(planCardDepositWithFees(sales(5000000),amount,'2026-09-05',[]).error,'invalid_amount');

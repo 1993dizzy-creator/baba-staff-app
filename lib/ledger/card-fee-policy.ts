@@ -1,7 +1,7 @@
 import { cardMoney, sumCardMoney, type CardDepositAutoAllocationRow } from "./card-settlements.ts";
 
 // provisionalFee: confirmed manual card-fee expense already taken from card clearing for this sale month.
-export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean; provisionalFee?: number };
+export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean; provisionalFee?: number; closed?: boolean };
 
 // Same planning contract as ledger_create_card_deposit_auto_allocate_v1: the deposit pays only real
 // principal, oldest sale first. No card fee is planned here; a fee is booked only by the explicit
@@ -26,14 +26,17 @@ export function planCardDepositWithFees(
     if (remaining<=0) break;
     const monthSales = eligible.filter(sale => sale.business_date.startsWith(month));
     const outstanding = sumCardMoney(monthSales.map(sale => sale.outstandingGrossAmount));
-    const feeMonth = feeMonths.find(row => row.month===month && month<depositDate.slice(0,7));
+    const feeMonth = feeMonths.find(row => row.month===month);
     let payment = Math.min(remaining,outstanding);
     const provisional = feeMonth?.provisionalFee ?? 0;
     if (provisional !== 0) {
-      // Already expensed and out of card clearing: never repaid (RPC provisional_fee guard).
-      if (!feeMonth || feeMonth.reviewRequired || provisional < 0 || provisional > outstanding) return result("review_required");
+      // Already expensed and out of card clearing: never repaid (RPC provisional_fee guard). Only a prior
+      // closed month is unambiguous.
+      if (!feeMonth || month >= depositDate.slice(0,7) || feeMonth.closed === false || feeMonth.reviewRequired || provisional < 0 || provisional > outstanding) return result("review_required");
       payment = Math.min(remaining, cardMoney(outstanding - provisional));
     }
+    // Any month: an unresolved legacy deposit may already be money for these sales (RPC guard).
+    if (payment > 0 && feeMonth?.reviewRequired) return result("review_required");
     remaining=cardMoney(remaining-payment);
     for (const sale of monthSales) {
       if (payment<=0) break;

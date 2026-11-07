@@ -43,7 +43,8 @@ test('active fee lines remove outstanding and define the final fee; cancelled cl
   assert.deepEqual([active.currentOutstanding, active.monthEndFee, active.finalConfirmedFee, active.canConfirm, active.canCancel, active.blockerReason], [0, 300, 300, false, true, null]);
   const cancelledRows = [{ id: 1, closure_id: 8, pos_card_transaction_id: 1, allocated_fee_amount: 300, closure: { status: 'cancelled', fee_month: '2026-08-01' } }];
   const cancelled = state({ sales, reconciliations, lines: [...deposit, ...feeLines(cancelledRows)], closures: [closure(8, '2026-08', 300, 'cancelled')] });
-  assert.deepEqual([cancelled.currentOutstanding, cancelled.closure, cancelled.canConfirm], [300, null, true]);
+  // Settlement also needs an actual deposit after month end; the only deposit here is dated in August.
+  assert.deepEqual([cancelled.currentOutstanding, cancelled.closure, cancelled.canConfirm, cancelled.blockerReason], [300, null, false, 'no_settlement_deposit']);
   assert.equal(feeLines(cancelledRows).length, 0);
   assert.deepEqual(feeLines([{ id: 1, closure_id: 9, pos_card_transaction_id: 1, allocated_fee_amount: '300.5', closure: { status: 'confirmed', fee_month: '2026-02-01' } }]),
     [{ reconciliation_id: -9, pos_card_transaction_id: 1, allocated_gross_amount: '300.5', reconciliation: { status: 'card_fee', deposit_date: '2026-02-28' } }]);
@@ -56,10 +57,12 @@ test('month state blockers mirror the settlement RPC order', () => {
   // A closed month is settleable now (post-close settlement); an older unsettled month still comes first.
   assert.equal(state({ sales, closedMonths: new Set(['2026-08']) }).blockerReason, 'earlier_month_unconfirmed');
   assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']) }).blockerReason, 'earlier_month_unconfirmed', 'closed but unsettled older month');
-  const settleable = state({ sales, closedMonths: new Set(['2026-07', '2026-08']), closures: [closure(3, '2026-07', 500)] });
+  // A September automatic deposit paid part of August: the actual next-month deposit settlement requires.
+  const nextMonthDeposit = { lines: [line(9, 2, 100, 'auto_allocated', '2026-09-03')], reconciliations: [rec(9, 'auto_allocated', '2026-09-03', 100, 100)] };
+  const settleable = state({ sales, closedMonths: new Set(['2026-07', '2026-08']), closures: [closure(3, '2026-07', 500)], ...nextMonthDeposit });
   assert.deepEqual([settleable.blockerReason, settleable.canConfirm, settleable.autoStatus], [null, true, 'settlement_pending']);
   // October style: a provisional older month does not block, the provisional month itself cannot be settled.
-  assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']), provisionalFees: { '2026-07': 500 } }).blockerReason, null);
+  assert.equal(state({ sales, closedMonths: new Set(['2026-07', '2026-08']), provisionalFees: { '2026-07': 500 }, ...nextMonthDeposit }).blockerReason, null);
   assert.equal(state({ sales, month: '2026-07', currentMonth: '2026-09', closedMonths: new Set(['2026-07']), provisionalFees: { '2026-07': 500 } }).blockerReason, 'provisional_fee');
   const paid = state({ sales: [sale(2, '2026-08-10', 1000)], lines: [line(1, 2, 1000, 'auto_allocated', '2026-08-20')], reconciliations: [rec(1, 'auto_allocated', '2026-08-20', 1000, 1000)], closedMonths: new Set(['2026-08']) });
   assert.deepEqual([paid.blockerReason, paid.canConfirm], ['nothing_to_settle', false]);
@@ -69,9 +72,11 @@ test('month state blockers mirror the settlement RPC order', () => {
   assert.equal(state({ sales, reconciliations: [rec(5, 'unmatched', '2026-07-31', 100, 0)] }).blockerReason, 'earlier_month_unconfirmed', 'a legacy deposit before the month cannot pay it');
   const earlier = state({ sales });
   assert.deepEqual([earlier.blockerReason, earlier.earlierUnconfirmedMonth, earlier.canConfirm], ['earlier_month_unconfirmed', '2026-07', false]);
-  assert.equal(state({ sales, closedMonths: new Set(['2026-07']) }).blockerReason, null, 'closed earlier months never block');
-  assert.equal(state({ sales, closures: [closure(3, '2026-07', 500)] }).blockerReason, null);
-  const empty = state({ sales: [sale(1, '2026-07-10', 500)], closedMonths: new Set(['2026-07']) });
+  // One rule on both paths: an unsettled older month blocks whether it is closed or open.
+  assert.equal(state({ sales, closedMonths: new Set(['2026-07']) }).blockerReason, 'earlier_month_unconfirmed');
+  assert.equal(state({ sales, closures: [closure(3, '2026-07', 500)] }).blockerReason, 'no_settlement_deposit');
+  assert.equal(state({ sales, closures: [closure(3, '2026-07', 500)], ...nextMonthDeposit }).blockerReason, null);
+  const empty = state({ sales: [sale(1, '2026-07-10', 500)], closedMonths: new Set(['2026-07']), closures: [closure(3, '2026-07', 500)] });
   assert.deepEqual([empty.hasCardSales, empty.blockerReason, empty.canConfirm], [false, 'no_card_sales', false]);
   const closed = state({ sales, closedMonths: new Set(['2026-07', '2026-08']), closures: [closure(4, '2026-08', 0)] });
   assert.deepEqual([closed.canCancel, closed.finalConfirmedFee, closed.blockerReason], [false, 0, null]);

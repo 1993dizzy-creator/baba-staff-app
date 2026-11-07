@@ -5,7 +5,7 @@ export type CardFeeClosure = {
   id: number; fee_month: string; fee_amount: number | string; status: string; expense_transaction_id: number | null;
   finalization_business_date?: string | null; confirmed_at: string; confirmed_by: number; cancelled_at: string | null; cancel_reason: string | null; memo: string | null;
 };
-export type CardFeeBlocker = "current_month" | "future_month" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed" | "provisional_fee" | "nothing_to_settle";
+export type CardFeeBlocker = "current_month" | "future_month" | "no_card_sales" | "legacy_unallocated_deposits" | "earlier_month_unconfirmed" | "provisional_fee" | "nothing_to_settle" | "no_settlement_deposit";
 
 const monthOf = (date: string) => date.slice(0, 7);
 const nextMonthStart = (month: string) => {
@@ -39,23 +39,28 @@ export function buildCardFeeMonthState(input: {
   const provisional = (m: string) => input.provisionalFees?.[m] ?? 0;
   const earlierOutstanding = new Map<string, number>();
   for (const sale of gross.sales) if (sale.business_date < start && sale.outstandingGrossAmount > 0) earlierOutstanding.set(monthOf(sale.business_date), cardMoney((earlierOutstanding.get(monthOf(sale.business_date)) ?? 0) + sale.outstandingGrossAmount));
-  // Closed target (settlement RPC): any older unsettled month beyond its provisional fee.
-  // Open target (manual confirmation RPC): older open months only.
+  // Same rule on both settlement paths: any older unsettled month beyond its provisional fee.
   const earlierMonth = [...earlierOutstanding]
-    .filter(([saleMonth, outstanding]) => !confirmedMonths.has(saleMonth) && (monthClosed ? outstanding - provisional(saleMonth) > 0 : !closedMonths.has(saleMonth)))
+    .filter(([saleMonth, outstanding]) => !confirmedMonths.has(saleMonth) && outstanding - provisional(saleMonth) > 0)
     .map(([saleMonth]) => saleMonth).sort()[0] ?? null;
+  // An actual automatic deposit after month end must have paid this month's sales.
+  const monthSaleIds = new Set(sales.filter(sale => sale.business_date >= start && sale.business_date < end).map(sale => Number(sale.id)));
+  const hasSettlementDeposit = lines.some(line => line.reconciliation?.status === "auto_allocated" && (line.reconciliation.deposit_date ?? "") >= end && monthSaleIds.has(Number(line.pos_card_transaction_id)));
   const blocker: CardFeeBlocker | null = month > currentMonth ? "future_month"
     : month === currentMonth ? "current_month"
         // Same order as ledger_complete_card_month_v1.
-        : legacy.length ? "legacy_unallocated_deposits"
-          : earlierMonth ? "earlier_month_unconfirmed"
-            : monthCardGross <= 0 ? "no_card_sales"
-              : provisional(month) !== 0 ? "provisional_fee"
+        : provisional(month) !== 0 ? "provisional_fee"
+          : legacy.length ? "legacy_unallocated_deposits"
+            : earlierMonth ? "earlier_month_unconfirmed"
+              : monthCardGross <= 0 ? "no_card_sales"
                 : currentOutstanding <= 0 ? "nothing_to_settle"
-                  : null;
+                  : !hasSettlementDeposit ? "no_settlement_deposit"
+                    : null;
   const closureFee = closure ? cardMoney(Number(closure.fee_amount)) : 0;
-  const autoFeeMonths: AutoCardFeeMonth[] = [...closedMonths].filter(m => m < currentMonth && !confirmedMonths.has(m)).sort().map(m => ({
-    month: m, reviewRequired: reconciliations.some(r => (r.status === "unmatched" || r.status === "partial") && r.deposit_date >= `${m}-01`), gross: sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+Number(s.amount),0),
+  // Every unsettled sale month (deposit preview): legacy review applies to any month a deposit would pay,
+  // a provisional fee only to a prior closed month.
+  const autoFeeMonths: AutoCardFeeMonth[] = [...new Set(sales.map(sale => monthOf(sale.business_date)))].filter(m => !confirmedMonths.has(m)).sort().map(m => ({
+    month: m, closed: closedMonths.has(m), reviewRequired: reconciliations.some(r => (r.status === "unmatched" || r.status === "partial") && r.deposit_date >= `${m}-01`), gross: sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+Number(s.amount),0),
     outstanding: gross.sales.filter(s => monthOf(s.business_date) === m).reduce((n,s) => n+s.outstandingGrossAmount,0),
     ...(input.provisionalFees?.[m] ? { provisionalFee: input.provisionalFees[m] } : {}),
   })).filter(row => row.gross > 0 && row.outstanding > 0);

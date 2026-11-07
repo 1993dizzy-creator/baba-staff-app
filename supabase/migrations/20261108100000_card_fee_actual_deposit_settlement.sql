@@ -159,6 +159,12 @@ begin
     v_reviews:=v_reviews||jsonb_build_array(jsonb_build_object('month',v_sale_month.sale_month,'reason','provisional_fee',
      'provisionalFee',v_provisional,'remainingAmount',v_sale_month.outstanding));
    end if;
+   -- Any month: an unresolved legacy (unmatched/partial) deposit dated on/after this sale month may be
+   -- money for these same sales; a new deposit must not settle the same gross a second time.
+   if v_month_payment>0 and exists(select 1 from public.ledger_card_reconciliations r where r.status in('unmatched','partial') and r.deposit_date>=v_sale_month.sale_month) then
+    return jsonb_build_object('status','card_fee_review_required','feeMonth',v_sale_month.sale_month,'reason','legacy_unallocated_deposits',
+     'remainingAmount',v_sale_month.outstanding);
+   end if;
    v_remaining:=v_remaining-v_month_payment;
    for v_sale in select t.id,t.business_date,t.amount-public.ledger_card_sale_consumed_v1(t.id) outstanding
     from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment'
@@ -353,69 +359,77 @@ begin
     return jsonb_build_object('status', case when p_month=v_current then 'current_month' else 'future_month' end);
   end if;
 
-  if not public.ledger_month_is_closed_v1(p_month) then
-    -- An open past month books the same actual remainder through the existing manual confirmation,
-    -- which locks and recomputes it. The amount must still be the one the admin confirmed.
-    select coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_outstanding
+  -- Both paths: same locks and the same checks before anything is written.
+  -- Lock order as deposit/cancel: month close (ascending), then card clearing (re-entrant for the
+  -- manual confirmation called below).
+  perform pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
+  for v_lock_month in select distinct m from (values(p_month),(v_current)) months(m) order by m loop
+    perform pg_advisory_xact_lock(hashtext('ledger_month_close'),hashtext(v_lock_month::text));
+    perform pg_advisory_xact_lock(hashtext('ledger_month_close:'||to_char(v_lock_month,'YYYY-MM')));
+  end loop;
+  perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
+
+  select * into v_closure from public.ledger_card_fee_closures where fee_month=p_month and status='confirmed';
+  if v_closure.id is not null then
+    return jsonb_build_object('status','already_confirmed','closureId',v_closure.id,'feeAmount',v_closure.fee_amount);
+  end if;
+  -- October #4119 style provisional fee: settled later by a current-month correction, never here.
+  if ledger_card_fee_private.provisional_fee(p_month) is distinct from 0 then
+    return jsonb_build_object('status','provisional_fee_exists','provisionalFee',ledger_card_fee_private.provisional_fee(p_month));
+  end if;
+  -- A legacy deposit that could still pay this month's sales would be booked as fee.
+  select count(*) into v_legacy from public.ledger_card_reconciliations where status in('unmatched','partial') and deposit_date>=p_month;
+  if v_legacy>0 then return jsonb_build_object('status','legacy_unallocated_deposits','count',v_legacy); end if;
+  -- FIFO: an older month with unpaid principal (beyond its provisional fee) is settled first.
+  -- Only p_month's own sales are ever booked below; other months stay untouched.
+  select min(e.sale_month) into v_earlier from (
+    select date_trunc('month',t.business_date)::date sale_month, sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)) outstanding
     from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
-      and date_trunc('month',t.business_date)::date=p_month;
-    if v_outstanding<>p_confirmed_fee then
-      return jsonb_build_object('status','confirmed_fee_mismatch','feeAmount',v_outstanding,'confirmedFee',p_confirmed_fee);
-    end if;
+      and t.business_date<p_month group by 1
+  ) e
+  where e.outstanding-coalesce(ledger_card_fee_private.provisional_fee(e.sale_month),0)>0
+    and not exists(select 1 from public.ledger_card_fee_closures c where c.status='confirmed' and c.fee_month=e.sale_month);
+  if v_earlier is not null then return jsonb_build_object('status','earlier_month_unconfirmed','month',v_earlier); end if;
+
+  select coalesce(sum(t.amount),0),coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_gross,v_outstanding
+  from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
+    and date_trunc('month',t.business_date)::date=p_month;
+  if v_gross<=0 then return jsonb_build_object('status','no_card_sales'); end if;
+  if exists(select 1 from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
+      and date_trunc('month',t.business_date)::date=p_month and public.ledger_card_sale_consumed_v1(t.id)>t.amount) then
+    return jsonb_build_object('status','card_data_invalid');
+  end if;
+  if v_outstanding<=0 then return jsonb_build_object('status','nothing_to_settle'); end if;
+  -- Under lock: the amount must be exactly the one the admin confirmed.
+  if v_outstanding<>p_confirmed_fee then
+    return jsonb_build_object('status','confirmed_fee_mismatch','feeAmount',v_outstanding,'confirmedFee',p_confirmed_fee);
+  end if;
+  -- An actual deposit after month end must have paid this month's sales: confirmed deposit
+  -- transaction, valid lines (sum = deposit) on confirmed card sales of p_month. The latest is the
+  -- month's last deposit.
+  select r.id into v_deposit
+  from public.ledger_card_reconciliations r
+  join public.ledger_transactions d on d.id=r.deposit_transaction_id and d.status='confirmed' and d.type='card_settlement_deposit'
+  join public.ledger_card_reconciliation_lines l on l.reconciliation_id=r.id
+  join public.ledger_transactions s on s.id=l.pos_card_transaction_id and s.status='confirmed'
+    and s.source_type='pos_sales_daily_payment' and s.source_key like 'pos:%:card'
+  where r.status='auto_allocated' and r.deposit_date>=(p_month+interval '1 month')::date
+    and date_trunc('month',s.business_date)::date=p_month
+    and r.deposit_amount=(select coalesce(sum(x.allocated_gross_amount),0) from public.ledger_card_reconciliation_lines x where x.reconciliation_id=r.id)
+  order by r.deposit_date desc, r.id desc limit 1;
+  if v_deposit is null then return jsonb_build_object('status','no_settlement_deposit'); end if;
+
+  if not public.ledger_month_is_closed_v1(p_month) then
+    -- Open past month: the existing manual confirmation books p_month's remainder (recomputed under
+    -- lock); any change from the confirmed amount rolls everything back.
     v_result:=public.ledger_confirm_card_fee_month_v1(p_month, p_memo, p_actor_user_id);
     if v_result->>'status' is distinct from 'confirmed' then return v_result; end if;
-    -- Recomputed under lock: a change after the pre-check rolls everything back.
     if (v_result->>'feeAmount')::numeric<>p_confirmed_fee then raise exception 'CARD_FEE_CONFIRMED_AMOUNT_CHANGED'; end if;
+    v_result:=v_result||jsonb_build_object('settlementDepositReconciliationId',v_deposit,'cardGross',v_gross);
     v_path:='open_month_manual_confirmation';
   else
-    -- Same lock order as deposit/cancel: month close (ascending), then card clearing.
-    perform pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
-    for v_lock_month in select distinct m from (values(p_month),(v_current)) months(m) order by m loop
-      perform pg_advisory_xact_lock(hashtext('ledger_month_close'),hashtext(v_lock_month::text));
-      perform pg_advisory_xact_lock(hashtext('ledger_month_close:'||to_char(v_lock_month,'YYYY-MM')));
-    end loop;
-    perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
+    -- Closed month: post-close finalization moves money in the open business month.
     if public.ledger_month_is_closed_v1(v_current) then return jsonb_build_object('status','month_closed'); end if;
-
-    select * into v_closure from public.ledger_card_fee_closures where fee_month=p_month and status='confirmed';
-    if v_closure.id is not null then
-      return jsonb_build_object('status','already_confirmed','closureId',v_closure.id,'feeAmount',v_closure.fee_amount);
-    end if;
-    -- October #4119 style provisional fee: settled later by a current-month correction, never here.
-    if ledger_card_fee_private.provisional_fee(p_month) is distinct from 0 then
-      return jsonb_build_object('status','provisional_fee_exists','provisionalFee',ledger_card_fee_private.provisional_fee(p_month));
-    end if;
-    -- A legacy deposit that could still pay this month's sales would be booked as fee.
-    select count(*) into v_legacy from public.ledger_card_reconciliations where status in('unmatched','partial') and deposit_date>=p_month;
-    if v_legacy>0 then return jsonb_build_object('status','legacy_unallocated_deposits','count',v_legacy); end if;
-    -- FIFO: an older month with unpaid principal (beyond its provisional fee) is settled first.
-    select min(e.sale_month) into v_earlier from (
-      select date_trunc('month',t.business_date)::date sale_month, sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)) outstanding
-      from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
-        and t.business_date<p_month group by 1
-    ) e
-    where e.outstanding-coalesce(ledger_card_fee_private.provisional_fee(e.sale_month),0)>0
-      and not exists(select 1 from public.ledger_card_fee_closures c where c.status='confirmed' and c.fee_month=e.sale_month);
-    if v_earlier is not null then return jsonb_build_object('status','earlier_month_unconfirmed','month',v_earlier); end if;
-
-    select coalesce(sum(t.amount),0),coalesce(sum(t.amount-public.ledger_card_sale_consumed_v1(t.id)),0) into v_gross,v_outstanding
-    from public.ledger_transactions t where t.status='confirmed' and t.source_type='pos_sales_daily_payment' and t.source_key like 'pos:%:card'
-      and date_trunc('month',t.business_date)::date=p_month;
-    if v_gross<=0 then return jsonb_build_object('status','no_card_sales'); end if;
-    if v_outstanding<=0 then return jsonb_build_object('status','nothing_to_settle'); end if;
-    -- Under lock: the amount must be exactly the one the admin confirmed.
-    if v_outstanding<>p_confirmed_fee then
-      return jsonb_build_object('status','confirmed_fee_mismatch','feeAmount',v_outstanding,'confirmedFee',p_confirmed_fee);
-    end if;
-    -- The month's last deposit: the latest deposit after month end that paid this month's sales.
-    select r.id into v_deposit
-    from public.ledger_card_reconciliations r
-    join public.ledger_card_reconciliation_lines l on l.reconciliation_id=r.id
-    join public.ledger_transactions s on s.id=l.pos_card_transaction_id
-    where r.status='auto_allocated' and r.deposit_date>=(p_month+interval '1 month')::date
-      and date_trunc('month',s.business_date)::date=p_month
-    order by r.deposit_date desc, r.id desc limit 1;
-    if v_deposit is null then return jsonb_build_object('status','no_settlement_deposit'); end if;
     v_result:=ledger_card_fee_private.finalize_month(p_month, v_deposit, p_actor_user_id)
       ||jsonb_build_object('settlementDepositReconciliationId',v_deposit,'cardGross',v_gross);
     v_path:='closed_month_post_close_settlement';
