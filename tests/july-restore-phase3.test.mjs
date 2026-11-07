@@ -63,6 +63,25 @@ async function fixture(){
  return {db,payload:result.payload,result};
 }
 
+test('lock_sources production hash: correction child and root share origin locks; independent sources/extra months preserved without writes',options,async()=>{
+ const {db}=await fixture();try{
+  const hashes=Object.fromEntries(Object.entries(rpcContracts()).map(([k,v])=>[k,v.hash]));
+  assert.deepEqual(hashes,{resolver:'edcfb9d5429307c6fa0690d8d89cfa005b02b8fd13749fab480793b32ed7c4d5',manual:'cff7e12cf6dceee07552c66ad28244c56180e8652d13a0c5130d6d44a8652b5f',sync:'d0265e0158f840b9fd11eaef5a62b979ad4878626ad5709f7f4d090d339e2235',lock:'df9b3ce8ceb8a3f754ca504aeaef6f3274c51ab997c899fe3fb9c76dc2556739',economics:'a2fbc33e168932f305a58993c8b8e0f763d793e946870c07df19568f2831632e'});
+  const observed=(await db.query("select encode(sha256(convert_to(replace(prosrc,E'\\r\\n',E'\\n'),'UTF8')),'hex') hash from pg_proc where oid='inventory_ledger_private.lock_sources(text[],date[])'::regprocedure")).rows[0].hash;
+  assert.equal(observed,hashes.lock);
+  await db.exec("insert into inventory_logs select (jsonb_populate_record(null::inventory_logs,to_jsonb(l)||jsonb_build_object('id',990001,'correction_of_inventory_log_id',6231,'business_date','2026-08-02'))).* from inventory_logs l where id=6231");
+  const before=await dump(db);
+  await db.exec('BEGIN');
+  await db.query("select inventory_ledger_private.lock_sources(array[$1,$2,$1,null,$3],array[date '2026-06-01'])",['inventory-log:990001','inventory-log:6231','inventory-log:5566']);
+  // PGlite's sole backend reports backend_pid=0 and pg_locks.pid=NULL.
+  const locked=async key=>(await db.query("select exists(select 1 from pg_locks where (pid=pg_backend_pid() or (pg_backend_pid()=0 and pid is null)) and locktype='advisory' and objsubid=1 and granted and classid=(case when hashtext($1)<0 then 4294967295 else 0 end)::oid and objid=(hashtext($1)::bigint & 4294967295)::oid) held",[key])).rows[0].held;
+  for(const key of ['ledger_inventory_candidate:inventory-log:6231','ledger_inventory_candidate:inventory-log:5566','ledger_month_close:2026-07','ledger_month_close:2026-06','ledger_inventory_rebook:4298'])assert.equal(await locked(key),true,key);
+  assert.equal(await locked('ledger_inventory_candidate:inventory-log:990001'),false);
+  assert.equal(await locked('ledger_month_close:2026-08'),false);
+  assert.equal(await dump(db),before);await db.exec('ROLLBACK');assert.equal(await dump(db),before);
+ }finally{await db.close();}
+});
+
 test('95-row cohort is extracted from prior CSV/JSON; completed83 and held217 retained; money/fund conservation',options,()=>{
  const {result,capture,prior,csv,phase2}=evidence();
  assert.equal(result.rows.length,95);assert.equal(result.remaining.length,312);assert.equal(result.remaining.filter(r=>r.state==='hold').length,217);

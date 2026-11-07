@@ -30,7 +30,15 @@ export function rpcContracts(){
  const displayAnchor=display.match(/\$a1\$([\s\S]*?)\$a1\$/)[1];
  sync=replaceKnown(sync,displayAnchor,display.match(/\$b1\$([\s\S]*?)\$b1\$/)[1]+displayAnchor);
  const manual=functionFrom(read('20261031070537_meal_adjustment_original_business_date.sql'),'public.ledger_create_manual_transaction_v1');
- const lock=functionFrom(projection,'inventory_ledger_private.lock_sources');
+ const lockOriginal=functionFrom(projection,'inventory_ledger_private.lock_sources');
+ // The correction-origin patch normalizes child keys to the purchase root before
+ // deduplication and source/month/ledger locking. Keep every other lock unchanged.
+ const correction=read('20260914161954_link_inventory_purchase_corrections.sql');
+ const lockPatch=correction.match(/v_definition := replace\(v_definition,\$anchor\$([\s\S]*?)\$anchor\$,\$replacement\$([\s\S]*?)\$replacement\$\);/);
+ if(!lockPatch)throw Error('LOCK_CORRECTION_PATCH_ABSENT');
+ const lockBody=replaceKnown(lockOriginal.body,lockPatch[1],lockPatch[2]);
+ if(sha(lockBody)!=='df9b3ce8ceb8a3f754ca504aeaef6f3274c51ab997c899fe3fb9c76dc2556739')throw Error('OWNER_OBSERVED_LOCK_DIGEST');
+ const lock={body:lockBody,sql:lockOriginal.sql.replace(lockOriginal.body,()=>lockBody)};
  const economics=functionFrom(read('20261030150000_inventory_purchase_billed_amount.sql'),'inventory_ledger_private.economics');
  return {
   resolver:{signature:'public.ledger_resolve_inventory_candidate_v1(bigint,text,bigint,bigint,bigint,date,text,text,bigint)',body:resolver,sql:original.sql.replace(original.body,()=>resolver),hash:sha(resolver)},
