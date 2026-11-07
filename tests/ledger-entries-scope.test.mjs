@@ -30,3 +30,14 @@ test('scope retains authorization and invalid-month checks; only Entries opts in
  const api=entriesApi(entriesTables());assert.equal((await api.get('bad','&scope=entries')).status,400);assert.equal(api.calls.length,0);
  const page=readFileSync('app/(protected)/admin/ledger/entries/page.tsx','utf8');assert.ok(page.includes('month=${requestedMonth}&scope=entries'));assert.ok(!readFileSync('app/(protected)/admin/ledger/page.tsx','utf8').includes('scope=entries'));
 });
+test('save-refresh reads the scope=entries contract and returns every field the Entries page keeps',async()=>{
+ const{readEditedLedger}=await import('../lib/ledger/entry-save-refresh.ts');
+ const tables=entriesTables(),urls=[];
+ const api=entriesApi(tables),full=await body(entriesApi(tables),'2026-10');
+ const fetcher=async url=>{urls.push(url);const m=String(url).match(/month=(\d{4}-\d{2})(&scope=entries)?/);return api.get(m[1],m[2]??'');};
+ const {ledger,payables}=await readEditedLedger('2026-10',false,undefined,fetcher);
+ assert.deepEqual(urls,['/api/admin/ledger?month=2026-10&scope=entries']);assert.equal(payables,null);
+ // LedgerData keys: amounts, balances, card/close-dependent summary and entries are identical to the full response.
+ for(const key of ['month','fundsView','summary','accounts','categories','partners','entries','inventoryProjectionIssues','payrollPaymentGroupIssues'])assert.deepEqual(ledger[key],full[key],key);
+ for(const key of ['transactions','profitTransactions','parties','cashReport','salesReceiptExplanation'])assert.equal(ledger[key],undefined,key);
+});

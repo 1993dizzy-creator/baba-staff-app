@@ -107,7 +107,7 @@ export function entriesApi(tables, { failKind, source = readFileSync('app/api/ad
       },
     },
   };
-  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'entries-diagnostics', 'operating-residual', 'rent-contracts']) {
+  for (const name of ['reserve-balances', 'fund-account-view', 'dashboard-cash-report', 'accrual-report', 'manual-entry-policy', 'payables', 'summary', 'cash-outflow', 'entries-diagnostics', 'operating-residual', 'rent-contracts', 'supplier-prepayments']) {
     dependencies['@/lib/ledger/' + name] = require('../../lib/ledger/' + name + '.ts');
   }
   dependencies['@/lib/partners/emoji'] = require('../../lib/partners/emoji.ts');
@@ -144,6 +144,7 @@ export function entriesApi(tables, { failKind, source = readFileSync('app/api/ad
       deps['@/lib/ledger/payment-verification']=require('../../lib/ledger/payment-verification.ts');
       deps['@/lib/ledger/investments']=require('../../lib/ledger/investments.ts');
       deps['@/lib/ledger/investment-cash-event']=require('../../lib/ledger/investment-cash-event.ts');
+      deps['@/lib/ledger/settlement-periods']=require('../../lib/ledger/settlement-periods.ts');
       deps['@/lib/ledger/investments-server']=compileModule('lib/ledger/investments-server.ts',deps);
       const handler=compileModule('app/api/admin/ledger/'+endpoint+'/route.ts',deps);auxiliaryHandlers.set(endpoint,handler);
       return handler.GET(new Request('http://local'+path));

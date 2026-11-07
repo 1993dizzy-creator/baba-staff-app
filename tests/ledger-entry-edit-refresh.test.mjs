@@ -64,7 +64,8 @@ test('display edit refreshes ledger only and keeps the selected detail, amounts 
   await ui.edited(81, undefined, false);
   assert.equal(ui.selected(), refreshed);
   assert.equal(ui.events.data[0].entries[0].amount, 150);
-  assert.deepEqual(ui.events.requests.map(request => request.url), ['/api/admin/ledger?month=2026-10']);
+  // Same lightweight contract as the first load; the full ledger payload is never refetched.
+  assert.deepEqual(ui.events.requests.map(request => request.url), ['/api/admin/ledger?month=2026-10&scope=entries']);
   assert.equal(ui.events.payables.length, 0);
   assert.equal(ui.events.invalidations, 0);
   assert.equal(ui.events.notice.length, 1);

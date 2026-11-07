@@ -1,5 +1,8 @@
 // Refresh only data a completed edit can change. All monetary values still
 // come from the existing ledger/payables APIs; no client-side rebooking.
+// The ledger read uses the same scope=entries contract as the Entries page's
+// first load (LedgerData): raw transactions, profit rows, parties and the
+// dashboard cash report are never read by that page.
 export async function readEditedLedger<Ledger extends { month: string }, Payables extends { month: string }>(
   month: string,
   financial: boolean,
@@ -7,7 +10,7 @@ export async function readEditedLedger<Ledger extends { month: string }, Payable
   fetcher: typeof fetch = fetch,
 ): Promise<{ ledger: Ledger; payables: Payables | null }> {
   const [ledgerResponse, payableResponse] = await Promise.all([
-    fetcher(`/api/admin/ledger?month=${month}`, { cache: "no-store", signal }),
+    fetcher(`/api/admin/ledger?month=${month}&scope=entries`, { cache: "no-store", signal }),
     financial ? fetcher(`/api/admin/ledger/payables?month=${month}`, { cache: "no-store", signal }) : null,
   ]);
   const [ledger, payables] = await Promise.all([
