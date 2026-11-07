@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { database, seedSale, autoDeposit, balance, outstanding, confirmFee, cancelFee, legacyDeposit } from './helpers/card-fee-fixture.mjs';
 
-// Local PGlite only. The guard migration is not applied to production by this test.
+// Local PGlite only (production applied this migration as 20261107084849).
 const autoFee = readFileSync('supabase/migrations/20261001193526_auto_finalize_closed_month_card_fees.sql', 'utf8');
-const guard = readFileSync('supabase/migrations/20261107120000_card_fee_provisional_guard.sql', 'utf8');
+const guard = readFileSync('supabase/migrations/20261107084849_card_fee_provisional_guard.sql', 'utf8');
 async function fixture({ guarded = true } = {}) {
   const db = await database();
   try {

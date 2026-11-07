@@ -1,4 +1,4 @@
--- P0 card fee guard. NOT APPLIED: production application needs separate approval.
+-- P0 card fee guard. Applied to production as migration 20261107084849 (2026-11-07).
 -- * A confirmed manual card-fee expense (category 카드 정산 차액, source_type manual,
 --   recognition_month = sale month) is a provisional fee. It already left card
 --   clearing, so a deposit must never repay that part of the month's sales and no
