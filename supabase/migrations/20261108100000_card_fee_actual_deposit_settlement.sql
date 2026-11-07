@@ -377,15 +377,6 @@ begin
     perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
     if public.ledger_month_is_closed_v1(v_current) then return jsonb_build_object('status','month_closed'); end if;
 
-  -- Same lock order as deposit/cancel: month close (ascending), then card clearing.
-  perform pg_advisory_xact_lock(hashtext('ledger_month_close_serial'));
-  for v_lock_month in select distinct m from (values(p_month),(v_current)) months(m) order by m loop
-    perform pg_advisory_xact_lock(hashtext('ledger_month_close'),hashtext(v_lock_month::text));
-    perform pg_advisory_xact_lock(hashtext('ledger_month_close:'||to_char(v_lock_month,'YYYY-MM')));
-  end loop;
-  perform pg_advisory_xact_lock(hashtext('ledger_card_clearing_balance'));
-  if public.ledger_month_is_closed_v1(v_current) then return jsonb_build_object('status','month_closed'); end if;
-
     select * into v_closure from public.ledger_card_fee_closures where fee_month=p_month and status='confirmed';
     if v_closure.id is not null then
       return jsonb_build_object('status','already_confirmed','closureId',v_closure.id,'feeAmount',v_closure.fee_amount);
