@@ -26,6 +26,8 @@
 
 `C:\workspace`의 나머지 출처/정리 권한이 불명확한 항목(`baba-evidence`, `bacninh`, 8월 rebuild patch, `start-baba-codex.cmd`, `worknow.code-workspace`)은 그대로 두었다. 작업 Worktree도 삭제하지 않았다.
 
+후속 지시에 따라 `baba-evidence`는 10월 장기 증거임을 조사하고 별도 `.local/evidence-archive`로 이관했다. 이는 7월 자료와 분리되며 [별도 이관 기록](20261107-external-evidence-archive.md)을 따른다.
+
 ## 이후 생성 경로
 
 `.local/`을 Git 추적에서 제외하고 AGENTS.md에 Worktree 내부 임시자료 원칙 및 49행 재실행 금지를 기록했다. 7월 개발 스크립트의 외부 자료 경로를 모듈 위치 기준 `.local`로 바꿨으며, 신규 출력이 Worktree의 `.local` 밖으로 나가는 경우 거절한다. 과거 보고서와 테스트의 보존 파일 참조도 새 위치/이름으로 갱신했다.
