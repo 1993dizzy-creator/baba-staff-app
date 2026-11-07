@@ -97,6 +97,8 @@ function feeApi({ rpcResult = { status: 'confirmed', feeAmount: 0 }, denied = fa
   const calls = [];
   const route = load('app/api/admin/ledger/card-fees/route.ts', {
     '@/lib/ledger/card-fee-closures': { buildCardFeeMonthState: () => ({ month: '2026-08' }) },
+    // GET-only read-only analysis; POST must not touch it.
+    '@/lib/ledger/card-fee-estimate': { buildCardFeeEstimate: () => { throw new Error('estimate is GET-only'); }, CARD_FEE_EXPENSE_CATEGORY_NAME: '카드 정산 차액' },
     '@/lib/ledger/card-settlement-data': { loadCardAllocationLines: async () => [], loadCardRows: async () => [], loadCardSales: async () => [] },
     '@/lib/ledger/card-settlements': {},
     '@/lib/ledger/server': { requireLedgerActor: async () => denied ? { response: Response.json({ ok: false }, { status: 403 }) } : { actor: { id: 7 } }, ledgerJson: (body, status = 200) => Response.json(body, { status }) },

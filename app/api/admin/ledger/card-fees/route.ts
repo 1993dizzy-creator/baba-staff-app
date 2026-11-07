@@ -1,4 +1,5 @@
 import { buildCardFeeMonthState, type CardFeeClosure } from "@/lib/ledger/card-fee-closures";
+import { buildCardFeeEstimate, CARD_FEE_EXPENSE_CATEGORY_NAME } from "@/lib/ledger/card-fee-estimate";
 import { loadCardAllocationLines, loadCardRows, loadCardSales } from "@/lib/ledger/card-settlement-data";
 import type { CardReconciliation } from "@/lib/ledger/card-settlements";
 import { ledgerJson, requireLedgerActor } from "@/lib/ledger/server";
@@ -13,19 +14,28 @@ export async function GET(request: Request) {
   if (!MONTH.test(month)) return ledgerJson({ ok: false, code: "INVALID_MONTH" }, 400);
   try {
     // All sales/lines: earlier open months with outstanding gross block confirmation (FIFO order).
-    const [sales, lines, reconciliations, closures, closedMonths] = await Promise.all([
+    const [sales, lines, reconciliations, closures, closedMonths, manualFeeRows] = await Promise.all([
       loadCardSales(),
       loadCardAllocationLines(),
       loadCardRows((from, to) => supabaseServer.from("ledger_card_reconciliations").select("id,deposit_date,deposit_amount,matched_gross_amount,difference_amount,status").order("id").range(from, to)),
       loadCardRows((from, to) => supabaseServer.from("ledger_card_fee_closures").select("id,fee_month,fee_amount,status,expense_transaction_id,confirmed_at,confirmed_by,finalization_business_date,cancelled_at,cancel_reason,memo").order("id").range(from, to)),
       loadCardRows((from, to) => supabaseServer.from("ledger_month_closures").select("month,status").eq("status", "closed").order("month").range(from, to)),
+      // Manual expenses already booked as this month's card fee (e.g. a provisional estimate). Shown, never re-booked.
+      loadCardRows((from, to) => supabaseServer.from("ledger_transactions").select("id,amount,economic_effect_sign,memo,category:ledger_categories!inner(name)")
+        .eq("status", "confirmed").eq("source_type", "manual").eq("recognition_month", `${month}-01`).eq("category.name", CARD_FEE_EXPENSE_CATEGORY_NAME).order("id").range(from, to)),
     ]);
     const state = buildCardFeeMonthState({
       month, currentMonth: currentMonth(),
       closedMonths: new Set((closedMonths as { month: string }[]).map(row => row.month.slice(0, 7))),
       sales, lines, reconciliations: reconciliations as CardReconciliation[], closures: closures as CardFeeClosure[],
     });
-    return ledgerJson({ ok: true, ...state, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
+    const estimate = buildCardFeeEstimate({
+      monthCardGross: state.monthCardGross, currentOutstanding: state.currentOutstanding, historicalConfirmedFee: state.historicalConfirmedFee,
+      monthEndFee: state.monthEndFee, hasClosure: Boolean(state.closure),
+      manualExpenses: (manualFeeRows as { id: number; amount: number | string; economic_effect_sign: number | null; memo: string | null }[])
+        .map(row => ({ id: row.id, amount: Number(row.amount) * (row.economic_effect_sign === -1 ? -1 : 1), memo: row.memo ? row.memo.slice(0, 80) : null })),
+    });
+    return ledgerJson({ ok: true, ...state, estimate, history: (closures as CardFeeClosure[]).filter(row => row.fee_month.slice(0, 7) === month) });
   } catch (error) {
     console.error("[LEDGER_CARD_FEES_GET_FAILED]", error);
     return ledgerJson({ ok: false, code: "CARD_FEES_LOAD_FAILED" }, 500);

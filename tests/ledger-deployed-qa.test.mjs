@@ -62,6 +62,8 @@ function pageFixture(path, states, fetcher=()=>{throw Error('Unexpected network 
     '@/lib/ledger/card-deposit-display':transpiled('lib/ledger/card-deposit-display.ts',{'./card-settlements':require('../lib/ledger/card-settlements.ts')}),
   };
   const cssModule={default:new Proxy({},{get:(_,key)=>String(key)})};
+  // Read-only fee analysis rendered inside the card fee section (renders nothing without fee.estimate).
+  deps['./CardFeeAnalysis']=transpiled('app/(protected)/admin/ledger/card-settlements/CardFeeAnalysis.tsx',{react,'react/jsx-runtime':trackedRuntime,'./card-settlements.module.css':cssModule});
   deps['@/lib/ledger/settings-text']=require('../lib/ledger/settings-text.ts');
   deps['@/components/inventory/InventoryLoadingCard']=transpiled('components/inventory/InventoryLoadingCard.tsx',{'react/jsx-runtime':runtime,'@/lib/text':{commonText:{ko:{loading:'불러오는 중...'},vi:{loading:'Đang tải...'}}},'@/lib/styles/ui':{ui:{}},'./InventoryLoadingCard.module.css':cssModule});
   deps['@/components/ledger/ReserveEntryHistoryList']=transpiled('components/ledger/ReserveEntryHistoryList.tsx',{react,'react/jsx-runtime':runtime,'@/lib/ledger/reserve-text':deps['@/lib/ledger/reserve-text'],'@/lib/ledger/settings-text':deps['@/lib/ledger/settings-text'],'./ReserveEntryHistoryList.module.css':cssModule});
@@ -285,6 +287,22 @@ test('zero reconciliations retain compact collapsed sales and entry button witho
   assert.doesNotMatch(state.html,/카드 입금 등록|registerLink/);
   assert.ok(state.html.indexOf('이전월 미정산')<state.html.indexOf('카드 입금 내역'));
   assert.equal(state.requests.length,0);
+});
+
+test('closed October card fee section keeps its pending view and adds the read-only analysis without extra requests',()=>{
+  const {buildCardFeeEstimate}=require('../lib/ledger/card-fee-estimate.ts');
+  const estimate=buildCardFeeEstimate({monthCardGross:192125640,currentOutstanding:5699112,historicalConfirmedFee:0,monthEndFee:0,hasClosure:false,manualExpenses:[{id:4119,amount:5699112,memo:null}]});
+  const data={accounts:[],sales:[],monthlySales:[],priorUnreconciledSales:[],totalReconciliationCount:0,reconciliations:[],summary:{monthlyCardGross:192125640,monthlyReconciledGross:0,monthlySettledGross:186426528,monthlyUnreconciledGross:5699112,totalUnreconciledGross:5699112,cardPendingBalance:5699112,actualCardDeposits:0,monthlyUnmatchedDeposits:0,monthlyCompletedGross:0,monthlyCompletedDeposit:0,monthlyCompletedDifference:0,actualDifferenceRate:null}};
+  const fee={month:'2026-10',autoFeeMonths:[],autoStatus:'pending',remainingRate:5699112/192125640,confirmedRate:null,hasCardSales:true,historicalConfirmedFee:0,currentOutstanding:5699112,projectedTotalFee:5699112,monthEndFee:0,finalConfirmedFee:null,monthClosed:true,earlierUnconfirmedMonth:null,blockerReason:'month_closed',canConfirm:false,canCancel:false,closure:null,estimate};
+  const state=pageFixture(cardPath,{0:'2026-10',1:data,19:fee});
+  // Existing pending fee view is unchanged.
+  assert.match(state.html,/기존 확정 수수료/);assert.match(state.html,/자동 확정 대기/);
+  for(const label of ['수수료 추정 분석','전표 #4119는 잠정 수기 비용입니다','공식 카드수수료 확정 기록 없음','+1.568.411 ₫','POS 영수증 검토 후보']) assert.ok(state.html.includes(label),label);
+  assert.ok(state.html.indexOf('기존 확정 수수료')<state.html.indexOf('수수료 추정 분석'));
+  assert.ok(state.html.indexOf('수수료 추정 분석')<state.html.indexOf('카드 입금 내역'));
+  assert.equal(state.requests.length,0);
+  // The current month never shows the analysis.
+  assert.doesNotMatch(pageFixture(cardPath,{0:'2026-10',1:data,19:{...fee,blockerReason:'current_month'}}).html,/수수료 추정 분석/);
 });
 
 test('payable accordion keeps its closing total visible but puts all four monthly cards inside expansion',()=>{
