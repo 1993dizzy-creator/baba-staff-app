@@ -94,48 +94,74 @@ function render(lang, feeOverrides = {}, history = buildCardFeeHistory({ months:
 }
 const BANNED = /자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소|Chờ xác nhận tự động|Cần hủy bút toán thủ công/;
 
-test('October card: provisional difference KPIs, cost booked vs fee unconfirmed, tidy details and history', () => {
+test('October card: plain cost wording, no store-average note, tidy settlement detail and history', () => {
   const html = render('ko');
   const has = fragment => assert.ok(html.includes(fragment), fragment);
   has('<span>잠정 정산 차액</span><strong>5.699.112 ₫</strong>');
-  has('<span>잠정 차액률</span><strong>2.97%</strong><small class="kpiNote">매장 평균 2.11%</small>');
-  // Cost booking and fee confirmation are two separate facts, no badges.
-  has('<dl class="feeState"><div><dt>비용 반영</dt><dd>수기 전표 #4119 · 5.699.112 ₫</dd></div><div><dt>수수료 확정</dt><dd>미확정</dd></div></dl>');
-  has('같은 금액이 자동 확정으로 다시 비용 처리되지 않도록 보호됩니다. 실제 수수료가 확정되면 차액만 현재 열린 월에서 정정합니다.');
-  assert.doesNotMatch(html, /잠정 비용 처리|자동 중복 확정 보호|공식 확정 미완료|chip/);
-  has('<details class="feeDetails"><summary>세부 내역 · 수기 전표</summary>');
+  // Rate KPI has no sub-text; the store average lives in the history block only.
+  has('<span>잠정 차액률</span><strong>2.97%</strong></article>');
+  assert.doesNotMatch(html.slice(0, html.indexOf('📈')), /매장 평균|kpiNote/);
+  // Cost state in plain words, no voucher term or id in the default view.
+  has('<dl class="feeState"><div><dt>비용 처리</dt><dd>임시 비용 반영 · 5.699.112 ₫</dd></div><div><dt>수수료 확정</dt><dd>미확정</dd></div></dl>');
+  assert.doesNotMatch(html, /수기 전표|수기 비용 전표|#4119|\[잠정 추정/);
+  has('같은 금액이 자동 확정으로 다시 비용 처리되지 않도록 보호됩니다.');
+  // Settlement detail: collapsed, four amounts only.
+  has('<details class="feeDetails"><summary>정산 상세</summary>');
   assert.doesNotMatch(html, /<details[^>]* open/);
-  has('수기 비용 전표 #4119');
-  // Zero lines are gone from the breakdown.
   const details = html.slice(html.indexOf('<details'), html.indexOf('</details>'));
-  assert.doesNotMatch(details, /<dd>0 ₫<\/dd>|기존 확정|비용 미반영 차액/);
-  // History block.
+  for (const row of ['<dt>카드매출</dt><dd>192.125.640 ₫</dd>', '<dt>입금 반영</dt><dd>186.426.528 ₫</dd>', '<dt>미정산 차액</dt><dd>5.699.112 ₫</dd>', '<dt>비용 반영 금액</dt><dd>5.699.112 ₫</dd>']) assert.ok(details.includes(row), row);
+  assert.doesNotMatch(details, /<dd>0 ₫<\/dd>/);
+  // History KPIs: no sub-text; lowest/highest carry year.month right after the rate.
   has('📈 역대 카드수수료율');
-  has('<span>매장 평균</span><strong>2.11%</strong><small class="kpiNote">확정 2개월 · 매출 가중</small>');
-  has('<span>최저</span><strong>1.88%</strong><small class="kpiNote">8월</small>');
-  has('<span>최고</span><strong>2.39%</strong><small class="kpiNote">9월</small>');
-  has('<th scope="row">10월</th><td>2.97%</td><td>잠정 · 평균 제외</td>');
-  has('<th scope="row">9월</th><td>2.39%</td><td>확정</td>');
-  has('<th scope="row">8월</th><td>1.88%</td><td>확정</td>');
-  has('<th scope="row">7월</th><td>2.24%</td><td>참고 · 카드매출 1일</td>');
-  assert.doesNotMatch(html, /11월|1\.80%|2\.15%|2\.50%|참고 범위|POS 영수증|예상 수수료/);
+  has('<span>평균</span><strong>2.11%</strong></article>');
+  has('<span>최저</span><strong class="rateWithMonth">1.88%<small>(2026.08)</small></strong>');
+  has('<span>최고</span><strong class="rateWithMonth">2.39%<small>(2026.09)</small></strong>');
+  assert.doesNotMatch(html, /확정 2개월|매출 가중<\/small>/);
+  // Month labels always carry the year; newest first.
+  has('<th scope="row">2026년 10월</th><td>2.97%</td><td>잠정 · 평균 제외</td>');
+  has('<th scope="row">2026년 9월</th><td>2.39%</td><td>확정</td>');
+  has('<th scope="row">2026년 7월</th><td>2.24%</td><td>참고 · 카드매출 1일</td>');
+  assert.ok(html.indexOf('2026년 10월') < html.indexOf('2026년 7월'));
+  assert.doesNotMatch(html, /data-history-scroll/, '4 rows: no inner scroll');
   assert.doesNotMatch(html, BANNED);
 });
 
-test('no confirmed month shows "collecting", never 0%', () => {
-  const empty = buildCardFeeHistory({ months: [], currentMonth: '2026-11' });
-  const html = render('ko', {}, empty);
-  assert.ok(html.includes('<small class="kpiNote">매장 평균 집계 중</small>'));
-  assert.ok(html.includes('집계 중 · 아직 확정된 달이 없습니다.'));
-  assert.doesNotMatch(html, /매장 평균 0\.00%/);
+test('history shows up to 5 rows inline and scrolls 6+ rows inside a box; years are always shown', () => {
+  const row = (month, fee) => ({ month, gross: 200000000, saleDays: 30, historicalConfirmedFee: fee, monthEndFee: 0, hasClosure: false, currentOutstanding: 0, monthClosed: true, provisionalFee: 0 });
+  const five = buildCardFeeHistory({ months: ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09'].map((m, i) => row(m, 4000000 + i * 100000)), currentMonth: '2026-11' });
+  const fiveHtml = render('ko', {}, five);
+  assert.equal((fiveHtml.match(/<tbody>[\s\S]*<\/tbody>/)[0].match(/<tr/g) || []).length, 5);
+  assert.doesNotMatch(fiveHtml, /data-history-scroll/);
+  const many = buildCardFeeHistory({ months: ['2025-11', '2025-12', '2026-01', '2026-02', '2026-03', '2026-04', '2026-05'].map((m, i) => row(m, 3800000 + i * 120000)), currentMonth: '2026-11' });
+  const manyHtml = render('ko', {}, many);
+  assert.match(manyHtml, /<div class="historyTableBox historyTableScroll" data-history-scroll="true"><table class="feeTable"><thead>/);
+  for (const label of ['2026년 5월', '2025년 12월', '2025년 11월']) assert.ok(manyHtml.includes(`<th scope="row">${label}</th>`), label);
+  assert.ok(manyHtml.indexOf('2026년 5월') < manyHtml.indexOf('2025년 11월'), 'newest first across years');
+  assert.ok(manyHtml.includes('<strong class="rateWithMonth">1.90%<small>(2025.11)</small></strong>'));
+  const vi = render('vi', {}, many);
+  for (const label of ['>T5/2026<', '>T11/2025<', '<small>(T11/2025)</small>']) assert.ok(vi.includes(label), label);
 });
 
-test('Vietnamese card and history have no Korean UI text', () => {
+test('confirmed month and a month without data use the same plain wording', () => {
+  const sep = buildCardFeeEstimate({ monthCardGross: 181045460, currentOutstanding: 0, historicalConfirmedFee: 0, monthEndFee: 4332575, hasClosure: true, manualExpenses: [] });
+  const confirmed = render('ko', { month: '2026-09', currentOutstanding: 0, monthEndFee: 4332575, finalConfirmedFee: 4332575, closure: { confirmed_at: '2026-10-08T05:00:00Z', finalization_business_date: '2026-10-08' }, estimate: sep });
+  assert.ok(confirmed.includes('<dt>비용 처리</dt><dd>비용 반영 완료</dd>'));
+  const details = confirmed.slice(confirmed.indexOf('<details'), confirmed.indexOf('</details>'));
+  for (const row of ['<dt>카드매출</dt><dd>181.045.460 ₫</dd>', '<dt>입금 반영</dt><dd>176.712.885 ₫</dd>', '<dt>비용 반영 금액</dt><dd>4.332.575 ₫</dd>']) assert.ok(details.includes(row), row);
+  assert.doesNotMatch(details, /미정산 차액|<dd>0 ₫<\/dd>/);
+  const empty = render('ko', { estimate: undefined, currentOutstanding: 0, projectedTotalFee: 0 }, buildCardFeeHistory({ months: [], currentMonth: '2026-11' }));
+  assert.ok(empty.includes('<dt>비용 처리</dt><dd>비용 미반영</dd>'));
+  assert.ok(empty.includes('집계 중 · 아직 확정된 달이 없습니다.'));
+  assert.doesNotMatch(empty, /0\.00%|historyTableBox/);
+});
+
+test('Vietnamese card and history have no Korean text', () => {
   const html = render('vi');
-  for (const label of ['Chênh lệch quyết toán tạm tính', 'TB cửa hàng 2.11%', 'Bút toán thủ công #4119', '<dt>Xác nhận phí</dt><dd>Chưa xác nhận</dd>', 'Tỷ lệ phí thẻ các tháng', 'Thấp nhất', 'Cao nhất', '>T8<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
+  for (const label of ['Chênh lệch quyết toán tạm tính', '<dt>Chi phí</dt><dd>Ghi chi phí tạm · 5.699.112 ₫</dd>', '<dt>Xác nhận phí</dt><dd>Chưa xác nhận</dd>', '<summary>Chi tiết quyết toán</summary>', '<span>Trung bình</span><strong>2.11%</strong>', '<small>(T8/2026)</small>', '>T10/2026<', 'Tạm tính · không tính TB', 'Tham khảo · 1 ngày bán thẻ'])
     assert.ok(html.includes(label), label);
-  // The voucher memo is stored ledger data (shown as entered); every UI label is Vietnamese.
-  assert.doesNotMatch(html.replace('[잠정 추정·추후 정산검증]', ''), /[가-힣]/);
+  // No memo is shown any more, so the whole Vietnamese view is free of Korean.
+  assert.doesNotMatch(html, /[가-힣]/);
+  assert.doesNotMatch(html, /#4119|Bút toán thủ công|TB cửa hàng/);
   assert.doesNotMatch(html, BANNED);
 });
 

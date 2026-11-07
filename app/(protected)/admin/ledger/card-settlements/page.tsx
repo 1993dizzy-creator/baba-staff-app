@@ -202,7 +202,7 @@ function CardSettlementsContent() {
     </div></section>
     {message&&!inspectedDeposit&&!feeCancelOpen?<p role="status" className={styles.notice}>{message}</p>:null}
     {data?<>
-      <section className={styles.card} aria-label={lang==="vi"?"Theo tháng bán thẻ":"카드매출 발생월 기준"}>
+      <section className={`${styles.card} ${styles.cardStatus}`} aria-label={lang==="vi"?"Theo tháng bán thẻ":"카드매출 발생월 기준"}>
         <h2>{t.cardStatus} ({lang==="vi"?`T${Number(month.slice(5,7))}`:`${Number(month.slice(5,7))}월`})</h2>
         <div className={styles.grid}>
           <Card title={`💳 ${t.cardSales}`} value={money(data.summary.monthlyCardGross)}/>
@@ -212,7 +212,7 @@ function CardSettlementsContent() {
         </div>
       </section>
       {/* Card fees per sale month: one unified card (KPIs, status, collapsed details) and the historical rates below. */}
-      <section className={styles.card} aria-label={t.cardFee}>
+      <section className={`${styles.card} ${styles.cardFee}`} aria-label={t.cardFee}>
         <h2>💳 {t.cardFee}</h2>
         {!fee?<p className={styles.empty}>{t.loading}</p>
         :fee.blockerReason==="current_month"||fee.blockerReason==="future_month"?<p className={styles.hint}>{t.feeCurrentMonthHint}</p>
@@ -224,7 +224,7 @@ function CardSettlementsContent() {
         {fee?.feeHistory?<CardFeeHistory history={fee.feeHistory} lang={lang}/>:null}
       </section>
       {data.priorUnreconciledSales.length?<p className={styles.hint}>↪️ {t.priorUnsettled} {money(sumCardMoney(data.priorUnreconciledSales.map(sale=>sale.outstandingGrossAmount)))}</p>:null}
-      <section className={styles.card} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>
+      <section className={`${styles.card} ${styles.cardDeposits}`} aria-label={lang==="vi"?"Theo tháng tiền thẻ về":"카드입금월 기준"}>
         <h2>🏦 {t.depositHistory}</h2>
         {/* Unsettled card sales is the current outstanding balance, not a confirmed card fee. */}
         <dl className={styles.depositTotals}><div><dt>{t.deposit}</dt><dd>{money(data.summary.actualCardDeposits)}</dd></div><div><dt>{t.unsettledCardSales}</dt><dd>{money(data.summary.totalUnreconciledGross)}</dd></div></dl>

@@ -296,7 +296,8 @@ test('closed October card fee section keeps its pending view and adds the read-o
   const fee={month:'2026-10',autoFeeMonths:[],autoStatus:'pending',remainingRate:5699112/192125640,confirmedRate:null,hasCardSales:true,historicalConfirmedFee:0,currentOutstanding:5699112,projectedTotalFee:5699112,monthEndFee:0,finalConfirmedFee:null,monthClosed:true,earlierUnconfirmedMonth:null,blockerReason:'month_closed',canConfirm:false,canCancel:false,closure:null,estimate};
   const state=pageFixture(cardPath,{0:'2026-10',1:data,19:fee});
   // One unified fee card: estimate KPI, provisional + P0 protection status, no stale auto-confirm wording.
-  for(const label of ['<span>잠정 정산 차액</span><strong>5.699.112 ₫</strong>','<span>잠정 차액률</span>','매장 평균 집계 중','<dt>비용 반영</dt><dd>수기 전표 #4119 · 5.699.112 ₫</dd>','<dt>수수료 확정</dt><dd>미확정</dd>']) assert.ok(state.html.includes(label),label);
+  for(const label of ['<span>잠정 정산 차액</span><strong>5.699.112 ₫</strong>','<span>잠정 차액률</span><strong>2.97%</strong></article>','<dt>비용 처리</dt><dd>임시 비용 반영 · 5.699.112 ₫</dd>','<dt>수수료 확정</dt><dd>미확정</dd>','<summary>정산 상세</summary>']) assert.ok(state.html.includes(label),label);
+  assert.doesNotMatch(state.html,/매장 평균|#4119|수기 전표/);
   // Reference-rate comparison and receipt review were replaced by actual historical rates.
   assert.doesNotMatch(state.html,/참고 범위|POS 영수증|예상 수수료/);
   assert.doesNotMatch(state.html,/자동 확정 대기|익월 카드입금 처리 중 자동 확정됩니다|공식 확정 전에 수기 전표를 취소/);
@@ -1049,7 +1050,7 @@ test('card fee UI waits automatically and never exposes manual confirmation',()=
  const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:feeState({remainingRate:.0325})});
  assert.match(state.html,/3\.25%/);
  // Pending past month: cost booking and fee confirmation as two plain rows, not the old "\uC790\uB3D9 \uD655\uC815 \uB300\uAE30" sentence.
- assert.ok(state.html.includes('<dt>\uBE44\uC6A9 \uBC18\uC601</dt><dd>\uBBF8\uBC18\uC601</dd>')&&state.html.includes('<dt>\uC218\uC218\uB8CC \uD655\uC815</dt><dd>\uBBF8\uD655\uC815</dd>'));
+ assert.ok(state.html.includes('<dt>\uBE44\uC6A9 \uCC98\uB9AC</dt><dd>\uBE44\uC6A9 \uBBF8\uBC18\uC601</dd>')&&state.html.includes('<dt>\uC218\uC218\uB8CC \uD655\uC815</dt><dd>\uBBF8\uD655\uC815</dd>'));
  assert.doesNotMatch(state.html,/\uC790\uB3D9 \uD655\uC815 \uB300\uAE30/);
  assert.doesNotMatch(state.html,/\uD655\uC815 \uD6C4 \uCD1D \uC218\uC218\uB8CC/);
 });
@@ -1059,8 +1060,11 @@ test('a confirmed month shows the fee breakdown and cancels through the guarded 
   const section=feeSection(pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed}).html);
   assert.ok(section.includes('<span>확정 수수료</span><strong>3.250.200 ₫</strong>'));
   // Breakdown moved into the collapsed details element, values unchanged.
-  assert.ok(section.includes('<div class="feeTotal"><dt>확정 수수료</dt><dd>3.250.200 ₫</dd></div><div><dt>└ 기존 확정</dt><dd>200 ₫</dd></div><div><dt>└ 월말 확정</dt><dd>3.250.000 ₫</dd></div>'));
-  assert.ok(section.includes('<dt>비용 반영</dt><dd>확정 전표</dd>')&&section.includes('<dt>수수료 확정</dt><dd class="feeStateDone">확정 · 수동 · '));
+  // Settlement detail shows the booked fee as one amount (no voucher parts).
+  assert.ok(section.includes('<details class="feeDetails"><summary>정산 상세</summary>'));
+  assert.ok(section.includes('<div class="feeTotal"><dt>비용 반영 금액</dt><dd>3.250.200 ₫</dd></div>'));
+  assert.doesNotMatch(section,/기존 확정|월말 확정|전표/);
+  assert.ok(section.includes('<dt>비용 처리</dt><dd>비용 반영 완료</dd>')&&section.includes('<dt>수수료 확정</dt><dd class="feeStateDone">확정 · 수동 · '));
   assert.match(section,/>수수료 확정 취소<\/button>/);assert.doesNotMatch(section,/카드 수수료 확정<\/button>|현재 남은 카드매출/);
   const state=pageFixture(cardPath,{0:'2026-08',1:cardData([]),19:confirmed,22:true,23:'  late deposit  '},async()=>Response.json({ok:true,result:{status:'cancelled'}}));
   assert.match(state.html,/월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다/);
