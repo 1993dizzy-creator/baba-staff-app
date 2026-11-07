@@ -1,5 +1,6 @@
--- Inventory item activate/deactivate ("비활성"/"활성" on /inventory). NOT APPLIED: production
--- application needs separate approval.
+-- Inventory item activate/deactivate ("비활성"/"활성" on /inventory). Applied to production by the owner
+-- on 2026-11-08 as direct SQL (verified read-only: service_role has UPDATE on is_active only). It is not
+-- recorded in supabase_migrations.schema_migrations; record it there if the history must list it.
 --
 -- P1-2F (20261102144000) revoked direct UPDATE on public.inventory from service_role and granted back
 -- only the photo metadata columns (image_path, updated_at, updated_by_name, updated_by_username).
