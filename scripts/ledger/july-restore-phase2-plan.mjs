@@ -37,6 +37,7 @@ export function renderPhase2(payload){
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const root=fileURLToPath(new URL('../../.local/july-restore/',import.meta.url));
+ if(existsSync(join(root,'phase2-final-20261107-r2/README-APPLIED-DO-NOT-RERUN.md')))throw Error('PHASE2_ALREADY_APPLIED_DO_NOT_RENDER');
  const out=resolve(process.argv[2]||''),capturePath=resolve(process.argv[3]||'');
  for(const p of [out,capturePath]){const rel=relative(root,p);if(!rel||rel.startsWith('..')||isAbsolute(rel))throw Error('WORKTREE_LOCAL_REQUIRED');}
  if(existsSync(out))throw Error('NEW_LOCAL_OUTPUT_REQUIRED');
