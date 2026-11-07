@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {reconstruct,reviewRuntime,summary,sha,ASSIGNED,WEAK,FRUIT} from '../scripts/ledger/july-restore-phase2.mjs';
-import {planPhase2,renderPhase2} from '../scripts/ledger/july-restore-phase2-plan.mjs';
+import {planPhase2,renderPhase2,PHASE2_RESOLVER_BODY_DIGEST} from '../scripts/ledger/july-restore-phase2-plan.mjs';
 const read=p=>readFileSync(p,'utf8');
 const root=process.env.JULY_PHASE2_INPUT_DIR;
 const observed=()=>({source:JSON.parse(read(join(root,'dry-run-20261107-v2/395-row-dry-run.json'))),capture:JSON.parse(read(join(root,'phase2-runtime-20261107/runtime-readonly.json')))});
@@ -46,13 +46,34 @@ const makePayload=(logs,closures)=>{
 const approve=p=>renderPhase2(p).replaceAll('__ACTOR_USER_ID__','2').replaceAll('__OWNER_APPROVAL__','APPROVED:'+sha(JSON.stringify(p)));
 const tables=['ledger_transactions','ledger_movements','ledger_audit_logs','ledger_candidates','ledger_payables','ledger_payable_allocations','ledger_card_reconciliations','ledger_card_reconciliation_lines','ledger_card_fee_closures','ledger_card_fee_allocation_lines','ledger_month_closures','ledger_month_closure_history','inventory_logs','inventory'];
 async function dump(db){const result={};for(const t of tables)result[t]=(await db.query(`select * from ${t} order by id`)).rows;return JSON.stringify(result);}
+function deployedResolver(){
+ const migration=name=>read('supabase/migrations/'+name).replaceAll('\r\n','\n');
+ const initial=migration('202608210003_add_inventory_purchase_candidates.sql').split('create or replace function public.ledger_resolve_inventory_candidate_v1')[1];
+ const definition='create or replace function public.ledger_resolve_inventory_candidate_v1'+initial.slice(0,initial.indexOf('end $$;')+8);
+ const oldBody=definition.match(/as \$\$([\s\S]*?)\$\$;/)[1];let body=oldBody;
+ const projection=migration('20260906114438_project_inventory_purchase_logs.sql');
+ const locking=projection.split("v_oid := 'public.ledger_resolve_inventory_candidate_v1")[1].split("v_oid := 'public.ledger_sync")[0];
+ const decode=s=>s.replaceAll("''","'");
+ const anchor=decode(locking.match(/v_anchor := '((?:[^']|'')*)';/)[1]);
+ const preamble=locking.match(/v_preamble := \$patch\$([\s\S]*?)\$patch\$;/)[1];
+ assert.ok(body.includes(anchor));body=body.replaceAll(anchor,preamble+anchor);
+ const verification=migration('20260921170100_add_inventory_payment_verification.sql').split('  -- The current reconciliation')[0];
+ let patches=0;
+ for(const m of verification.matchAll(/v_definition := replace\(v_definition,\s*'((?:[^']|'')*)',\s*'((?:[^']|'')*)'\);/g)){
+  assert.ok(body.includes(decode(m[1])));body=body.replaceAll(decode(m[1]),decode(m[2]));patches++;
+ }
+ assert.equal(patches,4);assert.equal(sha(body),PHASE2_RESOLVER_BODY_DIGEST);
+ const lockFunction=projection.slice(projection.indexOf('create function inventory_ledger_private.lock_sources'),projection.indexOf('alter function inventory_ledger_private.lock_sources'));
+ return {body,oldBody,definition:definition.replace(oldBody,body),lockFunction};
+}
 async function fixture(){
  const {PGlite}=createRequire(process.env.JULY_QA_PACKAGE_JSON||import.meta.url)('@electric-sql/pglite'),db=new PGlite();
  await db.exec(read('tests/ledger-july-opening-oneoff-db.test.mjs').match(/const FIXTURE = `([\s\S]*?)`;/)[1]);
  const migration=read('supabase/migrations/202608210003_add_inventory_purchase_candidates.sql');
  await db.exec(migration.slice(migration.indexOf('create table public.ledger_inventory_category_mappings'),migration.indexOf('alter table public.ledger_inventory_category_mappings enable')));
- const resolver=migration.slice(migration.indexOf('create or replace function public.ledger_resolve_inventory_candidate_v1'));
- await db.exec(resolver.slice(0,resolver.indexOf('end $$;')+8));
+ const resolver=deployedResolver();
+ await db.exec('create schema inventory_ledger_private');
+ await db.exec(resolver.definition);
  await db.exec(`alter table ledger_categories add column kind text default 'expense',add column is_active boolean default true;
   alter table ledger_parties add column is_active boolean default true;
   insert into ledger_parties values(10,'Chợ',true);
@@ -71,6 +92,9 @@ async function fixture(){
    (10002,101,'Potato','Khoai','Food','Food','kg',1,26000,'Chợ','2026-07-03','2026-07-03T06:00:00Z','quick_save','purchase',null,null,null);
   insert into ledger_payables(id,expense_transaction_id,party_id,original_amount,status) values(1830,3804,9,15426000,'paid');
   insert into ledger_payable_allocations(payable_id,payment_transaction_id,allocated_amount) values(1830,100,15426000);`);
+ await db.exec(resolver.lockFunction);
+ const month=read('supabase/migrations/202608210008_add_ledger_month_close_corrections.sql');
+ await db.exec(month.slice(month.indexOf('create or replace function public.ledger_candidate_resolution_month_guard_v1'),month.indexOf('create or replace function public.ledger_confirmed_candidate_drift_v1')));
  // Existing restored 49 are immutable pre-existing rows, never rerun their SQL.
  await db.exec(`insert into ledger_transactions(id,operation_id,type,occurred_at,business_date,recognition_month,amount,category_id,status,source_type,source_key,created_by,confirmed_by)
   select 4227+n,gen_random_uuid(),'expense','2026-07-01T03:00:00+07','2026-07-01','2026-07-01',1234,8,'confirmed','manual','existing49:'||n,2,2 from generate_series(0,48) n;`);
@@ -78,6 +102,39 @@ async function fixture(){
  const closures=(await db.query('select id,month::text,status,revision,snapshot_hash from ledger_month_closures order by id')).rows;
  return {db,payload:makePayload(logs,closures)};
 }
+
+test('resolver normalized body exactly matches owner-observed production hash after both historical patches',async()=>{
+ const r=deployedResolver();
+ assert.equal(sha(r.oldBody),'71fe505c58e76dfbf33eec4a3adc98472521c14adb522e731c51990fd8f3ffa3');
+ const {db}=await fixture();try{
+  const result=(await db.query("select encode(sha256(convert_to(replace(prosrc,E'\\r\\n',E'\\n'),'UTF8')),'hex') hash from pg_proc where oid='public.ledger_resolve_inventory_candidate_v1(bigint,text,bigint,bigint,bigint,date,text,text,bigint)'::regprocedure")).rows[0];
+  assert.equal(result.hash,PHASE2_RESOLVER_BODY_DIGEST);
+ }finally{await db.close();}
+});
+
+test('resolver production contract: owner/master, immediate single expense/payment, pending confirmation, duplicate and closed-July guards',async()=>{
+ const {db}=await fixture();try{
+  const add=async(id,amount)=>Number((await db.query(`insert into ledger_candidates(candidate_type,source_type,source_key,business_date,proposed_amount,proposed_recognition_month,source_snapshot,source_fingerprint)
+   values('inventory_purchase','inventory_purchase_log',$1,'2026-07-03',$2,'2026-07-01','{}',repeat('a',64)) returning id`,['inventory-log:'+id,amount])).rows[0].id);
+  const call=async(id,actor)=>(await db.query("select ledger_resolve_inventory_candidate_v1($1,'immediate',8,10,1,null,'contract test','contract test',$2) result",[id,actor])).rows[0].result;
+  const id=await add(10001,30000),before=await dump(db);
+  for(const actor of [3,4,22,999])assert.equal((await call(id,actor)).status,'forbidden');
+  assert.equal(await dump(db),before);
+  await assert.rejects(add(10001,30000),e=>e.code==='23505');
+  const owner=await call(id,2);assert.equal(owner.status,'confirmed');assert.equal(owner.payableId,null);
+  const tx=(await db.query('select type,amount::bigint::text amount,business_date::text,recognition_month::text,confirmed_by from ledger_transactions where id=$1',[owner.transactionId])).rows[0];
+  assert.deepEqual(tx,{type:'expense',amount:'30000',business_date:'2026-07-03',recognition_month:'2026-07-01',confirmed_by:2});
+  assert.deepEqual((await db.query('select fund_account_id,amount::bigint::text amount from ledger_movements where transaction_id=$1',[owner.transactionId])).rows,[{fund_account_id:1,amount:'-30000'}]);
+  assert.equal((await db.query('select status from ledger_candidates where id=$1',[id])).rows[0].status,'confirmed');
+  assert.equal((await db.query('select count(*) n from ledger_payables')).rows[0].n,1);
+  const first=await dump(db);assert.equal((await call(id,2)).status,'already_resolved');assert.equal(await dump(db),first);
+  const second=await add(10002,26000);assert.equal((await call(second,1)).status,'confirmed');
+  assert.equal((await db.query("select count(*) n from ledger_transactions where source_type='inventory_purchase_candidate'")).rows[0].n,2);
+  const pending=await add(10003,12000);
+  await db.exec("insert into ledger_month_closures(month,status,closed_by,summary_snapshot,snapshot_hash) values('2026-07-01','closed',2,'{}',repeat('b',64))");
+  const closed=await dump(db);await assert.rejects(call(pending,2),/closed/i);assert.equal(await dump(db),closed);
+ }finally{await db.close();}
+});
 
 test('batch uses canonical resolver once per log, exact source keys, no payables and identical replay; August/card/old49 preserved',async()=>{
  const {db,payload}=await fixture();try{

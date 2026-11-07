@@ -5,6 +5,9 @@ import {fileURLToPath} from 'node:url';
 import {reconstruct,reviewRuntime,summary,sha,csv,APPLIED,WEAK} from './july-restore-phase2.mjs';
 import {parseVndMilli,formatVndMilli} from '../../lib/ledger/august-rebuild-plan.ts';
 const FUNDS=['store_cash','vuong_personal_custody','cho_personal_custody','baba_corporate_bank'];
+// Owner-observed 2026-11-07 production prosrc SHA-256 (CRLF -> LF).
+// Reproduced from the source-lock and payment-verification migration patches.
+export const PHASE2_RESOLVER_BODY_DIGEST='edcfb9d5429307c6fa0690d8d89cfa005b02b8fd13749fab480793b32ed7c4d5';
 const logFields=['id','item_id','item_name','item_name_vi','category','category_vi','unit','change_quantity','new_purchase_price','new_supplier','business_date','created_at','source','reason','billed_amount','purchase_supplier_partner_id','correction_of_inventory_log_id'];
 export function planPhase2(reconstructed,capture){
  const rows=reviewRuntime(reconstructed,capture),ready=rows.filter(r=>r.state==='ready');
@@ -28,9 +31,7 @@ export function renderPhase2(payload){
  if(!payload.bundle.actions.length)throw Error('NO_READY_ACTIONS');
  const canonical=JSON.stringify(payload),literal="'"+canonical.replaceAll("'","''")+"'";
  let sql=readFileSync(new URL('./july-restore-phase2-batch.sql',import.meta.url),'utf8');
- const resolver=readFileSync(new URL('../../supabase/migrations/202608210003_add_inventory_purchase_candidates.sql',import.meta.url),'utf8').split('create or replace function public.ledger_resolve_inventory_candidate_v1')[1];
- const body=resolver.match(/as \$\$([\s\S]*?)\$\$;/)[1].replaceAll('\r\n','\n');
- const replacements={__PAYLOAD_LITERAL__:literal,__PAYLOAD_DIGEST__:sha(canonical),__EXACT_ROWS__:payload.bundle.actions.map(a=>a.row).join(','),__RESOLVER_BODY_DIGEST__:sha(body)};
+ const replacements={__PAYLOAD_LITERAL__:literal,__PAYLOAD_DIGEST__:sha(canonical),__EXACT_ROWS__:payload.bundle.actions.map(a=>a.row).join(','),__RESOLVER_BODY_DIGEST__:PHASE2_RESOLVER_BODY_DIGEST};
  for(const [k,v] of Object.entries(replacements))sql=sql.replaceAll(k,v);
  return sql;
 }
