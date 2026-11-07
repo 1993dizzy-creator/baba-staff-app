@@ -187,6 +187,7 @@ export const inventoryText = {
     deactivateDone: "비활성 처리되었습니다.",
     activateDone: "다시 활성화되었습니다.",
     deactivateFail: "비활성 처리 실패",
+    activeStatusWriterBlocked: "DB 저장 권한 설정 문제로 상태를 바꾸지 못했습니다. 계정 권한 문제가 아니므로 관리자에게 문의해 주세요.",
     activateFail: "활성화 실패",
   },
 
@@ -383,6 +384,7 @@ export const inventoryText = {
     deactivateDone: "Đã tắt mục này.",
     activateDone: "Đã bật lại mục này.",
     deactivateFail: "Không thể tắt mục này.",
+    activeStatusWriterBlocked: "Không đổi được trạng thái do cấu hình quyền lưu dữ liệu. Đây không phải lỗi quyền tài khoản, vui lòng liên hệ quản trị viên.",
     activateFail: "Không thể bật lại mục này.",
   },
 };

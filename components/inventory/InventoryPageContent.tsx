@@ -1628,6 +1628,11 @@ export default function InventoryPageContent({ embeddedItemId, onClose, onBusyCh
             if (!result) return;
 
             if (!res.ok || !result.ok) {
+                // A DB writer/privilege denial is not an account role problem (master always has the role).
+                if (res.status === 403 && result.error === "inventory_writer_permission_review_required") {
+                    alert(t.activeStatusWriterBlocked);
+                    return;
+                }
                 if (res.status === 403) {
                     alert(c.noPermission);
                     return;
