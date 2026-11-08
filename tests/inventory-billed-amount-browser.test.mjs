@@ -109,6 +109,9 @@ test('실청구금액: registration, quick save, edit-form purchase and 입고 �
    const card=page.getByTestId('snapshot-purchase-card-100');await card.waitFor();await card.click();
    const entry=page.getByTestId('daily-log-purchase-100');await entry.waitFor();
    assert.equal(await page.getByTestId('daily-log-billed-100').getAttribute('data-mode'),'auto');
+   // Badge = 실청구 · 차액 only (auto: difference 0); no mode or calculated-amount labels.
+   const autoBadge=(await page.getByTestId('daily-log-billed-100').innerText()).trim();
+   assert.equal(autoBadge,(lang==='vi'?'Thực tính':'실청구')+' 303,450 ₫ · '+diffText(0));
    await entry.getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).click();
    const formRe=page.getByTestId('receipt-edit-form-100');await formRe.waitFor();
    const re=field('receipt-edit-billed-100');assert.equal(await re.input.inputValue(),'303,450');
@@ -122,10 +125,12 @@ test('실청구금액: registration, quick save, edit-form purchase and 입고 �
    const billedLine=page.getByTestId('daily-log-billed-100');
    await page.waitForFunction(()=>document.querySelector('[data-testid="daily-log-billed-100"]')?.getAttribute('data-mode')==='manual');
    const lineText=await billedLine.innerText();
-   assert.match(lineText,/303,000 ₫/);assert.match(lineText,/303,450 ₫/);assert.match(lineText,/−450 ₫/);
+   assert.equal(lineText.trim(),(lang==='vi'?'Thực tính':'실청구')+' 303,000 ₫ · '+diffText(-450));
+   assert.doesNotMatch(lineText,/직접 입력|자동계산|계산 |Nhập tay|Tự động|Tiền tính|303,450/);
+   // Top 합계 = effective quantity x unit price (3.57 x 85,000), never the manual billed amount.
    const total=lang==='vi'?'Tổng':'합계';
-   assert.match(await entry.locator('xpath=..').innerText(),new RegExp(total+'\\s*303,000'),'card total = billed amount');
-   assert.doesNotMatch(await entry.locator('xpath=..').innerText(),new RegExp(total+'\\s*303,450'));
+   assert.match(await entry.locator('xpath=..').innerText(),new RegExp(total+'\\s*303,450'),'card total = quantity x price');
+   assert.doesNotMatch(await entry.locator('xpath=..').innerText(),new RegExp(total+'\\s*303,000'));
    await noOverflow('saved card');await billedLine.scrollIntoViewIfNeeded();await shot('card-saved');
    await entry.getByRole('button',{name:lang==='vi'?'Sửa nhập hàng':'입고 수정'}).click();
    await formRe.waitFor();assert.equal(await re.mode(),'manual');assert.equal(await re.input.inputValue(),'303,000','reopen keeps manual');

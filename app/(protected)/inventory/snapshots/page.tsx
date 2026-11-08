@@ -1754,9 +1754,7 @@ export default function InventorySnapshotsPage() {
                         <span data-testid={`daily-log-billed-${entry.root.id}`} data-mode={billed.mode}
                             style={{ ...chipStyle, ...(billed.mode === "manual" ? { background: "#fffbeb", color: "#b45309", borderColor: "#fcd34d" } : {}), whiteSpace: "normal" }}>
                             {vi ? "Thực tính" : "실청구"} {formatWholeMoney(billed.billed)}
-                            {billed.mode === "manual" && billed.calculated != null
-                                ? ` · ${vi ? "Nhập tay" : "직접 입력"} · ${vi ? "Tiền tính" : "계산"} ${formatWholeMoney(billed.calculated)} · ${vi ? "Chênh lệch" : "차액"} ${formatSignedMoney(billed.difference ?? 0)}`
-                                : ` · ${vi ? "Tự động" : "자동계산"}`}
+                            {` · ${vi ? "Chênh lệch" : "차액"} ${formatSignedMoney(billed.difference ?? 0)}`}
                         </span>
                     )}
                     {entry.corrections.length > 0 && (
@@ -1882,10 +1880,12 @@ export default function InventorySnapshotsPage() {
             </div>
         );
 
-        return renderLogCard(entry.final, footer, highlighted, entry.cancelled || entry.invalid ? null : billed.billed);
+        // Top 합계 = effective quantity x unit price; the 실청구금액 is shown only in the badge above.
+        return renderLogCard(entry.final, footer, highlighted, entry.cancelled || entry.invalid ? null : billed.calculated);
     };
 
-    // receiptTotal: a purchase card's 실청구금액 (manual billed or quantity x price); log cards use their own amount.
+    // receiptTotal: a purchase card's calculated amount (effective quantity x unit price, rounded like the
+    // Ledger); never the manual 실청구금액. Log cards use their own quantity x price.
     const renderLogCard = (log: InventoryLog, footer?: ReactNode, highlighted = false, receiptTotal: number | null = null) => {
         const changeQuantity = Number(log.change_quantity ?? 0);
         const changeText =
