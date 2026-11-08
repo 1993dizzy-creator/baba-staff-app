@@ -8,6 +8,10 @@ export type PosCloseView={
  drift:boolean;timestampOnlyDrift:boolean;delta:PosCloseTotals|null;canClose:boolean;canReclose:boolean;needsOwnerReview:boolean;monthClosed:boolean;
  finalCheckPending:boolean;
  closeEligibilityReason:string;closeAt:string|null;
+ // Server-evaluated display state: phase of an unclosed date ('closed' once a close exists), store open
+ // time (null when hours are unavailable), manual-close time (next day 00:00 +07) and the server clock.
+ businessPhase:'closed'|'past'|'future'|'hours_unavailable'|'before_open'|'open'|'closeable';
+ openAt:string|null;manualCloseAt:string;serverNow:string;
  finalSync:{runId:number|null;lastSyncedAt:string|null;cutoffAt:string;eligible:boolean};
  ledgerProjection:{status:string;total:number};
  pendingPayments:{count:number;totalAmount:number;receipts:{id:number;refNo:string|null;tableName:string|null;finalAmount:number;pendingSince:string|null;reviewDue:boolean}[]};

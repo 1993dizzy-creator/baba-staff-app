@@ -1,4 +1,5 @@
 import { buildPosCollectionWindow, type BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
+import { addStoreDays } from "../store-settings/business-time-core.ts";
 import { POS_BUCKETS, validPosBusinessDate, type PosBusinessDaySource } from "../ledger/pos-sales-source.ts";
 import { isPosTimestampOnlyDrift } from "./pos-business-day-final-policy.ts";
 
@@ -26,13 +27,28 @@ export function evaluatePosCloseTime(businessDate: string, currentBusinessDate: 
   return { allowed: now.getTime() >= new Date(window.closeAt).getTime(), reason: "configured_close_time", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
 }
 
+// Manual close opens at 00:00 (Asia/Ho_Chi_Minh) of the calendar day after the business date, i.e. still
+// inside the same business day (which ends at the 03:00 cutoff). Fixed time, independent of store hours.
+export function posManualCloseAt(businessDate: string) {
+  if (!validPosBusinessDate(businessDate)) throw new Error("INVALID_POS_CLOSE_TIME");
+  return `${addStoreDays(businessDate, 1)}T00:00:00+07:00`;
+}
+
+// Display phase of a not-yet-closed business date (server clock and business date only).
+export type PosBusinessPhase = "past" | "future" | "hours_unavailable" | "before_open" | "open" | "closeable";
+
 export function evaluatePosManualCloseTime(businessDate: string, currentBusinessDate: string, now: Date, snapshot: BusinessTimeSnapshot) {
   if (!validPosBusinessDate(businessDate) || !validPosBusinessDate(currentBusinessDate) || !Number.isFinite(now.getTime())) throw new Error("INVALID_POS_CLOSE_TIME");
   const window = buildPosCollectionWindow(businessDate, snapshot);
-  if (businessDate < currentBusinessDate) return { allowed: true, reason: "past_business_date", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
-  if (businessDate > currentBusinessDate) return { allowed: false, reason: "future_business_date", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
-  const manualCloseAt = `${businessDate}T23:00:00+07:00`;
-  return { allowed: now.getTime() >= new Date(manualCloseAt).getTime(), reason: "manual_close_time", closeAt: window.closeAt, cutoffAt: window.cutoffAt };
+  const manualCloseAt = posManualCloseAt(businessDate);
+  const openAt = window.isClosed || snapshot.isFallback ? null : window.openAt;
+  const base = { closeAt: window.closeAt, cutoffAt: window.cutoffAt, openAt, manualCloseAt };
+  if (businessDate < currentBusinessDate) return { allowed: true, reason: "past_business_date", phase: "past" as PosBusinessPhase, ...base };
+  if (businessDate > currentBusinessDate) return { allowed: false, reason: "future_business_date", phase: "future" as PosBusinessPhase, ...base };
+  const allowed = now.getTime() >= Date.parse(manualCloseAt);
+  const phase: PosBusinessPhase = allowed ? "closeable" : !openAt ? "hours_unavailable"
+    : now.getTime() < Date.parse(openAt) ? "before_open" : "open";
+  return { allowed, reason: "manual_close_time", phase, ...base };
 }
 
 export function comparePosClosedSource(current: PosBusinessDaySource, closedSnapshot: unknown, closedFingerprint: string | null) {

@@ -9,20 +9,37 @@ import type { PosCloseTotals } from '@/lib/sales/pos-business-day-final-policy';
 const buckets=['cash','transfer','card','other'] as const;
 const money=(amount:number)=>new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount);
 const signed=(amount:number)=>(amount>0?'+':'')+money(amount);
-export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClosed,onBusyChange,onSelectBusinessDate,disabled=false}:{businessDate:string;refreshKey:number;onClosed:()=>Promise<void>;onBusyChange:(busy:boolean)=>void;onSelectBusinessDate?:(date:string)=>void;disabled?:boolean}){
+export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClosed,onBusyChange,onSelectBusinessDate,onLiveChange,disabled=false}:{businessDate:string;refreshKey:number;onClosed:()=>Promise<void>;onBusyChange:(busy:boolean)=>void;onSelectBusinessDate?:(date:string)=>void;onLiveChange?:(live:boolean)=>void;disabled?:boolean}){
  const {lang}=useLanguage(),t=salesCloseText[lang];
  const [status,setStatus]=useState<PosCloseView|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
  const [message,setMessage]=useState(''),[confirm,setConfirm]=useState(false),[confirmInitialClose,setConfirmInitialClose]=useState(false);
+ const [statusSkew,setStatusSkew]=useState(0);
  const load=useCallback(async(signal?:AbortSignal,clearMessage=false)=>{
   if(clearMessage)setMessage('');
   try{
    const response=await fetch('/api/admin/sales/close-status?businessDate='+encodeURIComponent(businessDate),{cache:'no-store',signal});
    const result=await response.json();if(!response.ok||!result.ok)throw Error('status_failed');
-   if(!signal?.aborted)setStatus(result);
+   if(!signal?.aborted){setStatus(result);const server=Date.parse(result.serverNow);setStatusSkew(Number.isFinite(server)?Date.now()-server:0);}
   }catch{if(!signal?.aborted)setStatus(null);}
   finally{if(!signal?.aborted)setLoading(false);}
  },[businessDate]);
  useEffect(()=>{const controller=new AbortController();void load(controller.signal,true);return()=>controller.abort();},[load,refreshKey]);
+ // Unclosed current day: re-read the server status at the next boundary (open time, 00:00 manual close,
+ // 03:00 business-day cutoff) so the state changes without a page reload. The browser clock only
+ // schedules the re-read (offset by the server clock); the server decides the phase and canClose.
+ const phase=status?.businessPhase;
+ useEffect(()=>{
+  if(!status||!['before_open','open','closeable','hours_unavailable'].includes(phase??''))return;
+  const serverNow=Date.now()-statusSkew;
+  const next=[status.openAt,status.manualCloseAt,status.finalSync?.cutoffAt].map(v=>v?Date.parse(v):NaN)
+   .filter(v=>Number.isFinite(v)&&v>serverNow).sort((a,b)=>a-b)[0];
+  if(next===undefined)return;
+  const timer=setTimeout(()=>{void load();},Math.min(Math.max(next-serverNow+1000,5000),2147483647));
+  return()=>clearTimeout(timer);
+ },[status,phase,statusSkew,load]);
+ const live=!loading&&!!status&&(phase==='open'||phase==='closeable');
+ useEffect(()=>{onLiveChange?.(live);},[live,onLiveChange]);
+ useEffect(()=>()=>onLiveChange?.(false),[onLiveChange]);
  const errorText=(code:string)=>({card_settlement_locked:t.cardLocked,month_closed:t.monthClosed,forbidden:t.forbidden,
   source_changed_after_close:t.sourceChanged,POS_CLOSE_SOURCE_CHANGED_SINCE_REVIEW:t.sourceChanged,
   POS_CLOSE_BEFORE_CONFIGURED_CLOSE_TIME:t.beforeClose,POS_CLOSE_SYNC_FAILED:t.syncFailed,POS_CLOSE_SOURCE_INVALID:t.sourceInvalid,
@@ -57,12 +74,19 @@ export default function PosBusinessDayClosePanel({businessDate,refreshKey,onClos
  return <div style={compact} aria-busy={busy||loading}>
   {loading?<p style={muted}>{t.loading}</p>:!status?<p role='alert' style={warning}>{t.failed}</p>:<>
    {!status.latestClose?<>
-    <button style={{...closeButton,opacity:status.canClose&&!busy&&!disabled?1:0.5}} disabled={!status.canClose||busy||disabled} onClick={()=>setConfirmInitialClose(true)}>{busy?t.working:t.close}</button>
-    {eligibility?<p style={muted}>{eligibility}</p>:null}
+    {phase==='open'
+     // Open, before 00:00: a status pill only; closing is not possible yet.
+     ?<div role='status' data-testid='pos-close-open' style={openStatus}>{t.open}</div>
+     :phase==='closeable'
+     // After 00:00: the same pill becomes the close action, enabled only when the server allows it.
+     ?<button data-testid='pos-close-open-closeable' style={{...openStatus,cursor:status.canClose&&!busy&&!disabled?'pointer':'default',opacity:status.canClose&&!busy&&!disabled?1:0.5}}
+       disabled={!status.canClose||busy||disabled} onClick={()=>setConfirmInitialClose(true)}>{busy?t.working:t.openCloseNow}</button>
+     :<button style={{...closeButton,opacity:status.canClose&&!busy&&!disabled?1:0.5}} disabled={!status.canClose||busy||disabled} onClick={()=>setConfirmInitialClose(true)}>{busy?t.working:t.close}</button>}
+    {eligibility?<p style={reason==='manual_close_time'?closeTimeText:muted}>{eligibility}</p>:null}
    </>:status.canReclose?
     <button style={closeButton} disabled={busy||disabled} onClick={()=>setConfirm(true)}>{busy?t.working:t.recloseReview}</button>
     :<div role='status' style={closedStatus}>✓ {t.closed}</div>}
-   {closeMeta?<p style={muted}>{closeMeta}</p>:null}
+   {closeMeta?<p style={closeTimeText}>{closeMeta}</p>:null}
    {checkDetail?<p role={check?.result==='metadata_changed_only'?'status':'alert'} style={check?.result==='metadata_changed_only'?info:warning}>{checkDetail}</p>:null}
    {status.latestClose&&!status.sourceValid&&check?.result!=='source_invalid'?<p role='alert' style={warning}>{t.sourceInvalid}</p>:null}
    {status.latestClose&&status.monthClosed&&check?.result!=='month_closed'?<p role='alert' style={warning}>{t.monthClosed}</p>:null}
@@ -100,6 +124,9 @@ const closedStatus:CSSProperties={minHeight:40,display:'flex',alignItems:'center
 const grid:CSSProperties={display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:12,margin:'14px 0',fontSize:13};
 const amount:CSSProperties={display:'block',marginTop:4,overflowWrap:'anywhere'};
 const muted:CSSProperties={margin:0,fontSize:11,color:'#6b7280',lineHeight:1.45,overflowWrap:'anywhere'};
+// Close-time sub text (before close: when closing opens; after close: method · actor · time) is right aligned.
+const closeTimeText:CSSProperties={...muted,textAlign:'right'};
+const openStatus:CSSProperties={...closeButton,display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid #166534',background:'#166534',color:'#fff',opacity:1};
 const warning:CSSProperties={margin:0,border:'1px solid #fde68a',borderRadius:8,padding:'7px 8px',background:'#fffbeb',color:'#92400e',fontSize:12,fontWeight:700,lineHeight:1.45,overflowWrap:'anywhere'};
 const info:CSSProperties={...warning,border:'1px solid #d1d5db',background:'#f9fafb',color:'#4b5563'};
 const messageStyle:CSSProperties={margin:0,fontSize:12,lineHeight:1.45,overflowWrap:'anywhere'};

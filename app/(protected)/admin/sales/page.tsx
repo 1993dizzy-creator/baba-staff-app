@@ -218,6 +218,8 @@ export default function SalesPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [closeRefreshKey, setCloseRefreshKey] = useState(0);
   const [isClosing, setIsClosing] = useState(false);
+  // Current business day, open and not closed (reported by the close panel from the server status).
+  const [isLiveBusinessDay, setIsLiveBusinessDay] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const loadFailedTextRef = useRef(dailyText.loadFailed);
@@ -403,19 +405,25 @@ export default function SalesPage() {
   const taxSummary = salesData?.taxSummary;
   const hasError = Boolean(errorMessage);
 
+  // Live day: KPIs are paid receipts so far; open (unpaid) orders are not included.
+  const kpiPrefix = isLiveBusinessDay ? dailyText.currentPrefix : "";
+  const paidBaseMeta = isLiveBusinessDay
+    ? `${dailyText.paidReceiptBase} · ${dailyText.openOrdersExcluded}`
+    : dailyText.paidReceiptBase;
+
   const summaryCards = useMemo(
     () => [
       {
-        label: withEmoji(SALES_UI_EMOJIS.totalSales, dailyText.totalSales),
+        label: withEmoji(SALES_UI_EMOJIS.totalSales, kpiPrefix + dailyText.totalSales),
         value: isLoading
           ? dailyText.loading
           : hasError
             ? dailyText.error
             : formatVnd(summary?.totalSales),
-        meta: dailyText.paidReceiptBase,
+        meta: paidBaseMeta,
       },
       {
-        label: withEmoji(SALES_UI_EMOJIS.receipts, dailyText.receipts),
+        label: withEmoji(SALES_UI_EMOJIS.receipts, kpiPrefix + dailyText.receipts),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -424,7 +432,7 @@ export default function SalesPage() {
         meta: `${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)} / ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}`,
       },
       {
-        label: withEmoji(SALES_UI_EMOJIS.soldItems, dailyText.soldItems),
+        label: withEmoji(SALES_UI_EMOJIS.soldItems, kpiPrefix + dailyText.soldItems),
         value: isLoading
           ? dailyText.loading
           : hasError
@@ -435,17 +443,17 @@ export default function SalesPage() {
       {
         label: withEmoji(
           SALES_UI_EMOJIS.averageReceiptAmount,
-          dailyText.averageReceiptAmount
+          kpiPrefix + dailyText.averageReceiptAmount
         ),
         value: isLoading
           ? dailyText.loading
           : hasError
             ? dailyText.error
             : formatVnd(summary?.averageReceiptAmount),
-        meta: dailyText.paidReceiptBase,
+        meta: paidBaseMeta,
       },
     ],
-    [dailyText, hasError, isLoading, summary]
+    [dailyText, hasError, isLoading, summary, kpiPrefix, paidBaseMeta]
   );
 
   const paymentRows = useMemo(
@@ -509,6 +517,7 @@ export default function SalesPage() {
                 onClosed={fetchSalesToday}
                 onBusyChange={setIsClosing}
                 onSelectBusinessDate={handleBusinessDateChange}
+                onLiveChange={setIsLiveBusinessDay}
                 disabled={isSyncing}
               />
             ) : null}

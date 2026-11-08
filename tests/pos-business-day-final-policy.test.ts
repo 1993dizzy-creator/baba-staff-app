@@ -75,7 +75,7 @@ test('normal closed state is compact and omits duplicate sales totals, payment g
 });
 test('pre-close eligibility, automatic/manual metadata and reclose confirmation remain available',()=>{
  assert.match(closePanel,/disabled=\{!status\.canClose\|\|busy\|\|disabled\}/);
- assert.match(closePanel,/\{eligibility\?<p style=\{muted\}>\{eligibility\}/);
+ assert.match(closePanel,/\{eligibility\?<p style=\{reason==='manual_close_time'\?closeTimeText:muted\}>\{eligibility\}/);
  assert.match(closePanel,/status\.latestClose\.method==='automatic'\?t\.automatic:t\.manual/);
  assert.match(closePanel,/status\.canReclose[\s\S]*setConfirm\(true\)/);
  assert.match(closePanel,/confirm&&status\.latestClose&&status\.currentTotals&&status\.delta/);
@@ -87,12 +87,13 @@ test('initial manual close requires confirmation while reclose keeps its existin
  assert.match(closePanel,/onClick=\{\(\)=>setConfirmInitialClose\(false\)\}>\{t\.cancel\}/);
  assert.equal((closePanel.match(/onClick=\{\(\)=>void close\(false\)\}/g)||[]).length,1);
  assert.match(closePanel,/status\.canReclose[\s\S]*setConfirm\(true\)/);
- assert.match(closeText,/"beforeClose": "오후 11시 이후 영업 마감이 가능합니다\."/);
- assert.match(closeText,/"beforeClose": "Có thể chốt ngày kinh doanh sau 23:00\."/);
+ assert.match(closeText,/"beforeClose": "다음날 00:00 이후 영업 마감이 가능합니다\."/);
+ assert.match(closeText,/"beforeClose": "Có thể chốt ngày kinh doanh sau 00:00 hôm sau\."/);
+ assert.doesNotMatch(closeText,/오후 11시|sau 23:00/);
  assert.match(closeText,/"manualCloseConfirmTitle": "영업 마감을 진행하시겠습니까\?"/);
  assert.match(closeText,/"manualCloseConfirmTitle": "Bạn có muốn chốt ngày kinh doanh không\?"/);
 });
-test('manual close paths use the 23:00 policy while automatic and final paths retain configured close time',()=>{
+test('manual close paths use the next-day 00:00 policy while automatic and final paths retain configured close time',()=>{
  assert.match(closeService,/getPosBusinessDayManualCloseTime[\s\S]*evaluatePosManualCloseTime/);
  assert.match(closeService,/options\.method === "manual"[\s\S]*getPosBusinessDayManualCloseTime[\s\S]*getPosBusinessDayCloseTime/);
  assert.match(finalService,/eligible:async\(\)=>\(await getPosBusinessDayManualCloseTime\(date\)\)\.allowed/);

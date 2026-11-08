@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildPosBusinessDaySource, buildPosLedgerRangeSource, canonicalPosJson, posSourceFingerprint, validPosBusinessDate } from "../lib/ledger/pos-sales-source.ts";
 import { comparePosClosedSource, evaluatePosCloseTime, evaluatePosManualCloseTime, validatePosSystemActor } from "../lib/sales/pos-business-day-close-policy.ts";
-import { createFallbackBusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
+import { createFallbackBusinessTimeSnapshot, type BusinessTimeSnapshot } from "../lib/store-settings/business-time-adapter-core.ts";
 
 const date = "2026-08-20";
 const receipt = { id: 1, ref_no: "A", business_date: date, ref_date: null, payment_status: 3, is_canceled: false, final_amount: 100_000, revision: 1, updated_at: null };
@@ -102,20 +102,58 @@ test("configured overnight close permits past dates or closeAt and rejects early
   assert.equal(evaluatePosCloseTime(date, date, new Date("2026-08-21T02:00:00+07:00"), fallback).allowed, false);
 });
 
-test("manual close starts at 23:00 for the current business date without changing configured close or cutoff", () => {
-  const fallback = createFallbackBusinessTimeSnapshot(date);
-  const snapshot = { ...fallback, source: "configured" as const, isFallback: false,
+const configuredHours = (businessDate: string) => {
+  const fallback = createFallbackBusinessTimeSnapshot(businessDate);
+  return { ...fallback, source: "configured" as const, isFallback: false,
     hours: fallback.hours.map(hour => ({ ...hour, isClosed: false, openTime: "16:00", closeTime: "01:00" })) };
-  const configured = evaluatePosCloseTime(date, date, new Date("2026-08-20T23:00:00+07:00"), snapshot);
-  const before = evaluatePosManualCloseTime(date, date, new Date("2026-08-20T22:59:59+07:00"), snapshot);
-  const at = evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:00:00+07:00"), snapshot);
+};
+
+test("manual close starts at next-day 00:00 (+07) for the current business date without changing configured close or cutoff", () => {
+  const snapshot = configuredHours(date);
+  const configured = evaluatePosCloseTime(date, date, new Date("2026-08-21T00:00:00+07:00"), snapshot);
+  const before = evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:59:59+07:00"), snapshot);
+  const at = evaluatePosManualCloseTime(date, date, new Date("2026-08-21T00:00:00+07:00"), snapshot);
   assert.equal(before.allowed, false);
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:59:59.999+07:00"), snapshot).allowed, false);
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:00:00+07:00"), snapshot).allowed, false, "old 23:00 rule is gone");
   assert.equal(at.allowed, true);
-  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-20T23:30:00+07:00"), snapshot).allowed, true);
-  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-21T00:30:00+07:00"), snapshot).allowed, true);
-  assert.equal(evaluatePosManualCloseTime(date, "2026-08-21", new Date("2026-08-21T00:30:00+07:00"), snapshot).allowed, true);
-  assert.equal(evaluatePosManualCloseTime("2026-08-21", date, new Date("2026-08-20T23:30:00+07:00"), snapshot).allowed, false);
+  assert.equal(at.manualCloseAt, "2026-08-21T00:00:00+07:00");
+  // Still the same business day until the 03:00 cutoff; after it the date is past (allowed).
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-21T02:59:59+07:00"), snapshot).allowed, true);
+  assert.equal(evaluatePosManualCloseTime(date, "2026-08-21", new Date("2026-08-21T03:00:00+07:00"), snapshot).reason, "past_business_date");
+  assert.equal(evaluatePosManualCloseTime("2026-08-21", date, new Date("2026-08-21T00:30:00+07:00"), snapshot).allowed, false);
+  assert.equal(evaluatePosManualCloseTime("2026-08-21", date, new Date("2026-08-21T00:30:00+07:00"), snapshot).reason, "future_business_date");
   assert.equal(configured.allowed, false);
   assert.equal(at.closeAt, configured.closeAt);
   assert.equal(at.cutoffAt, configured.cutoffAt);
+  assert.equal(at.cutoffAt, "2026-08-21T03:00:00+07:00");
+});
+
+test("manual close time crosses month and year boundaries in Asia/Ho_Chi_Minh", () => {
+  for (const [businessDate, next] of [["2026-08-31", "2026-09-01"], ["2026-12-31", "2027-01-01"], ["2028-02-28", "2028-02-29"], ["2027-02-28", "2027-03-01"]]) {
+    const snapshot = configuredHours(businessDate);
+    assert.equal(evaluatePosManualCloseTime(businessDate, businessDate, new Date(`${businessDate}T23:59:59+07:00`), snapshot).allowed, false, businessDate);
+    const at = evaluatePosManualCloseTime(businessDate, businessDate, new Date(`${next}T00:00:00+07:00`), snapshot);
+    assert.equal(at.allowed, true, businessDate);assert.equal(at.manualCloseAt, `${next}T00:00:00+07:00`);
+    // 00:00 +07 is 17:00 UTC of the business date.
+    assert.equal(new Date(at.manualCloseAt).toISOString(), `${businessDate}T17:00:00.000Z`);
+  }
+});
+
+test("display phase: before open, open from 16:00, closeable from 00:00; hours unavailable never shows open", () => {
+  const snapshot = configuredHours(date);
+  const phase = (at: string, s: BusinessTimeSnapshot = snapshot, current = date) => evaluatePosManualCloseTime(date, current, new Date(at), s).phase;
+  assert.equal(phase("2026-08-20T03:00:00+07:00"), "before_open");
+  assert.equal(phase("2026-08-20T15:59:59+07:00"), "before_open");
+  assert.equal(phase("2026-08-20T16:00:00+07:00"), "open");
+  assert.equal(phase("2026-08-20T23:59:59+07:00"), "open");
+  assert.equal(phase("2026-08-21T00:00:00+07:00"), "closeable");
+  assert.equal(phase("2026-08-21T04:00:00+07:00", snapshot, "2026-08-21"), "past");
+  assert.equal(evaluatePosManualCloseTime("2026-08-21", date, new Date("2026-08-20T18:00:00+07:00"), snapshot).phase, "future");
+  // Store setting fallback or a closed weekday: no open time, not shown as open; manual close time unchanged.
+  const fallback = createFallbackBusinessTimeSnapshot(date);
+  assert.equal(phase("2026-08-20T18:00:00+07:00", fallback), "hours_unavailable");
+  assert.equal(evaluatePosManualCloseTime(date, date, new Date("2026-08-21T00:00:00+07:00"), fallback).allowed, true);
+  const closedDay = { ...snapshot, hours: snapshot.hours.map(hour => ({ ...hour, isClosed: true, openTime: null, closeTime: null })) };
+  assert.equal(phase("2026-08-20T18:00:00+07:00", closedDay), "hours_unavailable");
 });
