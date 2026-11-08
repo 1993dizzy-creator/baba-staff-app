@@ -209,7 +209,19 @@ export type InventoryPurchaseErrorDetails = {
   blockReason?: string;
   candidateCount?: number;
   candidateCountExact?: boolean;
+  reviewCode?: string;
+  reviewSqlState?: string;
 };
+
+// Rolled-back receipt edits whose cause staff cannot fix show a short diagnostic code for the manager.
+const DIAGNOSTIC_BLOCK_REASONS = new Set(["inventory_writer_contract", "receipt_edit_unexpected", "receipt_edit_review"]);
+function inventoryDiagnosticSuffix(details: InventoryPurchaseErrorDetails | undefined, vi: boolean) {
+  if (!details?.blockReason || !DIAGNOSTIC_BLOCK_REASONS.has(details.blockReason)) return "";
+  const code = typeof details.reviewCode === "string" && /^[A-Z0-9_]{1,80}$/.test(details.reviewCode) ? details.reviewCode : null;
+  if (!code) return "";
+  const state = typeof details.reviewSqlState === "string" && /^[0-9A-Z]{5}$/.test(details.reviewSqlState) ? "/" + details.reviewSqlState : "";
+  return vi ? ` (Mã chẩn đoán: ${code}${state})` : ` (진단 코드: ${code}${state})`;
+}
 
 export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "ko" | "vi", details?: InventoryPurchaseErrorDetails) {
   const vi = lang === "vi";
@@ -237,9 +249,12 @@ export function inventoryPurchaseErrorMessage(code: string | undefined, lang: "k
     receipt_edit_review: ["입고와 연결된 장부 상태를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được trạng thái sổ liên kết với phiếu nhập nên chưa lưu. Vui lòng liên hệ quản lý."],
     physical_count_unverified: ["입고·재고확인의 시간 순서를 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.", "Không xác minh được thứ tự thời gian nhập hàng và kiểm kho nên chưa lưu. Vui lòng liên hệ quản lý."],
     billed_amount_invalid: ["실청구금액을 확인할 수 없어 저장하지 않았습니다. 수량이 0보다 클 때만 금액을 직접 입력할 수 있습니다.", "Không xác minh được số tiền thực tính nên chưa lưu. Chỉ nhập tay số tiền khi số lượng lớn hơn 0."],
+    inventory_writer_contract: ["재고 저장 보호 장치가 이번 수정을 허용하지 않아 저장하지 않았습니다. 재고와 장부는 바뀌지 않았고 입력값은 유지했습니다. 관리자에게 진단 코드를 전달해 주세요.", "Cơ chế bảo vệ ghi kho chưa cho phép lần sửa này nên chưa lưu. Tồn kho và sổ không thay đổi, dữ liệu bạn nhập được giữ nguyên. Vui lòng gửi mã chẩn đoán cho quản lý."],
+    inventory_busy_retry: ["다른 재고·장부 작업과 동시에 처리되어 저장하지 않았습니다. 재고와 장부는 바뀌지 않았고 입력값은 유지했습니다. 잠시 후 다시 시도해 주세요.", "Đang có thao tác kho/sổ khác xử lý cùng lúc nên chưa lưu. Tồn kho và sổ không thay đổi, dữ liệu bạn nhập được giữ nguyên. Vui lòng thử lại sau giây lát."],
+    receipt_edit_unexpected: ["예상하지 못한 DB 오류로 저장하지 않았습니다. 재고와 장부는 바뀌지 않았고 입력값은 유지했습니다. 관리자에게 진단 코드를 전달해 주세요.", "Lỗi cơ sở dữ liệu ngoài dự kiến nên chưa lưu. Tồn kho và sổ không thay đổi, dữ liệu bạn nhập được giữ nguyên. Vui lòng gửi mã chẩn đoán cho quản lý."],
   };
   if (code === "purchase_correction_review_required" && details?.blockReason && Object.hasOwn(reviewMessages, details.blockReason))
-    return reviewMessages[details.blockReason][vi ? 1 : 0];
+    return reviewMessages[details.blockReason][vi ? 1 : 0] + inventoryDiagnosticSuffix(details, vi);
   if (code === "purchase_correction_ambiguous" && details?.blockReason === "candidate_limit")
     return vi ? "Có quá nhiều phiếu nhập để xác định chính xác phiếu cần sửa nên chưa lưu. Vui lòng liên hệ quản lý."
       : "입고 기록이 많아 정정할 원본을 정확히 확인할 수 없어 저장하지 않았습니다. 관리자에게 문의해 주세요.";

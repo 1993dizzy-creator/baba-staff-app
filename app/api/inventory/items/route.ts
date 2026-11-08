@@ -700,8 +700,13 @@ export async function PATCH(req: Request) {
           : ["forbidden", "supplier_change_forbidden"].includes(edited?.status) ? 403
           : edited?.status === "not_found" ? 404
           : ["invalid_payload", "no_change", "invalid_purchase_reference"].includes(edited?.status) ? 400 : 409;
+        // A rolled-back write (writer contract or unexpected DB error) keeps its diagnostic code in the
+        // server log as well; codes are uppercase identifiers/SQLSTATE only, never values or secrets.
+        if (["inventory_writer_contract", "receipt_edit_unexpected", "receipt_edit_review"].includes(edited?.blockReason))
+          console.warn("[inventory] receipt edit rolled back", { itemId: Number(id), purchaseLogId,
+            blockReason: edited.blockReason, reviewCode: edited.code ?? null, sqlState: edited.sqlState ?? null });
         return jsonError(edited?.status ?? "purchase_correction_failed", "Receipt edit was not saved.", status,
-          edited?.blockReason ? { blockReason: edited.blockReason, reviewCode: edited.code } : undefined);
+          edited?.blockReason ? { blockReason: edited.blockReason, reviewCode: edited.code, reviewSqlState: edited.sqlState } : undefined);
       }
       return NextResponse.json({ ok: true, mode, completion: edited.completion, ledgerSync: edited.ledgerSync,
         billedAmount: { mode: edited.billedAmountMode, amount: edited.amount, calculated: edited.calculatedAmount } });

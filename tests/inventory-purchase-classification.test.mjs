@@ -47,3 +47,16 @@ test('major guard messages use server codes/details and never infer a paid or cl
   assert.equal(inventoryPurchaseErrorMessage('unknown',lang,{blockReason:'payment_completed'}),null);
  }
 });
+
+test('rolled-back receipt edits name the real cause and show only a sanitized diagnostic code',()=>{
+ const msg=(details,lang='ko')=>inventoryPurchaseErrorMessage('purchase_correction_review_required',lang,details);
+ const writer=msg({blockReason:'inventory_writer_contract',reviewCode:'INVENTORY_WRITER_REGISTERED_REQUEST_REQUIRED',reviewSqlState:'42501'});
+ assert.match(writer,/재고 저장 보호 장치/);assert.match(writer,/\(진단 코드: INVENTORY_WRITER_REGISTERED_REQUEST_REQUIRED\/42501\)$/);
+ assert.match(msg({blockReason:'receipt_edit_unexpected',reviewCode:'RECEIPT_EDIT_FAILED',reviewSqlState:'22012'},'vi'),/ngoài dự kiến.*\(Mã chẩn đoán: RECEIPT_EDIT_FAILED\/22012\)$/);
+ assert.match(msg({blockReason:'inventory_busy_retry',reviewCode:'RECEIPT_EDIT_FAILED',reviewSqlState:'40001'}),/다시 시도해 주세요\.$/,'retryable conflict has no diagnostic suffix');
+ assert.match(msg({blockReason:'receipt_edit_review',reviewCode:'INVENTORY_LEDGER_ATOMIC_FAILED'}),/장부 상태.*\(진단 코드: INVENTORY_LEDGER_ATOMIC_FAILED\)$/);
+ // Business blocks are unchanged; codes that are not plain identifiers are never echoed.
+ assert.equal(msg({blockReason:'payment_completed',reviewCode:'PAYABLE_ALREADY_PAID'}),msg({blockReason:'payment_completed'}));
+ for(const reviewCode of ['secret=abc','<b>x</b>','lower_case',''.padEnd(81,'A')])
+  assert.doesNotMatch(msg({blockReason:'receipt_edit_unexpected',reviewCode,reviewSqlState:'bad state'}),/\(진단 코드:/);
+});
