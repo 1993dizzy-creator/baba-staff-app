@@ -41,6 +41,7 @@ export function levelUserFieldsFromVersion(version: EmployeeLevelProgramVersion)
   level_base_date_override: string | null;
   level_base_mode: EmployeeLevelBaseMode | null;
   level_salary_raise_enabled: boolean;
+  level_hire_date_base: string | null;
 } {
   const mode = version.baseDateMode;
   return {
@@ -48,6 +49,9 @@ export function levelUserFieldsFromVersion(version: EmployeeLevelProgramVersion)
     level_base_date_override: mode === "override" || mode === "override_month" || mode === "hire_month" ? version.baseDate : null,
     level_base_mode: mode === "hire_month" || mode === "override_month" ? mode : null,
     level_salary_raise_enabled: version.salaryRaiseEnabled !== false,
+    // Legacy hire_date: the stored hire date fixes the version's history. Kept apart from
+    // level_base_date_override so payroll snapshots and the "hire date" label are unchanged.
+    level_hire_date_base: mode === "hire_date" ? version.baseDate : null,
   };
 }
 

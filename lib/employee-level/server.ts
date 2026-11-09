@@ -22,6 +22,8 @@ export type EmployeeLevelUser = {
   level_base_mode?: EmployeeLevelBaseMode | string | null;
   /** From the effective level version; absent = true (previous behaviour). */
   level_salary_raise_enabled?: boolean | null;
+  /** Legacy hire_date version's stored hire date; absent = no version (live hire date). */
+  level_hire_date_base?: string | null;
 };
 
 export function getEmployeeLevelInfo(
@@ -35,6 +37,7 @@ export function getEmployeeLevelInfo(
     levelBaseDateOverride: user.level_base_date_override,
     levelBaseMode: user.level_base_mode === "hire_month" || user.level_base_mode === "override_month" ? user.level_base_mode : null,
     salaryRaiseEnabled: user.level_salary_raise_enabled,
+    levelHireDateBase: user.level_hire_date_base,
     terminationDate: user.termination_date,
     isSystemAccount: user.is_system_account,
     asOfDate,

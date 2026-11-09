@@ -50,6 +50,12 @@ export type EmployeeLevelCalculationInput = {
   levelBaseDateOverride: string | null;
   /** Absent/null keeps the legacy behaviour (override date, else hire date). */
   levelBaseMode?: EmployeeLevelBaseMode | null;
+  /**
+   * Legacy "hire_date" versions: the hire date stored on the version. When present it is
+   * the base instead of the current hire date (a later edit or rehire never rewrites the
+   * version's history). Source/label stay "hire_date". Absent = no version = live hire date.
+   */
+  levelHireDateBase?: string | null;
   /** Level raise reaches pay only when true (default). Level itself is unaffected. */
   salaryRaiseEnabled?: boolean | null;
   terminationDate?: string | null;

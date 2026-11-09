@@ -71,8 +71,10 @@ function resolveLevelBase(input: EmployeeLevelCalculationInput): ResolvedBase {
     const baseMonth = baseMonthFromStartDate(input.levelBaseDateOverride);
     return { baseDate: baseMonth ? `${baseMonth}-01` : null, baseDateSource: baseMonth ? "override_month" : null, baseMonth, levelZeroFrom: input.hireDate };
   }
-  const baseDate = input.levelBaseDateOverride || input.hireDate;
-  const baseDateSource = input.levelBaseDateOverride ? "override" : input.hireDate ? "hire_date" : null;
+  // Legacy hire_date: the version's stored hire date wins over the current one.
+  const hireBase = input.levelHireDateBase || input.hireDate;
+  const baseDate = input.levelBaseDateOverride || hireBase;
+  const baseDateSource = input.levelBaseDateOverride ? "override" : hireBase ? "hire_date" : null;
   return { baseDate, baseDateSource, baseMonth: null, levelZeroFrom: null };
 }
 

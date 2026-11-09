@@ -143,7 +143,7 @@ test("13: legacy employees keep byte-identical level info, compensation and hash
   assert.deepStrictEqual(serializeEmployeeLevelProgramVersion(row),
     { id: 1, enabled: true, effectiveFrom: "2026-08-01", effectiveTo: null, baseDate: "2026-01-03", baseDateMode: "override", revision: 2 });
   assert.deepStrictEqual(levelUserFieldsFromVersion(serializeEmployeeLevelProgramVersion(row)),
-    { level_program_enabled: true, level_base_date_override: "2026-01-03", level_base_mode: null, level_salary_raise_enabled: true });
+    { level_program_enabled: true, level_base_date_override: "2026-01-03", level_base_mode: null, level_salary_raise_enabled: true, level_hire_date_base: null });
   assert.equal(levelUserFieldsFromVersion(serializeEmployeeLevelProgramVersion({ ...row, base_date_mode: "hire_date", base_date: "2025-11-02" })).level_base_date_override, null);
 });
 
@@ -166,6 +166,87 @@ test("hire_month history is fixed by the stored version month: hire-date edits a
   // A new version saved after the edit carries 2026-12 and applies only from its month.
   assert.equal(at(stored("2026-12-01"), "2026-11-16", "2027-03-01").level, 1);
   assert.equal(at(stored("2026-12-01"), "2026-11-16", "2027-02-28").level, 0);
+});
+
+// --- Legacy hire_date history fix: compare with the implementation just before it (f603de8d).
+const PREV_COMMIT = "f603de8d56d8b5d03b98a8ce1010cdff1ae1d625";
+const prevDir = ".local/level-prev-snapshot";
+rmSync(prevDir, { recursive: true, force: true });
+mkdirSync(prevDir, { recursive: true });
+for (const file of ["calculate.ts", "types.ts", "month.ts", "version-selection.ts"]) {
+  writeFileSync(`${prevDir}/${file}`, execFileSync("git", ["show", `${PREV_COMMIT}:lib/employee-level/${file}`], { encoding: "utf8" }));
+}
+writeFileSync(`${prevDir}/package.json`, '{"type":"module"}');
+const prevCalc = await import(pathToFileURL(`${prevDir}/calculate.ts`).href);
+const prevSel = await import(pathToFileURL(`${prevDir}/version-selection.ts`).href);
+
+/** The production path: version row -> user fields -> calculator (as getEmployeeLevelInfo). */
+function viaVersion(sel: typeof prevSel, calc: typeof prevCalc, row: Record<string, unknown>, user: { hireDate: string | null; termination?: string | null }, asOf: string) {
+  const f = sel.levelUserFieldsFromVersion(sel.serializeEmployeeLevelProgramVersion(row));
+  return calc.calculateEmployeeLevel({ role: "staff", levelProgramEnabled: f.level_program_enabled, hireDate: user.hireDate,
+    levelBaseDateOverride: f.level_base_date_override, levelBaseMode: f.level_base_mode, salaryRaiseEnabled: f.level_salary_raise_enabled,
+    levelHireDateBase: f.level_hire_date_base, terminationDate: user.termination ?? null, asOfDate: asOf });
+}
+const newSel = { levelUserFieldsFromVersion, serializeEmployeeLevelProgramVersion } as unknown as typeof prevSel;
+const newCalc = { calculateEmployeeLevel } as unknown as typeof prevCalc;
+const ROW = { id: 1, user_id: 5, enabled: true, effective_from: "2026-07-01", effective_to: null, revision: 1 };
+const DAYS = ["2025-11-02", "2026-02-01", "2026-02-02", "2026-07-15", "2026-09-15", "2026-11-01", "2026-11-10", "2027-11-02", "2028-01-01"];
+
+test("legacy 1/4/6: stored base = current hire date, override and month modes — byte-identical to the previous implementation", () => {
+  const cases: [Record<string, unknown>, { hireDate: string; termination?: string | null }][] = [
+    [{ ...ROW, base_date: "2025-11-02", base_date_mode: "hire_date" }, { hireDate: "2025-11-02" }],
+    [{ ...ROW, base_date: "2026-03-06", base_date_mode: "hire_date" }, { hireDate: "2026-03-06" }],
+    [{ ...ROW, base_date: "2026-03-16", base_date_mode: "hire_date" }, { hireDate: "2026-03-16", termination: "2026-06-29" }],
+    [{ ...ROW, enabled: false, base_date: "2026-08-16", base_date_mode: "hire_date" }, { hireDate: "2026-08-16" }],
+    [{ ...ROW, base_date: "2026-01-03", base_date_mode: "override" }, { hireDate: "2025-12-03" }],
+    [{ ...ROW, base_date: "2025-10-01", base_date_mode: "override" }, { hireDate: "2025-06-01" }],
+    [{ ...ROW, base_date: "2025-11-01", base_date_mode: "hire_month" }, { hireDate: "2025-11-02" }],
+    [{ ...ROW, base_date: "2026-02-01", base_date_mode: "override_month" }, { hireDate: "2025-12-03" }],
+    [{ ...ROW, base_date: "2026-04-01", base_date_mode: "hire_month", salary_raise_enabled: false }, { hireDate: "2026-04-01" }],
+  ];
+  let compared = 0;
+  for (const [row, user] of cases) {
+    for (const asOf of DAYS) {
+      const before = viaVersion(prevSel, prevCalc, row, user, asOf);
+      const after = viaVersion(newSel, newCalc, row, user, asOf);
+      assert.deepStrictEqual(after, before, `${row.base_date_mode} ${row.base_date} ${asOf}`);
+      assert.equal(stablePayrollSourceHash(after), stablePayrollSourceHash(before));
+      for (const contract of [
+        { payType: "monthly", calculationBasis: "minute", baseSalary: 8_500_000, fixedRaiseAmount: 500_000 },
+        { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0 },
+        { payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: 2_000_000, fixedRaiseAmount: 0 },
+      ]) assert.deepStrictEqual(calculateCombinedSalary(contract as never, after), calculateCombinedSalary(contract as never, before));
+      compared++;
+    }
+  }
+  assert.equal(compared, cases.length * DAYS.length);
+  // Payroll snapshot fields derived from the version are unchanged for legacy hire_date.
+  const f = levelUserFieldsFromVersion(serializeEmployeeLevelProgramVersion({ ...ROW, base_date: "2025-11-02", base_date_mode: "hire_date" }));
+  assert.deepEqual([f.level_base_date_override, f.level_base_mode], [null, null]);
+});
+
+test("legacy 2/3: a hire-date edit or a rehire no longer rewrites a hire_date version's levels (stored 2025-11-02)", () => {
+  const row = { ...ROW, base_date: "2025-11-02", base_date_mode: "hire_date" };
+  for (const hireDate of ["2025-11-02", "2025-12-20", "2027-01-10"]) {
+    const info = viaVersion(newSel, newCalc, row, { hireDate }, "2026-09-15");
+    assert.deepEqual([info.level, info.baseDate, info.baseDateSource], [3, "2025-11-02", "hire_date"], hireDate);
+  }
+  // Before the fix the version followed the current hire date.
+  assert.equal(viaVersion(prevSel, prevCalc, row, { hireDate: "2025-12-20" }, "2026-09-15").level, 2);
+  assert.equal(viaVersion(prevSel, prevCalc, row, { hireDate: "2027-01-10" }, "2026-09-15").level, null);
+  // The legacy date rule itself is unchanged: promotions on the 2nd.
+  assert.equal(viaVersion(newSel, newCalc, row, { hireDate: "2027-01-10" }, "2026-02-01").level, 0);
+  assert.equal(viaVersion(newSel, newCalc, row, { hireDate: "2027-01-10" }, "2026-02-02").level, 1);
+  // No version (users-only rows): the previous fallback to the current hire date is kept.
+  assert.equal(calculateEmployeeLevel({ role: "staff", hireDate: "2025-12-20", levelBaseDateOverride: null, asOfDate: "2026-09-15" }).level, 2);
+});
+
+test("legacy 8: the admin label stays 'hire date' (never shown as a direct base)", () => {
+  const info = viaVersion(newSel, newCalc, { ...ROW, base_date: "2025-11-02", base_date_mode: "hire_date" }, { hireDate: "2027-01-10" }, "2026-09-15");
+  assert.equal(info.baseDateSource, "hire_date");
+  assert.equal(info.baseMonth, undefined);
+  const page = readFileSync("app/(protected)/admin/users/page.tsx", "utf8");
+  assert.match(page, /info\.baseDateSource === "override"\s*\n?\s*\? `\$\{text\.directBaseShort\}/);
 });
 
 test("11: level OFF and hourly part-timers keep their pay; a monthly part-timer can keep the level without the raise", () => {
