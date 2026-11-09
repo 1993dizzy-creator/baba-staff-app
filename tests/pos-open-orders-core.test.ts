@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  OPEN_ORDERS_LEASE_MS,
+  OPEN_ORDERS_REQUEST_TIMEOUT_MS,
+  OPEN_ORDERS_RUN_BUDGET_MS,
+  callProvider,
   OPEN_ORDERS_DB_ERRORS,
   OPEN_ORDERS_RPC,
   openOrdersRpcErrorCode,
@@ -456,6 +460,35 @@ test("server RPCs are exactly the public SECURITY INVOKER wrappers in the draft;
   const client = read("lib/supabase/server.ts");
   assert.match(client, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(client, /NEXT_PUBLIC_SUPABASE_SERVICE/);
+});
+
+test("deadline: no request, 102 backoff or re-login starts unless it can finish before the run deadline", async () => {
+  const clock = { t: 0 };
+  const deadlineState = (deadlineAt: number) => ({ relogins: 0, maxRelogins: 1, deadlineAt, now: () => clock.t });
+  // 102 then a backoff that would cross the deadline: stops instead of sleeping.
+  const busy = transport(() => ({ status: 200, json: { Success: false, ErrorType: 102 } }));
+  clock.t = 0;
+  await assert.rejects(callProvider(busy, { kind: "detail", orderId: uuid(1) }, deadlineState(16_000), 1500), { code: "run_deadline_exceeded" });
+  assert.equal(busy.sent.length, 1);
+  // Token expiry with too little time left for login + retry.
+  const expired = transport(() => ({ status: 401, json: null }));
+  await assert.rejects(callProvider(expired, { kind: "detail", orderId: uuid(1) }, deadlineState(20_000)), { code: "run_deadline_exceeded" });
+  assert.equal(expired.logins(), 0);
+  // Exactly enough time for one request (15s) is allowed; one ms less is not.
+  const okT = transport(() => ok({ ...order(1), OrderDetails: [] }));
+  await callProvider(okT, { kind: "detail", orderId: uuid(1) }, deadlineState(15_000));
+  await assert.rejects(callProvider(okT, { kind: "detail", orderId: uuid(1) }, deadlineState(14_999)), { code: "run_deadline_exceeded" });
+  // A vanished-order re-read hitting the deadline keeps the deadline code (not "unconfirmed").
+  clock.t = 0;
+  const slow = transport((r) => { clock.t += 10_000; return r.kind === "page" ? ok([], 0) : ok({ ...order(1), Status: 4, OrderDetails: [] }); });
+  await assert.rejects(collectOpenOrderSnapshot(slow, { branchId: "b", businessDate: "2026-11-09", windowFrom: "2026-11-08T20:00:00.000Z", cutoff: CUTOFF,
+    previousUnfinishedIds: [uuid(1)], deadlineAt: 20_000, now: () => clock.t }), { code: "run_deadline_exceeded" });
+  // Budget fits inside the lease with room for the commit.
+  assert.ok(OPEN_ORDERS_RUN_BUDGET_MS + OPEN_ORDERS_REQUEST_TIMEOUT_MS <= OPEN_ORDERS_LEASE_MS);
+  const sync = readFileSync("lib/pos/cukcuk/open-orders-sync-server.ts", "utf8");
+  assert.match(sync, /const REQUEST_TIMEOUT_MS = OPEN_ORDERS_REQUEST_TIMEOUT_MS;/);
+  assert.match(sync, /signal: AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/);
+  assert.match(sync, /loginCukcuk\(\),\s*new Promise<never>/);
 });
 
 test("browsers never reach CUKCUK: read paths import no CUKCUK transport or login", () => {

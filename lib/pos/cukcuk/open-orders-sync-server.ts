@@ -6,6 +6,7 @@ import { buildCukcukHeaders, CUKCUK_BASE_URL } from "@/lib/pos/cukcuk/sales-rece
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
 import {
+  OPEN_ORDERS_REQUEST_TIMEOUT_MS,
   OPEN_ORDERS_RPC,
   OpenOrderSyncError,
   openOrdersRpcErrorCode,
@@ -15,21 +16,41 @@ import {
 } from "./open-orders-core";
 
 // Central (server/cron) collector for CUKCUK in-progress orders.
+// Timing: collection ends by claim + OPEN_ORDERS_RUN_BUDGET_MS (150s) inside the 3-minute
+// lease. A future cron route must allow at least that duration (e.g. maxDuration >= 180).
 // NOT ACTIVATED: no route or cron calls this yet. Activation needs the DB draft
 // (docs/sql/pos-open-orders-v1-draft.sql) applied and POS_OPEN_ORDERS_SYNC_ENABLED=true.
 // Browsers never call CUKCUK: they read the snapshot via /api/admin/sales/today.
 
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = OPEN_ORDERS_REQUEST_TIMEOUT_MS;
 
 export function openOrdersSyncEnabled() {
   return process.env.POS_OPEN_ORDERS_SYNC_ENABLED?.trim() === "true";
+}
+
+/** The shared login (lib/pos/cukcuk/auth.ts) has no timeout; bound it here without changing it. */
+async function loginWithTimeout() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      loginCukcuk(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new OpenOrderSyncError("provider_timeout", "login")), REQUEST_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof OpenOrderSyncError) throw error;
+    throw new OpenOrderSyncError("provider_token_expired", "login failed");
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function createCukcukOrderTransport(): OrderTransport {
   let headers: Record<string, string> | null = null;
   return {
     async login() {
-      const login = await loginCukcuk();
+      const login = await loginWithTimeout();
       headers = buildCukcukHeaders(login.accessToken, login.companyCode);
     },
     async send(request: OrderRequest) {

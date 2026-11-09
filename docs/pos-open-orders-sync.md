@@ -180,6 +180,62 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
   - `fail`: 오류를 기록한다. 이전 스냅샷은 유지하지만 성공 시각은 갱신하지 않으므로, 조회 쪽에서 `stale`로 보인다.
   - `read`: 동기화 상태와 주문·라인을 반환한다.
 
+## 실행 시간과 lease
+
+| 항목 | 값 | 위치 |
+|---|---|---|
+| DB lease | 3분 (claim 시점부터) | SQL `claim_v1` |
+| 수집 예산 | claim 후 150초 | `OPEN_ORDERS_RUN_BUDGET_MS` |
+| 요청 1건 상한 | 15초 (AbortSignal, 로그인은 `Promise.race`) | `OPEN_ORDERS_REQUEST_TIMEOUT_MS` |
+
+- 요청, 102 재시도 대기, 재로그인은 끝까지 걸릴 최대 시간이 예산 안에 들어올 때만 시작한다. 들어오지 않으면 `run_deadline_exceeded`로 실패를 기록하고 lease를 해제한다.
+- 따라서 수집은 claim 후 150초 안에 끝난다. 커밋에는 30초 이상의 lease가 남는다.
+- 그래도 lease가 만료되면 늦은 commit은 `open_orders_lease_lost`로 막힌다(소유권 보호). 새 실행의 스냅샷은 보존된다.
+- 향후 Cron route는 함수 실행 시간 제한을 180초 이상으로 둬야 한다(예: `maxDuration = 180`).
+- 공통 `lib/pos/cukcuk/auth.ts` 로그인과 `lib/supabase/server.ts`는 수정하지 않았다.
+
+## 운영 적용 승인 검토 패키지 (2026-11-09)
+
+- **SQL 파일:** `docs/sql/pos-open-orders-v1-draft.sql`
+  - 적용할 때 `supabase/migrations/<timestamp>_pos_open_orders_v1.sql`로 복사한다.
+- **운영 읽기 전용 사전점검(사용자 확인 완료):**
+  - 신규 private 스키마 없음
+  - public 주문 RPC 이름 충돌 0건
+  - `service_role`·`postgres` 역할 있음
+  - 기존 영업마감 RPC가 service_role 전용으로 접근됨
+- **생성 객체**
+
+| 종류 | 이름 | 보안 |
+|---|---|---|
+| 스키마 | `pos_open_orders_private` | Data API 노출 스키마에 추가 금지 |
+| 테이블 | `runs`, `sync_state`, `orders`, `order_lines` | RLS 켬, 모든 역할 권한 없음 |
+| 인덱스 | `pos_open_orders_active_scope`(부분 unique: scope당 collecting 1건), `pos_open_orders_runs_recent` | — |
+| 내부 함수 | `claim_v1(uuid,uuid,text,text,date,integer=60)`, `commit_v1(uuid,uuid,jsonb,jsonb)`, `fail_v1(uuid,uuid,text)`, `read_v1(text,date)` | SECURITY DEFINER, `search_path=''`, 소유자 postgres |
+| public 래퍼 | `pos_open_orders_claim`, `_commit`, `_fail`, `_read` (내부 함수와 인자·반환값 동일, 모두 jsonb 반환) | SECURITY INVOKER, `search_path=''` |
+
+- **권한**
+  - `service_role`:
+    - private 스키마 USAGE
+    - 내부 함수 4개 EXECUTE
+    - 래퍼 4개 EXECUTE
+  - 그 밖의 권한:
+    - `service_role`에 테이블·시퀀스 권한 없음
+    - PUBLIC·anon·authenticated는 전부 없음
+- **오류 코드**
+  - DB가 내는 코드: `open_orders_lease_lost`, `_payload_invalid`, `_run_conflict`, `_scope_invalid`, `_business_date_out_of_range`, `_vanished`
+  - 서버가 변환하는 코드: `open_orders_permission_denied`(42501), `open_orders_rpc_missing`(PGRST202/42883), `open_orders_persistence_failed`
+  - 앱 수집 코드: `orders_vanished_unconfirmed`, `run_deadline_exceeded`, `provider_*`
+- **적용 후 점검**
+  - 함수 8개의 `prosecdef`, `proconfig`, 소유자
+  - 역할 3개 × 래퍼·내부 함수·스키마·테이블 권한 매트릭스
+  - PUBLIC 권한 0
+  - 테이블 RLS 켬
+  - 행 0건
+  - private 스키마가 노출 스키마에 없음
+  - 위 항목은 `tests/pos-open-orders-db.test.mjs` 카탈로그 테스트와 같은 내용이다.
+- **되돌리기:** 래퍼 4개를 삭제하고 `drop schema pos_open_orders_private cascade`를 실행한다(새 객체만 해당).
+- **적용 후에도 하지 않는 것:** Cron 등록, 기능 스위치 ON. 둘 다 별도 승인이 필요하다.
+
 ## 운영 적용 전 필요한 승인·확인 (별도 승인 사항)
 
 1. **CUKCUK 읽기 전용 확인**(사용자 승인 후 실행). orders/paging과 orders/{id}를 각 1회 호출해 다음을 확인한다.

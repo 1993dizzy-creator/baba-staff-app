@@ -39,7 +39,8 @@ export type OpenOrderErrorCode =
   | "order_detail_mismatch"
   | "order_detail_lines_missing"
   | "order_detail_duplicate_line"
-  | "orders_vanished_unconfirmed";
+  | "orders_vanished_unconfirmed"
+  | "run_deadline_exceeded";
 
 export class OpenOrderSyncError extends Error {
   code: OpenOrderErrorCode;
@@ -103,7 +104,25 @@ export function providerFailureCode(httpStatus: number | null, json: unknown): O
   return null;
 }
 
-export type ProviderCallState = { relogins: number; maxRelogins: number };
+/** Must equal the claim lease in docs/sql/pos-open-orders-v1-draft.sql ("3 minutes"). */
+export const OPEN_ORDERS_LEASE_MS = 180_000;
+/** Upper bound of one CUKCUK request (transport AbortSignal timeout, also used for login). */
+export const OPEN_ORDERS_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * Collection budget measured from a successful claim. A request only starts if it can
+ * finish (worst case: its timeout) before this deadline, so collection ends by
+ * claim + 150s and the commit still has >= 30s of lease. Past the deadline the run
+ * fails (run_deadline_exceeded) instead of racing a newer run after lease expiry.
+ */
+export const OPEN_ORDERS_RUN_BUDGET_MS = 150_000;
+
+export type ProviderCallState = { relogins: number; maxRelogins: number; deadlineAt?: number; now?: () => number };
+
+/** Throws when an action needing `needMs` could not finish before the run deadline. */
+export function assertWithinDeadline(state: ProviderCallState, needMs: number, what: string) {
+  if (state.deadlineAt === undefined) return;
+  if ((state.now ?? Date.now)() + needMs > state.deadlineAt) throw new OpenOrderSyncError("run_deadline_exceeded", what);
+}
 
 /**
  * One logical call: 102 backs off serially (3 attempts), a credential failure
@@ -119,16 +138,19 @@ export async function callProvider(
   const sleep = transport.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let busyAttempts = 0;
   for (;;) {
+    assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, request.kind);
     const { status, json } = await transport.send(request);
     const failure = providerFailureCode(status, json);
     if (!failure) return json as Json;
     if ((failure === "provider_token_expired" || failure === "provider_error_7") && state.relogins < state.maxRelogins) {
       state.relogins++;
+      assertWithinDeadline(state, 2 * OPEN_ORDERS_REQUEST_TIMEOUT_MS, "relogin");
       await transport.login();
       continue;
     }
     if (failure === "provider_busy_102" && busyAttempts < 2) {
       busyAttempts++;
+      assertWithinDeadline(state, retryDelayMs * busyAttempts + OPEN_ORDERS_REQUEST_TIMEOUT_MS, "busy_backoff");
       await sleep(retryDelayMs * busyAttempts);
       continue;
     }
@@ -414,11 +436,11 @@ export const MAX_VANISHED_CONFIRMATIONS = 20;
 export async function collectOpenOrderSnapshot(
   transport: OrderTransport,
   input: { branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number;
-    previousUnfinishedIds?: string[] }
+    previousUnfinishedIds?: string[]; deadlineAt?: number; now?: () => number }
 ) {
   const windowStart = Date.parse(input.windowFrom);
   if (!Number.isFinite(windowStart)) throw new OpenOrderSyncError("orders_page_bound", "window");
-  const state: ProviderCallState = { relogins: 0, maxRelogins: 1 };
+  const state: ProviderCallState = { relogins: 0, maxRelogins: 1, deadlineAt: input.deadlineAt, now: input.now };
   const lastSyncDate = new Date(windowStart - 24 * 3600_000).toISOString();
   const listed = await fetchAllOrderPages(transport, { branchId: input.branchId, lastSyncDate, limit: input.limit, retryDelayMs: input.retryDelayMs }, state);
   const selected = listed.orders.filter((order) => calculateStoreBusinessDate(order.orderDate, input.cutoff) === input.businessDate);
@@ -447,7 +469,8 @@ export async function collectOpenOrderSnapshot(
       detailCount++;
       const data = isObject(detail.Data) ? detail.Data : null;
       confirmed = mergeOrderDetail(normalizeOrderSummary(data), detail, input.cutoff);
-    } catch {
+    } catch (error) {
+      if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
       throw new OpenOrderSyncError("orders_vanished_unconfirmed", "detail unavailable");
     }
     if (confirmed.orderId !== orderId || confirmed.businessDate !== input.businessDate) {
@@ -511,21 +534,27 @@ export type OpenOrderRpc = (name: string, args: Record<string, unknown>) => Prom
  * extra triggers return without calling CUKCUK.
  */
 export async function runOpenOrderSync(
-  deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string },
+  deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string; now?: () => number },
   input: { scope: string; branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number }
 ): Promise<Record<string, unknown>> {
+  const now = deps.now ?? Date.now;
   const runId = deps.uuid();
   const ownerToken = deps.uuid();
   const claim = await deps.rpc(OPEN_ORDERS_RPC.claim, {
     p_run_id: runId, p_owner_token: ownerToken, p_scope: input.scope, p_branch_id: input.branchId, p_business_date: input.businessDate,
   });
   if (claim.status !== "collecting") return claim;
+  // The DB lease started at claim; the app deadline is measured from the same point.
+  const deadlineAt = now() + OPEN_ORDERS_RUN_BUDGET_MS;
   try {
     // The previous snapshot of this date decides which orders must still be accounted for.
     const previous = await deps.rpc(OPEN_ORDERS_RPC.read, { p_scope: input.scope, p_business_date: input.businessDate });
     const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as { orderId: string; statusClass: OrderStatusClass }[]) : [];
+    assertWithinDeadline({ relogins: 0, maxRelogins: 0, deadlineAt, now }, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "login");
     await deps.transport.login();
-    const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, { ...input, previousUnfinishedIds: unfinishedOrderIds(previousOrders) });
+    const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, {
+      ...input, previousUnfinishedIds: unfinishedOrderIds(previousOrders), deadlineAt, now,
+    });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
       orderId: order.orderId, orderNo: order.orderNo, status: order.status, statusClass: order.statusClass,

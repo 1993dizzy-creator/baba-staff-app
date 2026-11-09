@@ -302,6 +302,141 @@ test('catalog: invoker wrappers, definer internals with empty search_path owned 
   } finally { await db.close(); }
 });
 
+// ---- server contract: the real collector against the real wrappers ----------------
+const core = await import('../lib/pos/cukcuk/open-orders-core.ts');
+// Mirrors supabase-js rpc(name, args): named arguments, JSON for objects, as service_role.
+function pgRpc(db) {
+  return async (name, args) => {
+    const keys = Object.keys(args);
+    const values = keys.map((k) => (args[k] !== null && typeof args[k] === 'object' ? JSON.stringify(args[k]) : args[k]));
+    try {
+      return await asRole(db, 'service_role', async () =>
+        (await db.query(`select public.${name}(${keys.map((k, i) => `${k} => $${i + 1}`).join(', ')}) as result`, values)).rows[0].result);
+    } catch (error) {
+      // Same mapping the server applies to Supabase errors.
+      throw new Error(core.openOrdersRpcErrorCode({ message: error.message, code: error.code }));
+    }
+  };
+}
+const ORDER_UUID = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+function fakeTransport(rows, { onSend, details } = {}) {
+  const sent = [];
+  return {
+    sent,
+    async login() {},
+    async sleep() {},
+    async send(request) {
+      sent.push(request.kind);
+      onSend?.(request);
+      if (request.kind === 'page') return { status: 200, json: { Success: true, Code: 200, Total: rows.length, Data: rows.slice((request.page - 1) * 100, request.page * 100) } };
+      const row = rows.find((r) => r.Id === request.orderId) ?? details?.(request.orderId);
+      return row ? { status: 200, json: { Success: true, Code: 200, Data: { ...row, OrderDetails: [{ Id: ORDER_UUID(900), ItemId: ORDER_UUID(901), ItemName: 'Red Bull', Quantity: 1, Status: 1, Price: 30000, Amount: 30000 }] } } }
+        : { status: 200, json: { Success: false, Code: 404 } };
+    },
+  };
+}
+// One minute after the business day start (+07:00), so the order always belongs to it.
+const inWindow = (windowFrom) => new Date(Date.parse(windowFrom) + 7 * 3600_000 + 60_000).toISOString().slice(0, 19) + '+07:00';
+// Business date of "now" with the 03:00 cutoff, and its window start.
+function liveWindow() {
+  const vn = new Date(Date.now() + 7 * 3600_000);
+  const date = new Date(vn.getTime() - (vn.getUTCHours() < 3 ? 86400_000 : 0)).toISOString().slice(0, 10);
+  return { businessDate: date, windowFrom: new Date(`${date}T03:00:00+07:00`).toISOString() };
+}
+
+test('contract: runOpenOrderSync calls the four public wrappers with matching named arguments and results', async () => {
+  const db = await database();
+  try {
+    const { businessDate, windowFrom } = liveWindow();
+    const input = { scope: SCOPE, branchId: BRANCH, businessDate, windowFrom, cutoff: '03:00', retryDelayMs: 0 };
+    const rows = [{ Id: ORDER_UUID(1), No: '1.1', Status: 1, Type: 1, Date: inWindow(windowFrom), TotalAmount: 30000, TableName: 'BAR10' }];
+    const deps = (transport) => ({ rpc: pgRpc(db), transport, uuid: randomUUID, now: Date.now });
+    const first = await core.runOpenOrderSync(deps(fakeTransport(rows)), input);
+    assert.deepEqual([first.status, first.orders, first.lines], ['committed', 1, 1]);
+    const snap = await read(db, businessDate);
+    assert.deepEqual(snap.orders.map((o) => [o.orderId, o.statusClass, o.tableName, o.lines.length]), [[ORDER_UUID(1), 'open', 'BAR10', 1]]);
+    // claim with the default 60s throttle (the server never passes p_min_interval_seconds).
+    assert.equal((await core.runOpenOrderSync(deps(fakeTransport(rows)), input)).status, 'fresh');
+    await db.exec(`update pos_open_orders_private.sync_state set last_success_at = clock_timestamp() - interval '2 minutes'`);
+    // Order disappears from the list and cannot be re-read: fail RPC records the code, snapshot kept.
+    const gone = await core.runOpenOrderSync(deps(fakeTransport([])), input);
+    assert.deepEqual(gone, { status: 'failed', code: 'orders_vanished_unconfirmed' });
+    const kept = await read(db, businessDate);
+    assert.equal(kept.orders.length, 1);
+    assert.equal(kept.sync.lastErrorCode, 'orders_vanished_unconfirmed');
+    // Re-read confirms it was paid: the transition commits and the snapshot shows it finished.
+    const paidLater = await core.runOpenOrderSync(deps(fakeTransport([], { details: (id) => (id === ORDER_UUID(1) ? { ...rows[0], Status: 4 } : null) })), input);
+    assert.equal(paidLater.status, 'committed');
+    assert.deepEqual((await read(db, businessDate)).orders.map((o) => o.statusClass), ['paid_candidate']);
+  } finally { await db.close(); }
+});
+
+test('timing: a run past its 150s budget stops before the 3-minute lease and records run_deadline_exceeded', async () => {
+  const db = await database();
+  try {
+    const { businessDate, windowFrom } = liveWindow();
+    const input = { scope: SCOPE, branchId: BRANCH, businessDate, windowFrom, cutoff: '03:00', retryDelayMs: 0 };
+    await core.runOpenOrderSync({ rpc: pgRpc(db), transport: fakeTransport([]), uuid: randomUUID, now: Date.now }, input);
+    await db.exec(`update pos_open_orders_private.sync_state set last_success_at = clock_timestamp() - interval '2 minutes'`);
+    // 25 open orders; every CUKCUK request "takes" 10s on the run clock.
+    const rows = Array.from({ length: 25 }, (_, i) => ({ Id: ORDER_UUID(i + 1), No: `1.${i + 1}`, Status: 1, Type: 1, Date: inWindow(windowFrom), TotalAmount: 1000 }));
+    let clock = Date.now();
+    const started = [];
+    const t = fakeTransport(rows, { onSend: () => { started.push(clock); clock += 10_000; } });
+    const result = await core.runOpenOrderSync({ rpc: pgRpc(db), transport: t, uuid: randomUUID, now: () => clock }, input);
+    assert.deepEqual(result, { status: 'failed', code: 'run_deadline_exceeded' });
+    const deadline = started[0] + core.OPEN_ORDERS_RUN_BUDGET_MS;
+    // No request started unless it could finish (15s timeout) before the deadline.
+    assert.ok(started.every((at) => at + core.OPEN_ORDERS_REQUEST_TIMEOUT_MS <= deadline));
+    assert.ok(t.sent.length < 26);
+    const after = await read(db, businessDate);
+    assert.equal(after.orders.length, 0);
+    assert.equal(after.sync.lastErrorCode, 'run_deadline_exceeded');
+    const runs = (await db.query(`select status, failure_code from pos_open_orders_private.runs order by started_at`)).rows;
+    assert.deepEqual(runs.at(-1), { status: 'failed', failure_code: 'run_deadline_exceeded' });
+    // The lease was released by the fail, so the next run is not blocked.
+    await db.exec(`update pos_open_orders_private.sync_state set last_success_at = null`);
+    assert.equal((await claim(db, randomUUID(), randomUUID(), businessDate, 0)).status, 'collecting');
+  } finally { await db.close(); }
+});
+
+test('timing: if the DB lease expires mid-run anyway, the late commit is fenced and nothing is overwritten', async () => {
+  const db = await database();
+  try {
+    const { businessDate, windowFrom } = liveWindow();
+    const input = { scope: SCOPE, branchId: BRANCH, businessDate, windowFrom, cutoff: '03:00', retryDelayMs: 0 };
+    const rows = [{ Id: ORDER_UUID(1), No: '1.1', Status: 1, Type: 1, Date: inWindow(windowFrom), TotalAmount: 30000 }];
+    await core.runOpenOrderSync({ rpc: pgRpc(db), transport: fakeTransport(rows), uuid: randomUUID, now: Date.now }, input);
+    await db.exec(`update pos_open_orders_private.sync_state set last_success_at = clock_timestamp() - interval '2 minutes'`);
+    // During collection the lease runs out and a newer collector takes over and commits.
+    let newer = null;
+    const t = fakeTransport(rows, { onSend: (request) => { if (request.kind === 'detail' && !newer) newer = 'pending'; } });
+    const originalSend = t.send;
+    t.send = async (request) => {
+      const reply = await originalSend(request);
+      if (newer === 'pending') {
+        newer = 'done';
+        await db.exec(`update pos_open_orders_private.runs set lease_until = clock_timestamp() - interval '1 second' where status = 'collecting'`);
+        const b = await runOnce(db, [orderOf(7, { orderId: ORDER_UUID(1), businessDate, totalAmount: 99000, lines: [lineOf(7)] })], businessDate);
+        assert.equal(b.result.status, 'committed');
+      }
+      return reply;
+    };
+    const late = await core.runOpenOrderSync({ rpc: pgRpc(db), transport: t, uuid: randomUUID, now: Date.now }, input);
+    assert.deepEqual(late, { status: 'failed', code: 'open_orders_lease_lost' });
+    const snap = await read(db, businessDate);
+    assert.deepEqual(snap.orders.map((o) => Number(o.totalAmount)), [99000]);
+    assert.equal(snap.sync.lastErrorCode, null);
+  } finally { await db.close(); }
+});
+
+test('lease and budget constants agree with the SQL draft', () => {
+  assert.match(DRAFT, /lease_until\)\s*\n\s*values \([^)]*clock_timestamp\(\) \+ interval '3 minutes'\)/);
+  assert.equal(core.OPEN_ORDERS_LEASE_MS, 3 * 60_000);
+  assert.ok(core.OPEN_ORDERS_RUN_BUDGET_MS + 15_000 <= core.OPEN_ORDERS_LEASE_MS, 'commit keeps >= 15s of lease');
+  assert.ok(core.OPEN_ORDERS_REQUEST_TIMEOUT_MS < core.OPEN_ORDERS_RUN_BUDGET_MS);
+});
+
 test('draft stays separate from paid sales, ledger and inventory', () => {
   const code = DRAFT.split('\n').filter((line) => !line.trim().startsWith('--')).join('\n');
   assert.doesNotMatch(code, /pos_sales_receipts|ledger_|inventory|pos_sales_business_day_closures/);
