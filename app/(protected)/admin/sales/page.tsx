@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import PosBusinessDayClosePanel from "@/components/sales/PosBusinessDayClosePanel";
+import OpenOrdersPanel from "@/components/sales/OpenOrdersPanel";
+import type { OpenOrderKpi } from "@/lib/pos/cukcuk/open-orders-core";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
@@ -112,6 +114,7 @@ type SalesTodayResponse = {
     currentTotal: number;
     delta: number | null;
   };
+  openOrders?: OpenOrderKpi;
   taxSummary?: {
     totalTaxAmount: number;
     taxSavingAmount: number;
@@ -560,6 +563,10 @@ export default function SalesPage() {
             />
           ))}
         </section>
+
+        {!isLoading && !hasError ? (
+          <OpenOrdersPanel data={salesData?.openOrders} text={dailyText} />
+        ) : null}
 
         {!isLoading && !hasError && paymentReconciliation?.status === "mismatch" ? (
           <section role="alert" style={warningCardStyle}>

@@ -137,7 +137,13 @@ test("route: totalSales and average come from POS payments, close check is read-
   assert.match(route, /const totalSales = dailySales\.totalSales;/);
   assert.match(route, /averageReceiptAmount: dailySales\.averageReceiptAmount/);
   assert.match(route, /paymentReconciliation: dailySales\.reconciliation/);
-  assert.match(route, /closeCheck: compareDailyCloseSnapshot\(/);
+  assert.match(route, /const closeCheck = compareDailyCloseSnapshot\(/);
+  assert.match(route, /closeCheck,\s*openOrders,/);
+  // Open-order estimates stay outside summary; paid KPIs are unchanged.
+  const summaryBlock = route.slice(route.indexOf("const summary = {"), route.indexOf("};", route.indexOf("const summary = {")));
+  assert.doesNotMatch(summaryBlock, /open|provisional/i);
+  assert.match(route, /isClosed: closeCheck\.status !== "not_closed"/);
+  assert.match(route, /paid: \{ amount: totalSales, receiptCount: paidReceiptCount \}/);
   assert.match(route, /\.from\("pos_sales_business_day_closures"\)\s*\.select\("revision, closed_at, source_snapshot"\)/);
   assert.doesNotMatch(route, /\.(insert|update|upsert|delete|rpc)\(/);
   assert.match(route, /"id, receipt_id, business_date, payment_type, payment_name, card_name, amount"/);

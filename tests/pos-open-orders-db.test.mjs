@@ -1,0 +1,140 @@
+// Applies the NOT-APPLIED draft (docs/sql/pos-open-orders-v1-draft.sql) to an in-memory
+// PGlite database. No production database or POS credentials are used.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { PGlite } from '@electric-sql/pglite';
+
+const DRAFT = readFileSync('docs/sql/pos-open-orders-v1-draft.sql', 'utf8');
+const BRANCH = 'c39228ba-a452-4cf9-bf34-424ffb151fb8';
+const SCOPE = `${'a'.repeat(64)}:${BRANCH}`;
+const DATE = '2026-11-09';
+
+async function database() {
+  const db = new PGlite();
+  await db.exec('create role anon; create role authenticated; create role service_role;');
+  await db.exec(DRAFT);
+  return db;
+}
+async function call(db, name, args) {
+  const placeholders = args.map((_, i) => `$${i + 1}`).join(',');
+  return (await db.query(`select public.${name}(${placeholders}) as result`, args)).rows[0].result;
+}
+const claim = (db, runId, owner, date = DATE, minInterval = 60) => call(db, 'pos_open_orders_claim', [runId, owner, SCOPE, BRANCH, date, minInterval]);
+const lineOf = (id, extra = {}) => ({ detailId: `d${id}`, parentDetailId: null, additionId: null, itemId: `i${id}`, itemName: `Item ${id}`,
+  unitName: 'Lon', quantity: 1, price: 30000, amount: 30000, lineStatus: 1, isOption: false, isOrphanOption: false, isCanceled: false, ...extra });
+const orderOf = (id, extra = {}) => ({ orderId: `o${id}`, orderNo: `1.${id}`, status: 1, statusClass: 'open', orderDate: '2026-11-09T13:00:00.000Z',
+  businessDate: DATE, totalAmount: 30000, tableName: '+bar10', lines: [lineOf(id)], ...extra });
+async function runOnce(db, orders, date = DATE) {
+  const runId = randomUUID(), owner = randomUUID();
+  const claimed = await claim(db, runId, owner, date, 0);
+  assert.equal(claimed.status, 'collecting');
+  return { runId, owner, result: await call(db, 'pos_open_orders_commit', [runId, owner, { total: orders.length }, JSON.stringify(orders)]) };
+}
+const read = async (db, date = DATE) => call(db, 'pos_open_orders_read', [SCOPE, date]);
+
+test('single-run lock: an overlapping claim is busy; a fresh success throttles further CUKCUK calls', async () => {
+  const db = await database();
+  try {
+    const first = { runId: randomUUID(), owner: randomUUID() };
+    assert.equal((await claim(db, first.runId, first.owner)).status, 'collecting');
+    assert.equal((await claim(db, randomUUID(), randomUUID())).status, 'busy');
+    // Idempotent replay of the same run id.
+    assert.equal((await claim(db, first.runId, first.owner)).status, 'collecting');
+    await assert.rejects(claim(db, first.runId, randomUUID()), /open_orders_run_conflict/);
+    await call(db, 'pos_open_orders_commit', [first.runId, first.owner, {}, JSON.stringify([orderOf(1)])]);
+    const throttled = await claim(db, randomUUID(), randomUUID(), DATE, 60);
+    assert.equal(throttled.status, 'fresh');
+    assert.equal((await claim(db, randomUUID(), randomUUID(), '2026-11-10', 60)).status, 'collecting');
+  } finally { await db.close(); }
+});
+
+test('commit replaces the snapshot: quantity change, cancellation and payment transitions follow the latest run', async () => {
+  const db = await database();
+  try {
+    await runOnce(db, [orderOf(1), orderOf(2), orderOf(3, { lines: [lineOf(3), lineOf(30, { parentDetailId: 'd3', isOption: true, amount: 5000 })] })]);
+    let snapshot = await read(db);
+    assert.equal(snapshot.orders.length, 3);
+    assert.deepEqual(snapshot.orders[2].lines.map((l) => [l.detailId, l.isOption]), [['d3', false], ['d30', true]]);
+    // Next run: order 1 quantity 3, order 2 gone (paid/canceled in POS), order 3 now Status 4 without lines.
+    const { result } = await runOnce(db, [
+      orderOf(1, { totalAmount: 90000, lines: [lineOf(1, { quantity: 3, amount: 90000 })] }),
+      orderOf(3, { status: 4, statusClass: 'paid_candidate', lines: null }),
+    ]);
+    assert.deepEqual([result.status, result.orders, result.lines], ['committed', 2, 1]);
+    snapshot = await read(db);
+    assert.deepEqual(snapshot.orders.map((o) => [o.orderId, o.statusClass, Number(o.totalAmount)]), [['o1', 'open', 90000], ['o3', 'paid_candidate', 30000]]);
+    assert.equal(Number(snapshot.orders[0].lines[0].quantity), 3);
+    assert.equal(snapshot.orders[1].lines, null);
+    assert.equal((await db.query('select count(*)::int n from pos_open_orders_private.order_lines')).rows[0].n, 1);
+  } finally { await db.close(); }
+});
+
+test('failure keeps the last good snapshot and its old success time; lease loss and bad payloads are rejected', async () => {
+  const db = await database();
+  try {
+    await runOnce(db, [orderOf(1)]);
+    const before = await read(db);
+    const runId = randomUUID(), owner = randomUUID();
+    await claim(db, runId, owner, DATE, 0);
+    assert.deepEqual(await call(db, 'pos_open_orders_fail', [runId, owner, 'provider_timeout']), { status: 'failed', code: 'provider_timeout' });
+    const after = await read(db);
+    assert.equal(after.orders.length, 1);
+    assert.equal(after.sync.lastSuccessAt, before.sync.lastSuccessAt);
+    assert.equal(after.sync.lastErrorCode, 'provider_timeout');
+    assert.equal(after.sync.consecutiveFailures, 1);
+    // Unsafe codes are normalized, never stored verbatim.
+    const r2 = randomUUID(), o2 = randomUUID();
+    await claim(db, r2, o2, DATE, 0);
+    assert.equal((await call(db, 'pos_open_orders_fail', [r2, o2, "x'; drop table"])).code, 'collection_failed');
+
+    const r3 = randomUUID(), o3 = randomUUID();
+    await claim(db, r3, o3, DATE, 0);
+    await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, JSON.stringify([orderOf(1, { businessDate: '2026-11-10' })])]), /open_orders_payload_invalid/);
+    await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, JSON.stringify([orderOf(1), orderOf(1)])]), /open_orders_payload_invalid/);
+    await db.query(`update pos_open_orders_private.runs set lease_until = now() - interval '1 second' where id = $1`, [r3]);
+    await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, '[]']), /open_orders_lease_lost/);
+    // Recovery: the expired lease does not block the next run.
+    assert.equal((await claim(db, randomUUID(), randomUUID(), DATE, 0)).status, 'collecting');
+    assert.equal((await db.query(`select status, failure_code from pos_open_orders_private.runs where id = $1`, [r3])).rows[0].failure_code, 'lease_expired');
+    assert.equal((await read(db)).orders.length, 1);
+  } finally { await db.close(); }
+});
+
+test('old data: snapshots older than 7 business days are removed on commit', async () => {
+  const db = await database();
+  try {
+    await runOnce(db, [orderOf(1, { businessDate: '2026-11-01' })], '2026-11-01');
+    await runOnce(db, [orderOf(2)], DATE);
+    assert.equal((await read(db, '2026-11-01')).orders.length, 0);
+    assert.equal((await read(db, DATE)).orders.length, 1);
+  } finally { await db.close(); }
+});
+
+test('server-only writes: anon/authenticated cannot read tables or run RPCs; service_role can only use the RPCs', async () => {
+  const db = await database();
+  try {
+    await runOnce(db, [orderOf(1)]);
+    for (const role of ['anon', 'authenticated']) {
+      await db.exec(`set role ${role}`);
+      await assert.rejects(db.query('select * from pos_open_orders_private.orders'), /permission denied/);
+      await assert.rejects(db.query(`select public.pos_open_orders_read($1, $2)`, [SCOPE, DATE]), /permission denied/);
+      await assert.rejects(db.query(`select public.pos_open_orders_claim($1,$2,$3,$4,$5,$6)`, [randomUUID(), randomUUID(), SCOPE, BRANCH, DATE, 0]), /permission denied/);
+      await db.exec('reset role');
+    }
+    await db.exec('set role service_role');
+    await assert.rejects(db.query('select * from pos_open_orders_private.orders'), /permission denied/);
+    await assert.rejects(db.query('delete from pos_open_orders_private.orders'), /permission denied/);
+    assert.equal((await db.query(`select public.pos_open_orders_read($1, $2) r`, [SCOPE, DATE])).rows[0].r.orders.length, 1);
+    await db.exec('reset role');
+    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), 'bad-scope', BRANCH, DATE, 0]), /open_orders_scope_invalid/);
+    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), `${'a'.repeat(64)}:other-branch`, BRANCH, DATE, 0]), /open_orders_scope_invalid/);
+  } finally { await db.close(); }
+});
+
+test('draft stays separate from paid sales, ledger and inventory', () => {
+  const code = DRAFT.split('\n').filter((line) => !line.trim().startsWith('--')).join('\n');
+  assert.doesNotMatch(code, /pos_sales_receipts|ledger_|inventory|pos_sales_business_day_closures/);
+  assert.match(DRAFT, /^-- DRAFT — NOT APPLIED/);
+});

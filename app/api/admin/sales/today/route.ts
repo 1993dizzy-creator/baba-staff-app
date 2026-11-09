@@ -11,6 +11,7 @@ import {
   fetchAllExactPages,
   type DailyCloseSnapshotRow,
 } from "@/lib/sales/daily-sales-summary";
+import { loadOpenOrderKpi } from "@/lib/sales/open-orders-read-server";
 
 type ReceiptRow = {
   id: number;
@@ -582,6 +583,17 @@ export async function GET(req: Request) {
       averageReceiptAmount: dailySales.averageReceiptAmount,
       deductionTargetLineCount: paidActiveLines.filter(isDeductionTargetLine).length,
     };
+    const closeCheck = compareDailyCloseSnapshot(
+      (closure as DailyCloseSnapshotRow | null) ?? null,
+      totalSales
+    );
+    // Separate from summary: paid KPIs above never include open-order estimates.
+    // Returns status "not_enabled" (no extra reads) until POS_OPEN_ORDERS_READ_ENABLED=true.
+    const openOrders = await loadOpenOrderKpi({
+      businessDate,
+      isClosed: closeCheck.status !== "not_closed",
+      paid: { amount: totalSales, receiptCount: paidReceiptCount },
+    });
 
     return NextResponse.json({
       ok: true,
@@ -593,10 +605,8 @@ export async function GET(req: Request) {
       },
       paymentSummary: buildPaymentSummary(paidPaymentRows),
       paymentReconciliation: dailySales.reconciliation,
-      closeCheck: compareDailyCloseSnapshot(
-        (closure as DailyCloseSnapshotRow | null) ?? null,
-        totalSales
-      ),
+      closeCheck,
+      openOrders,
       taxSummary: buildTaxSummary(receiptRows, lineRows),
       hourlySales: buildHourlySales(receiptRows),
       topItems: buildTopItems(lineRows, paidReceiptIds),
