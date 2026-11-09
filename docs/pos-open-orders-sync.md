@@ -32,7 +32,9 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
   - 페이지 건수가 맞지 않음
   - 페이지 사이로 행이 밀려 같은 ID가 다시 나옴
   - 필수 필드 누락
-- `GET /api/v1/orders/{orderId}`: Status=1 주문만 상세를 읽는다. 동시 요청 거부(102)를 피하려고 상세는 순차 호출한다.
+- `GET /api/v1/orders/{orderId}`: Status=4(결제완료 후보)를 뺀 모든 주문(1, 3·7·8 등 미확정 상태 포함)의 상세를 읽는다. 동시 요청 거부(102)를 피하려고 상세는 순차 호출한다.
+  - 미확정 상태 주문은 메뉴 라인까지 저장하지만 예상액에는 넣지 않는다. `unknown_status`로 보고하고 KPI `complete=false`로 표시한다.
+  - 상태 의미가 확인되면 `ORDER_STATUS_OPEN` 매핑만 바꾸면 된다.
 - 오류 처리:
   - 102: 최대 3회 순차 재시도.
   - 401 또는 7: 실행당 재로그인 1회 후 실패.
@@ -53,16 +55,20 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 
 - `pos_sales_receipts`의 결제완료 매출은 정본으로 유지한다. KPI의 `paid`는 2차 값 그대로다.
 - 주문 `Status`와 영수증 `payment_status`는 섞지 않는다. 연결은 영수증 `raw_json.OrderId` = 주문 `Id`로만 한다.
-  - 운영 확인 결과 11월 이후 영수증 166건 중 155건에 OrderId가 있고, 모두 1:1이다.
+  - 운영 확인(2026-11-09, `business_date >= 2026-11-01` 전체 166건): CUKCUK 영수증 155건은 모두 OrderId가 있다. 나머지 11건은 앱 수동 영수증(`raw_json.source = manual-receipt-create`, OrderId 없음)이다.
+  - 수동 영수증을 제외한 최근 166건(10/31~11/08)은 166건 모두 OrderId가 있다.
+  - 전체 기간에 같은 OrderId에 취소 영수증(4)과 재발행 결제 영수증(3)이 함께 붙은 사례가 5건 있다. 판정은 취소되지 않은 영수증으로만 한다.
+  - 수동 영수증은 주문과 연결할 수 없다. 수동 영수증을 발행한 주문이 POS에서 Status=1로 남으면 예상액에 이중 집계될 수 있다(운영 확인 대상).
 - 영수증 연결 범위: 영업일 D와 D+1 영수증. cutoff 이후 결제된 주문까지 잡기 위해서다.
 - 주문별 분류:
 
 | 연결 상태 | 처리 |
 |---|---|
-| 결제완료 영수증 1건 | 이미 매출에 포함 → 예상액에서 제외 |
-| 미결제 영수증 | 미결제 흐름 담당 → 예상액에서 제외 |
-| 취소 영수증 | 제외 |
-| 영수증 2건 이상 | 불확정 |
+| 유효(비취소) 결제완료 영수증 1건 | 이미 매출에 포함 → 예상액에서 제외. 취소 영수증이 함께 있어도 같음 |
+| 유효 미결제 영수증 1건 | 미결제 흐름 담당 → 예상액에서 제외 |
+| 취소 영수증만 있음 + POS Status≠1 | 제외 |
+| 취소 영수증만 있음 + POS Status=1 | 불확정(재개 가능성) |
+| 유효 영수증 2건 이상 | 불확정 |
 | 영수증 없음 + Status=1 | 진행 주문(예상액 포함) |
 | 영수증 없음 + Status=4 | 불확정(영수증 미동기화 가능성) |
 | 영수증 없음 + 그 외 Status | 불확정 |
@@ -80,6 +86,12 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | `stale` (10분 초과) | null | 지연 경고 + 최근 정상 확인 시각 |
 | `ok` | 계산 | 아래 항목 표시 |
 
+`ok`일 때도 `complete`가 true여야 완전한 예상액이다. 다음 중 하나라도 있으면 false이고, 화면에 "확인되지 않은 주문은 제외" 경고를 표시한다.
+- 불확정 주문(미확정 Status, 결제 후보 미연결, 다중 영수증, 취소 후 재개)
+- 부모가 없는 옵션 라인
+
+`statusCounts`로 영업일의 원시 Status별 건수를 함께 제공한다.
+
 `ok`일 때 표시하는 항목:
 - 진행 예상액
 - 진행 주문 건수
@@ -94,6 +106,9 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - RPC 4개는 security definer이며, `service_role`만 실행할 수 있다.
   - `claim`: advisory lock과 scope별 활성 run 1개 제한으로 단일 실행을 보장한다. lease는 3분이다.
+    - 영업일은 베트남 날짜 -1~+1일만 받는다. 잘못된 먼 날짜로 커밋되면 보관 기한 삭제가 현재 스냅샷을 지울 수 있기 때문이다.
+    - lease가 만료된 이전 수집기의 늦은 commit은 `lease_lost`로 거부되고, 늦은 fail은 `ignored`로 무시된다.
+    - 다른 run의 소유 토큰으로 호출하면 `run_conflict`로 거부된다.
     - 겹치는 요청은 `busy`로 돌려보낸다.
     - 최근 성공이 `p_min_interval_seconds` 이내면 `fresh`로 돌려보내 CUKCUK를 호출하지 않는다.
     - 만료된 lease는 `expired` 처리하고 새 실행을 허용한다.

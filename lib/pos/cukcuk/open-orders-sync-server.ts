@@ -49,7 +49,8 @@ function createCukcukOrderTransport(): OrderTransport {
 async function rpc(name: string, args: Record<string, unknown>) {
   const { data, error } = await supabaseServer.rpc(name, args);
   if (error) {
-    const known = ["open_orders_lease_lost", "open_orders_payload_invalid", "open_orders_run_conflict", "open_orders_scope_invalid"];
+    const known = ["open_orders_lease_lost", "open_orders_payload_invalid", "open_orders_run_conflict", "open_orders_scope_invalid",
+      "open_orders_business_date_out_of_range"];
     throw new Error(known.includes(error.message) ? error.message : "open_orders_persistence_failed");
   }
   return data as Record<string, unknown>;

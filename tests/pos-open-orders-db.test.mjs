@@ -9,7 +9,10 @@ import { PGlite } from '@electric-sql/pglite';
 const DRAFT = readFileSync('docs/sql/pos-open-orders-v1-draft.sql', 'utf8');
 const BRANCH = 'c39228ba-a452-4cf9-bf34-424ffb151fb8';
 const SCOPE = `${'a'.repeat(64)}:${BRANCH}`;
-const DATE = '2026-11-09';
+// Claims accept only the live business date range, so test dates follow the clock.
+const vnDate = (offsetDays = 0) => new Date(Date.now() + 7 * 3600_000 + offsetDays * 86400_000).toISOString().slice(0, 10);
+const DATE = vnDate(0);
+const NEXT_DATE = vnDate(1);
 
 async function database() {
   const db = new PGlite();
@@ -46,7 +49,8 @@ test('single-run lock: an overlapping claim is busy; a fresh success throttles f
     await call(db, 'pos_open_orders_commit', [first.runId, first.owner, {}, JSON.stringify([orderOf(1)])]);
     const throttled = await claim(db, randomUUID(), randomUUID(), DATE, 60);
     assert.equal(throttled.status, 'fresh');
-    assert.equal((await claim(db, randomUUID(), randomUUID(), '2026-11-10', 60)).status, 'collecting');
+    // The throttle is per business date: the next date may still collect.
+    assert.equal((await claim(db, randomUUID(), randomUUID(), NEXT_DATE, 60)).status, 'collecting');
   } finally { await db.close(); }
 });
 
@@ -91,7 +95,7 @@ test('failure keeps the last good snapshot and its old success time; lease loss 
 
     const r3 = randomUUID(), o3 = randomUUID();
     await claim(db, r3, o3, DATE, 0);
-    await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, JSON.stringify([orderOf(1, { businessDate: '2026-11-10' })])]), /open_orders_payload_invalid/);
+    await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, JSON.stringify([orderOf(1, { businessDate: NEXT_DATE })])]), /open_orders_payload_invalid/);
     await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, JSON.stringify([orderOf(1), orderOf(1)])]), /open_orders_payload_invalid/);
     await db.query(`update pos_open_orders_private.runs set lease_until = now() - interval '1 second' where id = $1`, [r3]);
     await assert.rejects(call(db, 'pos_open_orders_commit', [r3, o3, {}, '[]']), /open_orders_lease_lost/);
@@ -102,12 +106,56 @@ test('failure keeps the last good snapshot and its old success time; lease loss 
   } finally { await db.close(); }
 });
 
-test('old data: snapshots older than 7 business days are removed on commit', async () => {
+test('late writer isolation: after its 3-minute lease expires, the old collector cannot commit, fail or reuse tokens', async () => {
   const db = await database();
   try {
-    await runOnce(db, [orderOf(1, { businessDate: '2026-11-01' })], '2026-11-01');
+    const a = { runId: randomUUID(), owner: randomUUID() };
+    assert.equal((await claim(db, a.runId, a.owner, DATE, 0)).status, 'collecting');
+    // A stalls past its lease; B claims (expiring A) and commits the current snapshot.
+    await db.query(`update pos_open_orders_private.runs set lease_until = clock_timestamp() - interval '1 second' where id = $1`, [a.runId]);
+    const b = await runOnce(db, [orderOf(2)]);
+    assert.equal(b.result.status, 'committed');
+    const afterB = await read(db);
+
+    // A wakes up late: commit, fail and claim-replay all stay harmless.
+    await assert.rejects(call(db, 'pos_open_orders_commit', [a.runId, a.owner, {}, JSON.stringify([orderOf(1)])]), /open_orders_lease_lost/);
+    assert.deepEqual(await call(db, 'pos_open_orders_fail', [a.runId, a.owner, 'provider_timeout']), { status: 'ignored' });
+    assert.equal((await claim(db, a.runId, a.owner, DATE, 0)).status, 'expired');
+    // A cannot borrow B's run with its own token, nor B's token on A's run.
+    await assert.rejects(call(db, 'pos_open_orders_commit', [b.runId, a.owner, {}, '[]']), /open_orders_run_conflict/);
+    await assert.rejects(call(db, 'pos_open_orders_fail', [b.runId, a.owner, 'x']), /open_orders_run_conflict/);
+    await assert.rejects(call(db, 'pos_open_orders_commit', [a.runId, b.owner, {}, '[]']), /open_orders_run_conflict/);
+    // B's committed run replays as committed and cannot be failed afterwards.
+    assert.equal((await call(db, 'pos_open_orders_commit', [b.runId, b.owner, {}, JSON.stringify([orderOf(9)])])).replay, true);
+    assert.deepEqual(await call(db, 'pos_open_orders_fail', [b.runId, b.owner, 'late']), { status: 'ignored' });
+
+    const final = await read(db);
+    assert.deepEqual(final.orders.map((o) => o.orderId), ['o2']);
+    assert.equal(final.sync.lastSuccessAt, afterB.sync.lastSuccessAt);
+    assert.equal(final.sync.lastErrorCode, null);
+    assert.equal(final.sync.consecutiveFailures, 0);
+    const runs = (await db.query('select id, status, failure_code from pos_open_orders_private.runs order by started_at')).rows;
+    assert.deepEqual(runs.map((r) => [r.id, r.status, r.failure_code]), [[a.runId, 'expired', 'lease_expired'], [b.runId, 'committed', null]]);
+  } finally { await db.close(); }
+});
+
+test('claims only accept the live business date range; retention removes snapshots older than 7 days', async () => {
+  const db = await database();
+  try {
+    for (const date of [vnDate(-2), vnDate(2), '2099-01-01']) {
+      await assert.rejects(claim(db, randomUUID(), randomUUID(), date, 0), /open_orders_business_date_out_of_range/);
+    }
+    assert.equal((await claim(db, randomUUID(), randomUUID(), vnDate(-1), 0)).status, 'collecting');
+    await db.exec(`update pos_open_orders_private.runs set status = 'failed'`);
+    // An old snapshot (written directly, as if from 8 days ago) and a 6-day-old one.
+    const oldRun = randomUUID();
+    for (const [date, id] of [[vnDate(-8), 'old'], [vnDate(-6), 'recent']]) {
+      await db.query(`insert into pos_open_orders_private.orders(scope,business_date,order_id,status,status_class,order_date,total_amount,has_lines,run_id,observed_at)
+        values ($1,$2,$3,1,'open',now(),1000,false,$4,now())`, [SCOPE, date, id, oldRun]);
+    }
     await runOnce(db, [orderOf(2)], DATE);
-    assert.equal((await read(db, '2026-11-01')).orders.length, 0);
+    assert.equal((await read(db, vnDate(-8))).orders.length, 0);
+    assert.equal((await read(db, vnDate(-6))).orders.length, 1);
     assert.equal((await read(db, DATE)).orders.length, 1);
   } finally { await db.close(); }
 });

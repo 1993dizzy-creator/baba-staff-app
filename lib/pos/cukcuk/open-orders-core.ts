@@ -318,7 +318,12 @@ export function orderLineTotals(lines: OrderLine[]) {
 
 export type ReceiptLink = { orderId: string; receiptId: number; paymentStatus: number | null; isCanceled: boolean | null };
 
-export type UncertainReason = "multiple_receipts" | "paid_without_receipt" | "unknown_status" | "open_without_lines";
+export type UncertainReason =
+  | "multiple_receipts"
+  | "paid_without_receipt"
+  | "unknown_status"
+  | "open_without_lines"
+  | "open_after_canceled_receipt";
 
 export type ClassifiedOrders = {
   open: (CollectedOrder & { lines: OrderLine[] })[];
@@ -327,6 +332,8 @@ export type ClassifiedOrders = {
   receiptPending: number;
   receiptCanceled: number;
   otherBusinessDate: number;
+  /** Raw POS order Status counts for the business date ("null" when absent). */
+  statusCounts: Record<string, number>;
 };
 
 /**
@@ -347,22 +354,29 @@ export function classifyOrdersForBusinessDate(
     receiptSeen.add(receipt.receiptId);
     links.set(orderId, [...(links.get(orderId) ?? []), receipt]);
   }
-  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0 };
+  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
   for (const order of orders) {
     if (order.businessDate !== businessDate) {
       result.otherBusinessDate++;
       continue;
     }
+    const statusKey = String(order.status);
+    result.statusCounts[statusKey] = (result.statusCounts[statusKey] ?? 0) + 1;
     const linked = links.get(order.orderId) ?? [];
     const uncertain = (reason: UncertainReason) =>
       result.uncertain.push({ orderId: order.orderId, orderNo: order.orderNo, reason, amount: order.totalAmount });
-    if (linked.length > 1) uncertain("multiple_receipts");
-    else if (linked.length === 1) {
-      const receipt = linked[0];
-      if (receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5) result.receiptCanceled++;
-      else if (receipt.paymentStatus === 3) result.converted++;
+    // A canceled receipt re-issued as a paid one (seen in production: status 4 + 3 on one
+    // OrderId) is one sale. Only non-canceled receipts decide; two of those stay uncertain.
+    const active = linked.filter((receipt) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+    if (active.length > 1) uncertain("multiple_receipts");
+    else if (active.length === 1) {
+      if (active[0].paymentStatus === 3) result.converted++;
       // Unpaid receipts belong to the pending-payment flow; never mixed into this estimate.
       else result.receiptPending++;
+    } else if (linked.length > 0) {
+      // Only canceled receipts: an order still open in POS may have been re-opened.
+      if (order.statusClass === "open") uncertain("open_after_canceled_receipt");
+      else result.receiptCanceled++;
     } else if (order.statusClass === "open") {
       if (order.lines) result.open.push(order as CollectedOrder & { lines: OrderLine[] });
       else uncertain("open_without_lines");
@@ -390,9 +404,11 @@ export async function collectOpenOrderSnapshot(
   const selected = listed.orders.filter((order) => calculateStoreBusinessDate(order.orderDate, input.cutoff) === input.businessDate);
   const orders: CollectedOrder[] = [];
   let detailCount = 0;
-  // Serial detail reads: CUKCUK rejects concurrent requests (102).
+  // Serial detail reads: CUKCUK rejects concurrent requests (102). Unverified statuses
+  // (e.g. 3/7/8) are also read, so their menu lines exist once the mapping is confirmed;
+  // until then they are reported as uncertain and the KPI is marked incomplete.
   for (const summary of selected) {
-    if (summary.statusClass !== "open") {
+    if (summary.statusClass === "paid_candidate") {
       orders.push(summaryOnly(summary, input.cutoff));
       continue;
     }
@@ -475,6 +491,12 @@ export type OpenOrderKpi = {
   open: { amount: number; orderCount: number; menuLineCount: number; optionLineCount: number; itemQuantity: number } | null;
   uncertain: { orderCount: number; amount: number; reasons: Partial<Record<UncertainReason, number>> } | null;
   provisional: { amount: number; count: number; averageAmount: number } | null;
+  /**
+   * True only for status "ok" with no uncertain order and no option line whose parent is
+   * missing. When false the estimate covers confirmed Status=1 orders only.
+   */
+  complete: boolean;
+  statusCounts: Record<string, number> | null;
 };
 
 /**
@@ -506,6 +528,8 @@ export function buildOpenOrderKpi(input: {
     open: null,
     uncertain: null,
     provisional: null,
+    complete: false,
+    statusCounts: null,
   };
   if (!input.enabled) return { ...base, status: "not_enabled" };
   // After close (or for any non-live date) the estimate is never added to confirmed sales.
@@ -513,9 +537,11 @@ export function buildOpenOrderKpi(input: {
   if (!sync || !lastSuccessAt || !input.classified || ageMs === null || !Number.isFinite(ageMs)) return { ...base, status: "unavailable" };
   if (ageMs > (input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS)) return { ...base, status: "stale" };
 
+  let orphanOptions = 0;
   const open = input.classified.open.reduce(
     (sum, order) => {
       const totals = orderLineTotals(order.lines);
+      orphanOptions += totals.orphanOptionCount;
       sum.amount += order.totalAmount;
       sum.orderCount += 1;
       sum.menuLineCount += totals.menuLineCount;
@@ -539,5 +565,7 @@ export function buildOpenOrderKpi(input: {
       reasons,
     },
     provisional: { amount, count, averageAmount: count > 0 ? Math.round(amount / count) : 0 },
+    complete: input.classified.uncertain.length === 0 && orphanOptions === 0,
+    statusCounts: input.classified.statusCounts,
   };
 }

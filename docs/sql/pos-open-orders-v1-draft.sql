@@ -100,6 +100,12 @@ begin
     or p_min_interval_seconds is null or p_min_interval_seconds < 0 or p_min_interval_seconds > 3600 then
     raise exception 'open_orders_scope_invalid' using errcode = '22023';
   end if;
+  -- Only the live business date (Vietnam date -1..+1 for the 03:00 cutoff and clock skew).
+  -- A wrong far date could otherwise make commit's retention delete current snapshots.
+  if p_business_date not between (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date - 1
+    and (clock_timestamp() at time zone 'Asia/Ho_Chi_Minh')::date + 1 then
+    raise exception 'open_orders_business_date_out_of_range' using errcode = '22023';
+  end if;
   perform pg_advisory_xact_lock(hashtextextended('pos_open_orders:' || p_scope, 0));
   select * into r from pos_open_orders_private.runs where id = p_run_id;
   if found then

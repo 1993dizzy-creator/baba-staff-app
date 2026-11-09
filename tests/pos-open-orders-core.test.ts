@@ -153,12 +153,36 @@ test("00:00-03:00 belongs to the previous business date; 03:00 starts the next o
   assert.equal(snap.manifest.lastSyncDate, "2026-11-07T20:00:00.000Z");
 });
 
-test("only open orders get detail calls; requests stay serial", async () => {
-  const rows = [order(1), order(2, { Status: 4 }), order(3, { Status: 2 })];
-  const t = transport((r) => (r.kind === "page" ? ok(rows, 3) : ok({ ...order(1), OrderDetails: [line(1)] })));
+test("Status 1/3/7/8 get menu details (serial); only the paid candidate 4 is list-only", async () => {
+  const rows = [order(1), order(3, { Status: 3 }), order(7, { Status: 7 }), order(8, { Status: 8 }), order(4, { Status: 4 })];
+  const t = transport((r) => (r.kind === "page" ? ok(rows, rows.length) : ok({ ...rows.find((o) => o.Id === r.orderId), OrderDetails: [line(1)] })));
   const snap = await collectOpenOrderSnapshot(t, { branchId: "b", businessDate: "2026-11-09", windowFrom: "2026-11-08T20:00:00.000Z", cutoff: CUTOFF });
-  assert.deepEqual(t.sent.map((r) => r.kind), ["page", "detail"]);
-  assert.deepEqual(snap.orders.map((o) => [o.statusClass, o.lines === null]), [["open", false], ["paid_candidate", true], ["unknown", true]]);
+  assert.deepEqual(t.sent.map((r) => r.kind), ["page", "detail", "detail", "detail", "detail"]);
+  assert.deepEqual(snap.orders.map((o) => [o.status, o.statusClass, o.lines === null]), [
+    [1, "open", false], [3, "unknown", false], [7, "unknown", false], [8, "unknown", false], [4, "paid_candidate", true],
+  ]);
+  assert.equal(snap.manifest.detailCount, 4);
+
+  // KPI completeness: unverified statuses are reported, never summed, and mark the KPI incomplete.
+  const classified = classifyOrdersForBusinessDate(snap.orders, [], "2026-11-09");
+  assert.deepEqual(classified.statusCounts, { "1": 1, "3": 1, "7": 1, "8": 1, "4": 1 });
+  const kpi = buildOpenOrderKpi({ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false,
+    paid: { amount: 0, receiptCount: 0 }, sync: { businessDate: "2026-11-09", lastSuccessAt: "2026-11-09T13:59:00.000Z", lastAttemptAt: null, lastErrorCode: null },
+    classified, now: new Date("2026-11-09T14:00:00.000Z") });
+  assert.equal(kpi.status, "ok");
+  assert.equal(kpi.complete, false);
+  assert.equal(kpi.open?.orderCount, 1);
+  assert.deepEqual(kpi.uncertain?.reasons, { unknown_status: 3, paid_without_receipt: 1 });
+  assert.deepEqual(kpi.statusCounts, { "1": 1, "3": 1, "7": 1, "8": 1, "4": 1 });
+  // Only confirmed open orders with no uncertainty and no orphan options are complete.
+  const only = buildOpenOrderKpi({ ...{ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid: { amount: 0, receiptCount: 0 } },
+    sync: { businessDate: "2026-11-09", lastSuccessAt: "2026-11-09T13:59:00.000Z", lastAttemptAt: null, lastErrorCode: null },
+    classified: classifyOrdersForBusinessDate(snap.orders.slice(0, 1), [], "2026-11-09"), now: new Date("2026-11-09T14:00:00.000Z") });
+  assert.equal(only.complete, true);
+  const orphan = classifyOrdersForBusinessDate([{ ...snap.orders[0], lines: normalizeOrderLines([line(2, { ParentId: uuid(9999) })]) }], [], "2026-11-09");
+  assert.equal(buildOpenOrderKpi({ ...{ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid: { amount: 0, receiptCount: 0 } },
+    sync: { businessDate: "2026-11-09", lastSuccessAt: "2026-11-09T13:59:00.000Z", lastAttemptAt: null, lastErrorCode: null },
+    classified: orphan, now: new Date("2026-11-09T14:00:00.000Z") }).complete, false);
 });
 
 const collected = (n: number, extra: Partial<CollectedOrder> = {}): CollectedOrder => ({
@@ -187,15 +211,40 @@ test("order/receipt: a paid receipt removes the order from the estimate; uncerta
     { orderId: uuid(6), receiptId: 61, paymentStatus: 3, isCanceled: false },
     { orderId: uuid(7), receiptId: 70, paymentStatus: 4, isCanceled: true },
   ];
-  const result = classifyOrdersForBusinessDate(orders, receipts, "2026-11-09");
+  const result = classifyOrdersForBusinessDate(
+    [...orders, collected(10, { status: 2, statusClass: "unknown", lines: null })],
+    [...receipts, { orderId: uuid(10), receiptId: 100, paymentStatus: 5, isCanceled: true }],
+    "2026-11-09"
+  );
   assert.deepEqual(result.open.map((o) => o.orderNo), ["1.1"]);
   assert.equal(result.converted, 1);
   assert.equal(result.receiptPending, 1);
+  // Order 10 is no longer open in POS and only has a canceled receipt: excluded.
   assert.equal(result.receiptCanceled, 1);
   assert.equal(result.otherBusinessDate, 1);
   assert.deepEqual(result.uncertain.map((u) => [u.orderNo, u.reason]), [
-    ["1.4", "paid_without_receipt"], ["1.5", "unknown_status"], ["1.6", "multiple_receipts"], ["1.9", "open_without_lines"],
+    ["1.4", "paid_without_receipt"], ["1.5", "unknown_status"], ["1.6", "multiple_receipts"],
+    // Order 7 is still Status=1 in POS but its only receipt was canceled: possibly re-opened.
+    ["1.7", "open_after_canceled_receipt"], ["1.9", "open_without_lines"],
   ]);
+});
+
+test("production pattern: a canceled receipt re-issued as paid on the same OrderId is one paid sale", () => {
+  // e.g. receipts 8385 (status 4) + 8388 (status 3) on one OrderId, 2026-10-20.
+  const result = classifyOrdersForBusinessDate([collected(1)], [
+    { orderId: uuid(1), receiptId: 8385, paymentStatus: 4, isCanceled: true },
+    { orderId: uuid(1), receiptId: 8388, paymentStatus: 3, isCanceled: false },
+  ], "2026-11-09");
+  assert.deepEqual([result.open.length, result.converted, result.uncertain.length], [0, 1, 0]);
+  // Two active receipts on one order remain uncertain.
+  const twoPaid = classifyOrdersForBusinessDate([collected(1)], [
+    { orderId: uuid(1), receiptId: 1, paymentStatus: 3, isCanceled: false },
+    { orderId: uuid(1), receiptId: 2, paymentStatus: 1, isCanceled: false },
+  ], "2026-11-09");
+  assert.deepEqual(twoPaid.uncertain.map((u) => u.reason), ["multiple_receipts"]);
+  // Manual app receipts carry no OrderId and never link to an order.
+  const manual = classifyOrdersForBusinessDate([collected(1)], [{ orderId: "", receiptId: 3, paymentStatus: 3, isCanceled: false }], "2026-11-09");
+  assert.equal(manual.open.length, 1);
 });
 
 const paid = { amount: 39_647_400, receiptCount: 26 };
