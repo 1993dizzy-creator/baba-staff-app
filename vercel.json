@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/payroll-quyen-menu-incentive",
       "schedule": "15 20 * * *"
+    },
+    {
+      "path": "/api/cron/pos-open-orders-sync",
+      "schedule": "2-57/5 10-19 * * *"
     }
   ]
 }

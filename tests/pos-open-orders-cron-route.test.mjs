@@ -113,15 +113,19 @@ test('switch must be exactly "true": anything else skips with zero CUKCUK/DB cal
   }
 });
 
-test('service window boundaries (Asia/Ho_Chi_Minh): 16:00 start, last start 02:54:59, 02:55:00 until 16:00 skip', () => {
+test('service window boundaries (Asia/Ho_Chi_Minh): start 17:30, last start 02:54:59, 02:55:00 until 17:30 skip', () => {
   const cases = [
-    ['2026-11-09T15:59:59', false], ['2026-11-09T16:00', true], ['2026-11-09T23:59:59', true],
+    ['2026-11-09T16:00', false], ['2026-11-09T17:00', false], ['2026-11-09T17:29:59', false], ['2026-11-09T17:30', true],
+    ['2026-11-09T17:32', true], ['2026-11-09T23:59:59', true],
     ['2026-11-10T00:00', true], ['2026-11-10T02:54', true], ['2026-11-10T02:54:59', true],
-    ['2026-11-10T02:55', false], ['2026-11-10T02:55:01', false], ['2026-11-10T02:56', false], ['2026-11-10T02:56:59', false],
+    ['2026-11-10T02:55', false], ['2026-11-10T02:55:01', false], ['2026-11-10T02:56', false], ['2026-11-10T02:57', false],
     ['2026-11-10T02:58', false], ['2026-11-10T03:00', false], ['2026-11-10T12:00', false], ['2026-11-10T15:59:59', false],
   ];
   for (const [at, allowed] of cases) assert.equal(policy.evaluateOpenOrdersCronWindow(vn(at)).allowed, allowed, at);
-  // Millisecond edge: 02:54:59.999 still starts, 02:55:00.000 does not.
+  assert.equal(policy.OPEN_ORDERS_CRON_FIRST_START_MINUTE, 17 * 60 + 30);
+  // Millisecond edges: 17:29:59.999 / 17:30:00.000 and 02:54:59.999 / 02:55:00.000.
+  assert.equal(policy.evaluateOpenOrdersCronWindow(new Date(vn('2026-11-09T17:30').getTime() - 1)).allowed, false);
+  assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-09T17:30')).allowed, true);
   assert.equal(policy.evaluateOpenOrdersCronWindow(new Date(vn('2026-11-10T02:55').getTime() - 1)).allowed, true);
   assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-10T02:55')).allowed, false);
   assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-10T02:54:30')).vietnamTime, '02:54');
@@ -132,15 +136,15 @@ test('service window boundaries (Asia/Ho_Chi_Minh): 16:00 start, last start 02:5
   assert.ok(lastStartEnd + 120_000 + core.OPEN_ORDERS_LEASE_MS <= 3 * 3600_000, 'claim delay up to 2 min still releases before 03:00');
 });
 
-test('route at 16:00 / 00:00 / 02:54 runs with the store-settings business date; 02:55 / 02:56 / 02:58 / 03:00 skip without calls', async () => {
-  for (const [at, date] of [['2026-11-09T16:00', '2026-11-09'], ['2026-11-10T00:00', '2026-11-09'], ['2026-11-10T02:54', '2026-11-09'], ['2026-11-10T02:54:59', '2026-11-09']]) {
+test('route at 17:30 / 00:00 / 02:54:59 runs with the store-settings business date (after 00:00 = previous day); outside skips without calls', async () => {
+  for (const [at, date] of [['2026-11-09T17:30', '2026-11-09'], ['2026-11-09T23:59', '2026-11-09'], ['2026-11-10T00:00', '2026-11-09'], ['2026-11-10T02:54', '2026-11-09'], ['2026-11-10T02:54:59', '2026-11-09']]) {
     const h = harness({ at: vn(at) });
     const r = await h.run();
     assert.equal(r.body.outcome, 'committed', at);
     assert.equal(h.meta.claimArgs.p_business_date, date, at);
     assert.ok(h.calls.indexOf('business_date_rpc') < h.calls.indexOf('rpc:pos_open_orders_claim'));
   }
-  for (const at of ['2026-11-10T02:55', '2026-11-10T02:56', '2026-11-10T02:58', '2026-11-10T03:00', '2026-11-10T15:59']) {
+  for (const at of ['2026-11-09T17:02', '2026-11-09T17:27', '2026-11-09T17:29:59', '2026-11-10T02:55', '2026-11-10T02:57', '2026-11-10T03:00', '2026-11-10T15:59']) {
     const h = harness({ at: vn(at) });
     const r = await h.run();
     assert.deepEqual([r.status, r.body.outcome], [200, 'skipped_outside_hours'], at);
@@ -220,7 +224,32 @@ test('result mapping covers every outcome and rejects unsafe codes', () => {
   assert.deepEqual(map(null).body.code, 'open_orders_unexpected_result');
 });
 
-test('static: route config, reuse only, no own lock, cron not registered, sales/close code untouched', () => {
+test('cron registration: the 11 existing entries are byte-for-byte preserved and exactly one entry is added', () => {
+  const before = JSON.parse(execFileSync('git', ['show', `${BASE}:vercel.json`], { encoding: 'utf8' }));
+  const after = JSON.parse(readFileSync('vercel.json', 'utf8'));
+  assert.equal(before.crons.length, 11);
+  assert.equal(after.crons.length, 12);
+  assert.deepEqual(after.crons.slice(0, 11), before.crons);
+  assert.deepEqual(after.crons[11], { path: '/api/cron/pos-open-orders-sync', schedule: '2-57/5 10-19 * * *' });
+  // Everything else in vercel.json is unchanged.
+  assert.deepEqual({ ...after, crons: undefined }, { ...before, crons: undefined });
+});
+
+test('cron schedule x route window: Vercel fires 17:02–02:57 (+07) every 5 min; only 17:32–02:52 collect', () => {
+  // "2-57/5 10-19 * * *" in UTC.
+  const fires = [];
+  for (let hour = 10; hour <= 19; hour++) for (let minute = 2; minute <= 57; minute += 5) fires.push(new Date(Date.UTC(2026, 10, 9, hour, minute)));
+  const vnLabel = (d) => new Date(d.getTime() + 7 * 3600_000).toISOString().slice(11, 16);
+  assert.equal(vnLabel(fires[0]), '17:02');
+  assert.equal(vnLabel(fires.at(-1)), '02:57');
+  const allowed = fires.filter((d) => policy.evaluateOpenOrdersCronWindow(d).allowed).map(vnLabel);
+  assert.equal(allowed[0], '17:32');
+  assert.equal(allowed.at(-1), '02:52');
+  assert.equal(allowed.length, 6 + 8 * 12 + 11);
+  assert.deepEqual(fires.map(vnLabel).filter((t) => !allowed.includes(t)), ['17:02', '17:07', '17:12', '17:17', '17:22', '17:27', '02:57']);
+});
+
+test('static: route config, reuse only, no own lock, sales/close code untouched', () => {
   const src = readFileSync('app/api/cron/pos-open-orders-sync/route.ts', 'utf8');
   assert.match(src, /export const runtime = "nodejs";/);
   assert.match(src, /export const dynamic = "force-dynamic";/);
@@ -232,10 +261,8 @@ test('static: route config, reuse only, no own lock, cron not registered, sales/
   assert.ok(src.indexOf('openOrdersSyncEnabled()') < src.indexOf('evaluateOpenOrdersCronWindow(now)'));
   assert.ok(src.indexOf('evaluateOpenOrdersCronWindow(now)') < src.indexOf('runCentralOpenOrderSync(now)'));
   assert.equal(policy.OPEN_ORDERS_CRON_LAST_START_MINUTE, 2 * 60 + 54);
-  assert.match(src, /16:00–02:54:59/);
-  // vercel.json untouched and without this route.
-  assert.equal(execFileSync('git', ['diff', '--name-only', BASE, '--', 'vercel.json'], { encoding: 'utf8' }).trim(), '');
-  assert.doesNotMatch(readFileSync('vercel.json', 'utf8'), /pos-open-orders/);
+  assert.match(src, /17:30–02:54:59/);
+  assert.match(src, /"2-57\/5 10-19 \* \* \*"/);
   // Paid sales, close and sync code paths unchanged from the base commit.
   const touched = execFileSync('git', ['diff', '--name-only', BASE, '--', 'lib/sales', 'app/api/admin/sales', 'app/api/cron/sales-close-final',
     'app/api/cron/sales-sync', 'app/api/cron/sales-sync-final', 'lib/ledger', 'lib/pos/cukcuk/sales-receipt-sync.ts', 'lib/pos/cukcuk/sales-sync-cron-shared.ts',

@@ -512,6 +512,7 @@ test("browsers never reach CUKCUK: read paths import no CUKCUK transport or logi
   const sync = read("lib/pos/cukcuk/open-orders-sync-server.ts");
   assert.match(sync, /^import "server-only";/);
   assert.match(sync, /POS_OPEN_ORDERS_SYNC_ENABLED/);
-  // Not activated: no route or cron imports the collector, and vercel.json has no schedule for it.
-  assert.doesNotMatch(read("vercel.json"), /open-orders/);
+  // Scheduled only through the guarded cron route; collection still needs the switch ON.
+  const openOrderCrons = (JSON.parse(read("vercel.json")).crons as { path: string; schedule: string }[]).filter((c) => /open-orders/.test(c.path));
+  assert.deepEqual(openOrderCrons, [{ path: "/api/cron/pos-open-orders-sync", schedule: "2-57/5 10-19 * * *" }]);
 });

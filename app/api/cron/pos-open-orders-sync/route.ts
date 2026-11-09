@@ -6,8 +6,9 @@ import {
   openOrdersCronErrorCode,
 } from "@/lib/pos/cukcuk/open-orders-cron-policy";
 
-// Central CUKCUK open-order collection trigger. NOT scheduled: vercel.json has no entry.
-// Order: cron auth -> POS_OPEN_ORDERS_SYNC_ENABLED -> 16:00–02:54:59 (+07) window -> the
+// Central CUKCUK open-order collection trigger. vercel.json: "2-57/5 10-19 * * *" (UTC) =
+// every 5 minutes 17:02–02:57 (+07); the window below lets 17:32–02:52 through.
+// Order: cron auth -> POS_OPEN_ORDERS_SYNC_ENABLED -> 17:30–02:54:59 (+07) window -> the
 // existing runCentralOpenOrderSync (its DB claim is the only lock; business date comes
 // from the store-settings RPC). Collection is bounded to 150s inside a 3-minute lease.
 export const runtime = "nodejs";
