@@ -150,6 +150,13 @@ begin
     or (select count(distinct o->>'orderId') from jsonb_array_elements(p_orders) o) <> jsonb_array_length(p_orders) then
     raise exception 'open_orders_payload_invalid' using errcode = '22023';
   end if;
+  -- Never infer an ending from absence: every order that was unfinished (open/unknown)
+  -- in the current snapshot must appear in the new one, with whatever status it now has.
+  if exists (select 1 from pos_open_orders_private.orders o
+      where o.scope = r.scope and o.business_date = r.business_date and o.status_class in ('open', 'unknown')
+        and not exists (select 1 from jsonb_array_elements(p_orders) x where x->>'orderId' = o.order_id)) then
+    raise exception 'open_orders_vanished' using errcode = '55000';
+  end if;
 
   delete from pos_open_orders_private.orders where scope = r.scope and business_date = r.business_date;
   for v_order in select * from jsonb_array_elements(p_orders) loop

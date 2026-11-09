@@ -301,16 +301,114 @@ test("run: claim busy/fresh never calls CUKCUK; failure is recorded and the snap
   }
   calls.length = 0;
   const failing = transport(() => ({ status: 200, json: { Success: false, ErrorType: 102 } }));
-  const failed = await runOpenOrderSync({ rpc: async (name, args) => { calls.push(name); return name === "pos_open_orders_claim" ? { status: "collecting" } : { status: "failed", code: args.p_code }; }, transport: failing, uuid: () => uuid(2) }, input);
+  const failed = await runOpenOrderSync({ rpc: async (name, args) => { calls.push(name); return name === "pos_open_orders_claim" ? { status: "collecting" } : name === "pos_open_orders_read" ? { orders: [] } : { status: "failed", code: args.p_code }; }, transport: failing, uuid: () => uuid(2) }, input);
   assert.deepEqual(failed, { status: "failed", code: "provider_busy_102" });
-  assert.deepEqual(calls, ["pos_open_orders_claim", "pos_open_orders_fail"]);
+  assert.deepEqual(calls, ["pos_open_orders_claim", "pos_open_orders_read", "pos_open_orders_fail"]);
 
   calls.length = 0;
   let committed: Record<string, unknown> | null = null;
   const good = transport((r) => (r.kind === "page" ? ok([order(1)], 1) : ok({ ...order(1), CustomerName: "secret", CustomerTel: "0900", OrderDetails: [line(1)] })));
-  await runOpenOrderSync({ rpc: async (name, args) => { calls.push(name); if (name === "pos_open_orders_commit") committed = args; return { status: name === "pos_open_orders_claim" ? "collecting" : "committed" }; }, transport: good, uuid: () => uuid(3) }, input);
-  assert.deepEqual(calls, ["pos_open_orders_claim", "pos_open_orders_commit"]);
+  await runOpenOrderSync({ rpc: async (name, args) => { calls.push(name); if (name === "pos_open_orders_commit") committed = args; return name === "pos_open_orders_read" ? { orders: [] } : { status: name === "pos_open_orders_claim" ? "collecting" : "committed" }; }, transport: good, uuid: () => uuid(3) }, input);
+  assert.deepEqual(calls, ["pos_open_orders_claim", "pos_open_orders_read", "pos_open_orders_commit"]);
   assert.doesNotMatch(JSON.stringify(committed), /secret|0900|CustomerTel/);
+});
+
+const syncInput = { scope: "s", branchId: "b", businessDate: "2026-11-09", windowFrom: "2026-11-08T20:00:00.000Z", cutoff: CUTOFF };
+const rpcWith = (previousOrders: unknown[], calls: { name: string; args: Record<string, unknown> }[]) => async (name: string, args: Record<string, unknown>) => {
+  calls.push({ name, args });
+  if (name === "pos_open_orders_claim") return { status: "collecting" };
+  if (name === "pos_open_orders_read") return { orders: previousOrders };
+  if (name === "pos_open_orders_fail") return { status: "failed", code: args.p_code };
+  return { status: "committed" };
+};
+
+test("empty list while an order was open: the order is re-read by ID and only a confirmed ending reaches 0", async () => {
+  const previous = [{ orderId: uuid(1), statusClass: "open" }, { orderId: uuid(2), statusClass: "paid_candidate" }];
+  // CUKCUK lists nothing, but GET orders/{id} confirms o1 is now Status 4.
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const confirmed = transport((r) => (r.kind === "page" ? ok([], 0) : ok({ ...order(1), Status: 4, OrderDetails: [line(1)] })));
+  await runOpenOrderSync({ rpc: rpcWith(previous, calls), transport: confirmed, uuid: () => uuid(5) }, syncInput);
+  assert.deepEqual(confirmed.sent.map((r) => r.kind), ["page", "detail"]);
+  const commit = calls.find((c) => c.name === "pos_open_orders_commit");
+  const orders = commit?.args.p_orders as CollectedOrder[];
+  assert.deepEqual(orders.map((o) => [o.orderId, o.statusClass]), [[uuid(1), "paid_candidate"]]);
+  assert.equal((commit?.args.p_manifest as Record<string, unknown>).vanishedConfirmedCount, 1);
+  const kpi = buildOpenOrderKpi({ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid, sync: fresh,
+    classified: classifyOrdersForBusinessDate(orders as CollectedOrder[], [], "2026-11-09"), now });
+  assert.deepEqual([kpi.status, kpi.open?.amount, kpi.open?.orderCount], ["ok", 0, 0]);
+
+  // The re-read fails (not found / provider error): no commit, the run fails as unconfirmed.
+  const failCalls: { name: string; args: Record<string, unknown> }[] = [];
+  const missing = transport((r) => (r.kind === "page" ? ok([], 0) : { status: 200, json: { Success: false, Code: 404 } }));
+  const result = await runOpenOrderSync({ rpc: rpcWith(previous, failCalls), transport: missing, uuid: () => uuid(6) }, syncInput);
+  assert.deepEqual(result, { status: "failed", code: "orders_vanished_unconfirmed" });
+  assert.deepEqual(failCalls.map((c) => c.name), ["pos_open_orders_claim", "pos_open_orders_read", "pos_open_orders_fail"]);
+
+  // A detail for another business date does not confirm the ending either.
+  const otherDay = transport((r) => (r.kind === "page" ? ok([], 0) : ok({ ...order(1), Status: 4, Date: "2026-11-10T20:00:00+07:00", OrderDetails: [] })));
+  assert.equal((await runOpenOrderSync({ rpc: rpcWith(previous, []), transport: otherDay, uuid: () => uuid(7) }, syncInput)).code, "orders_vanished_unconfirmed");
+
+  // Too many vanished orders fail without a detail storm.
+  const many = Array.from({ length: 21 }, (_, i) => ({ orderId: uuid(100 + i), statusClass: "unknown" }));
+  const storm = transport(() => ok([], 0));
+  assert.equal((await runOpenOrderSync({ rpc: rpcWith(many, []), transport: storm, uuid: () => uuid(8) }, syncInput)).code, "orders_vanished_unconfirmed");
+  assert.deepEqual(storm.sent.map((r) => r.kind), ["page"]);
+
+  // No unfinished order before: an empty full list is a real 0 and commits.
+  const emptyCalls: { name: string; args: Record<string, unknown> }[] = [];
+  await runOpenOrderSync({ rpc: rpcWith([{ orderId: uuid(2), statusClass: "paid_candidate" }], emptyCalls), transport: transport(() => ok([], 0)), uuid: () => uuid(9) }, syncInput);
+  assert.deepEqual(emptyCalls.find((c) => c.name === "pos_open_orders_commit")?.args.p_orders, []);
+});
+
+test("Total=0 with rows is a contradiction and fails; DB vanished rejections keep their code", async () => {
+  await assert.rejects(fetchAllOrderPages(transport(() => ok([order(1)], 0)), { branchId: "b", lastSyncDate: "x" }, state()), { code: "orders_page_count_mismatch" });
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    calls.push({ name, args });
+    if (name === "pos_open_orders_commit") throw new Error("open_orders_vanished");
+    return rpcWith([], [])(name, args);
+  };
+  const result = await runOpenOrderSync({ rpc, transport: transport(() => ok([], 0)), uuid: () => uuid(10) }, syncInput);
+  assert.deepEqual(result, { status: "failed", code: "open_orders_vanished" });
+  assert.equal(calls.at(-1)?.args.p_code, "open_orders_vanished");
+});
+
+test("KPI: a vanished/unconfirmed latest attempt is 'incomplete' even when the last success is fresh", () => {
+  const classified = classifyOrdersForBusinessDate([collected(1)], [], "2026-11-09");
+  for (const code of ["orders_vanished_unconfirmed", "open_orders_vanished"]) {
+    const kpi = buildOpenOrderKpi({ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid, sync: { ...fresh, lastErrorCode: code }, classified, now });
+    assert.deepEqual([kpi.status, kpi.open, kpi.provisional, kpi.lastErrorCode], ["incomplete", null, null, code]);
+  }
+  // Other transient errors inside the freshness window keep the last good snapshot.
+  assert.equal(buildOpenOrderKpi({ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid, sync: { ...fresh, lastErrorCode: "provider_busy_102" }, classified, now }).status, "ok");
+});
+
+test("header Status and line Status are separate: header 4 with line Status 1 (probe pattern)", () => {
+  const summary = { orderId: uuid(1), orderNo: "1.1", status: 4, statusClass: "paid_candidate" as const, orderDate: "2026-11-08T16:00:17.000Z", totalAmount: 840000, raw: {} };
+  const merged = mergeOrderDetail(summary, ok({ ...order(1), Status: 4, TotalAmount: 840000, TableName: "BAR10",
+    OrderDetails: [70000, 220000, 200000, 200000, 150000].map((amount, i) => line(i + 1, { Status: 1, Price: amount, Amount: amount }))
+      .map((probeLine) => ({ ...probeLine, UnitId: uuid(8), UnitName: "Cốc", SortOrder: 0 })) }).json, CUTOFF);
+  assert.equal(merged.statusClass, "paid_candidate");
+  assert.equal(merged.tableName, "BAR10");
+  assert.deepEqual(merged.lines!.map((l) => [l.lineStatus, l.isCanceled, l.isOption]), Array(5).fill([1, false, false]));
+  assert.equal(orderLineTotals(merged.lines!).lineAmount, 840000);
+  // A line Status never changes the order class or cancels a line by itself.
+  const odd = normalizeOrderLines([line(1, { Status: 4 }), line(2, { Status: 99 })]);
+  assert.deepEqual(odd.map((l) => l.isCanceled), [false, false]);
+});
+
+test("LastSyncDate is a fixed wide lower bound, never an incremental cursor", async () => {
+  const sent: string[] = [];
+  // Two runs of the same business date (e.g. after an earlier success) send the same bound.
+  for (let run = 0; run < 2; run++) {
+    const t = transport((r) => { if (r.kind === "page") sent.push(r.lastSyncDate); return ok([], 0); });
+    await runOpenOrderSync({ rpc: rpcWith([], []), transport: t, uuid: () => uuid(11 + run) }, syncInput);
+  }
+  assert.deepEqual(sent, ["2026-11-07T20:00:00.000Z", "2026-11-07T20:00:00.000Z"]);
+  const core = readFileSync("lib/pos/cukcuk/open-orders-core.ts", "utf8");
+  const collector = core.slice(core.indexOf("export async function collectOpenOrderSnapshot"), core.indexOf("export type OpenOrderRpc"));
+  assert.doesNotMatch(collector, /lastSuccessAt|lastAttemptAt|Date\.now\(\)|new Date\(\)/);
+  assert.match(collector, /mode: "full"/);
 });
 
 test("browsers never reach CUKCUK: read paths import no CUKCUK transport or login", () => {

@@ -51,6 +51,62 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
   - 수량이 0 이하인 라인은 제외한다.
 - 고객명·전화 등 원본 주문 JSON은 저장하지 않는다.
 
+## 전체 수집과 증분 수집
+
+| 구분 | 전체 수집 (사용) | 증분 수집 (사용 안 함) |
+|---|---|---|
+| 요청 | 영업일 시작 24시간 전 고정 `LastSyncDate`로 `Total` 전 페이지 | 직전 성공 시각 근처 `LastSyncDate`로 변경분만 |
+| 근거 | 실검증: 11/8 영업일 주문 18건 전부 반환(영수증 OrderId 18건, 첫·마지막 주문시각 일치) | 실검증: 현재-5분 기준 `Total=0`. 변경분을 빠짐없이 준다는 보장 없음 |
+| 상태 반영 | 매 실행 스냅샷 교체. 종료 주문도 Status=4로 목록에 남는 것을 확인 | — |
+| 커서 | 없음. 직전 성공 시각을 요청에 쓰지 않음(테스트로 고정) | — |
+
+운영 코드는 전체 수집만 사용한다. `LastSyncDate`는 조회 하한일 뿐 변경 검출 근거가 아니다.
+
+### 빈 목록·부분 목록 보호
+
+- **수집기:** 이전 스냅샷에서 끝나지 않은 주문(open, 미확정 상태)이 새 전체 목록에 없으면 `GET orders/{id}`로 다시 읽는다(최대 20건).
+  - 같은 영업일 주문으로 확인되면 그 상태(예: 4)로 스냅샷에 넣는다.
+  - 확인되지 않으면 `orders_vanished_unconfirmed`로 실행을 실패 처리한다. 이전 스냅샷을 정상 0건으로 덮지 않는다.
+- **DB(commit):** 같은 영업일의 open/unknown 주문이 새 payload에 없으면 `open_orders_vanished`로 거부한다. 앱 로직과 별도로 이중 차단한다.
+- **정상적인 0건 전환:**
+  - 진행 주문이 모두 Status=4 등으로 끝났다고 확인되면 진행 0건으로 바뀐다.
+  - 끝나지 않은 주문이 없는 상태에서는 빈 목록도 커밋된다.
+- **응답 모순:** `Total=0`인데 Data가 있으면 페이지 건수 불일치로 실패한다.
+- **영업일이 바뀌면** 새 영업일 스냅샷은 별도로 시작한다. 확인 불가 상태가 이어져도 그 영업일 안에서만 지속된다.
+
+## 실검증 결과 (2026-11-09 17:42 베트남 시각, 읽기 전용, HTTP 4회)
+
+| # | 요청 | 결과 |
+|---|---|---|
+| 1 | 로그인 | HTTP 200, Success, Code 200 |
+| 2 | orders/paging, LastSyncDate=11/7 20:00Z | Total 18 = Data 18. 모두 11/8 18:40~23:00, Status 4, Type 1. 11/9 주문 0건(11/9 영수증도 0건) |
+| 3 | orders/paging, LastSyncDate=현재-5분 | Total 0 = Data 0 |
+| 4 | orders/{id} (Status 4 대표) | ID·Status·금액 840,000₫ 목록과 일치. 라인 5건 합계 840,000₫ |
+
+- 목록 필드: `Id, Type, No, BranchId, Status, Date, EmployeeId, DeliveryAmount, DepositAmount, TotalAmount, TableName, NumberOfPeople`
+  - 날짜 필드는 `Date`(+07:00)뿐이다. 수정 시각 필드는 없다.
+- 상세 헤더에는 `EmployeeName`이 추가로 있다.
+- 상세 라인 필드: `Id, ItemId, ItemName, UnitId, UnitName, Quantity, Status, Price, Amount, SortOrder`
+  - 이 표본에는 `ParentId`·`AdditionId` 키가 없다(옵션 없는 주문).
+- **헤더 Status와 라인 Status는 별개다.** 헤더 4인 주문의 라인이 모두 1이었다. 라인 Status는 원값으로만 저장하고 분류·취소 판정에 쓰지 않는다.
+- `TableName`은 `BAR10` 형식으로 주문 테이블을 식별할 수 있다(앱 표기 `+bar10`과 형식이 다름).
+- **검증 한계:**
+  - Status 1·3·7·8 표본이 없다.
+  - 옵션(ParentId/AdditionId)이 있는 주문, 취소 주문 표본도 없다.
+  - Status=1만 진행으로 보는 매핑과 옵션 판정은 실표본으로 확인되지 않았다.
+  - 오류 7의 의미는 여전히 미확인이다.
+
+## 서버 호출 경로와 권한 (정적 검토)
+
+| 함수 | 호출 위치 | 호출 주체 |
+|---|---|---|
+| `pos_open_orders_claim` / `_commit` / `_fail` | `runOpenOrderSync` ← `runCentralOpenOrderSync`(`open-orders-sync-server.ts`) | `supabaseServer`(service_role 키). **호출하는 route·cron 없음** |
+| `pos_open_orders_read` | 수집기(이전 스냅샷 확인) / `loadOpenOrderKpi` ← `/api/admin/sales/today` | service_role. 조회 경로는 `requireRole(owner, master, manager)` 이후, `POS_OPEN_ORDERS_READ_ENABLED=true`일 때만 |
+
+- DB 실행 권한은 `service_role`에만 있다. 브라우저의 anon/authenticated 키로는 실행할 수 없다.
+- private 스키마는 PostgREST에 노출되지 않는다.
+- 참고(기존 코드, 이번 범위 밖): `lib/supabase/server.ts`에는 `import "server-only"`가 없다. service_role 키는 `NEXT_PUBLIC_`가 아니어서 브라우저 번들에 들어가지 않지만, 명시적 보호는 별도로 검토할 수 있다.
+
 ## 기존 매출과의 분리
 
 - `pos_sales_receipts`의 결제완료 매출은 정본으로 유지한다. KPI의 `paid`는 2차 값 그대로다.
@@ -83,6 +139,7 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | `not_enabled` | null | 패널 숨김. 2차 KPI 그대로 |
 | `closed` | null | "마감된 영업일에는 표시하지 않음" |
 | `unavailable` | null | 경고 + 최근 정상 확인 시각(없으면 "기록 없음") |
+| `incomplete` | null | 최근 시도에서 이전 진행 주문의 종료를 확인하지 못함(`orders_vanished_unconfirmed`, `open_orders_vanished`). 성공 시각이 10분 이내여도 이전 스냅샷을 현재 값으로 보이지 않음 |
 | `stale` (10분 초과) | null | 지연 경고 + 최근 정상 확인 시각 |
 | `ok` | 계산 | 아래 항목 표시 |
 

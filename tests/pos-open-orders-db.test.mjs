@@ -61,16 +61,17 @@ test('commit replaces the snapshot: quantity change, cancellation and payment tr
     let snapshot = await read(db);
     assert.equal(snapshot.orders.length, 3);
     assert.deepEqual(snapshot.orders[2].lines.map((l) => [l.detailId, l.isOption]), [['d3', false], ['d30', true]]);
-    // Next run: order 1 quantity 3, order 2 gone (paid/canceled in POS), order 3 now Status 4 without lines.
+    // Next run: order 1 quantity 3, order 2 canceled (unknown status), order 3 now Status 4 without lines.
     const { result } = await runOnce(db, [
       orderOf(1, { totalAmount: 90000, lines: [lineOf(1, { quantity: 3, amount: 90000 })] }),
+      orderOf(2, { status: 2, statusClass: 'unknown', lines: [] }),
       orderOf(3, { status: 4, statusClass: 'paid_candidate', lines: null }),
     ]);
-    assert.deepEqual([result.status, result.orders, result.lines], ['committed', 2, 1]);
+    assert.deepEqual([result.status, result.orders, result.lines], ['committed', 3, 1]);
     snapshot = await read(db);
-    assert.deepEqual(snapshot.orders.map((o) => [o.orderId, o.statusClass, Number(o.totalAmount)]), [['o1', 'open', 90000], ['o3', 'paid_candidate', 30000]]);
+    assert.deepEqual(snapshot.orders.map((o) => [o.orderId, o.statusClass, Number(o.totalAmount)]), [['o1', 'open', 90000], ['o2', 'unknown', 30000], ['o3', 'paid_candidate', 30000]]);
     assert.equal(Number(snapshot.orders[0].lines[0].quantity), 3);
-    assert.equal(snapshot.orders[1].lines, null);
+    assert.equal(snapshot.orders[2].lines, null);
     assert.equal((await db.query('select count(*)::int n from pos_open_orders_private.order_lines')).rows[0].n, 1);
   } finally { await db.close(); }
 });
@@ -103,6 +104,33 @@ test('failure keeps the last good snapshot and its old success time; lease loss 
     assert.equal((await claim(db, randomUUID(), randomUUID(), DATE, 0)).status, 'collecting');
     assert.equal((await db.query(`select status, failure_code from pos_open_orders_private.runs where id = $1`, [r3])).rows[0].failure_code, 'lease_expired');
     assert.equal((await read(db)).orders.length, 1);
+  } finally { await db.close(); }
+});
+
+test('empty list guard: unfinished orders cannot vanish into a false 0; finished orders may reach a real 0', async () => {
+  const db = await database();
+  try {
+    await runOnce(db, [orderOf(1), orderOf(2, { status: 4, statusClass: 'paid_candidate', lines: null })]);
+    // CUKCUK returns an empty (or partial) list while o1 was open: rejected, snapshot and success time kept.
+    const before = await read(db);
+    for (const payload of [[], [orderOf(2, { status: 4, statusClass: 'paid_candidate', lines: null })]]) {
+      const runId = randomUUID(), owner = randomUUID();
+      await claim(db, runId, owner, DATE, 0);
+      await assert.rejects(call(db, 'pos_open_orders_commit', [runId, owner, {}, JSON.stringify(payload)]), /open_orders_vanished/);
+      await call(db, 'pos_open_orders_fail', [runId, owner, 'open_orders_vanished']);
+    }
+    const kept = await read(db);
+    assert.deepEqual(kept.orders.map((o) => o.orderId), ['o1', 'o2']);
+    assert.equal(kept.sync.lastSuccessAt, before.sync.lastSuccessAt);
+    assert.equal(kept.sync.lastErrorCode, 'open_orders_vanished');
+    // o1 confirmed finished (Status 4): commit succeeds and the open count becomes a real 0.
+    await runOnce(db, [orderOf(1, { status: 4, statusClass: 'paid_candidate', lines: null }), orderOf(2, { status: 4, statusClass: 'paid_candidate', lines: null })]);
+    const done = await read(db);
+    assert.deepEqual(done.orders.map((o) => o.statusClass), ['paid_candidate', 'paid_candidate']);
+    assert.equal(done.sync.lastErrorCode, null);
+    // Once nothing is unfinished, finished orders may age out of the list: an empty list commits.
+    assert.equal((await runOnce(db, [])).result.status, 'committed');
+    assert.equal((await read(db)).orders.length, 0);
   } finally { await db.close(); }
 });
 

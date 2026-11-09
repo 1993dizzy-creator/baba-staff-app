@@ -14,6 +14,7 @@ export type OpenOrdersPanelText = {
   openOrdersIncomplete: string;
   openOrdersUnavailable: string;
   openOrdersStale: string;
+  openOrdersSyncIncomplete: string;
   openOrdersClosed: string;
   lastCheckedAt: string;
   noRecentCheck: string;
@@ -46,7 +47,13 @@ export default function OpenOrdersPanel({ data, text }: { data: OpenOrderKpi | u
   if (data.status !== "ok" || !data.open || !data.provisional) {
     return (
       <section role="alert" style={warningCard}>
-        <strong>{data.status === "stale" ? text.openOrdersStale : text.openOrdersUnavailable}</strong>
+        <strong>
+          {data.status === "stale"
+            ? text.openOrdersStale
+            : data.status === "incomplete"
+              ? text.openOrdersSyncIncomplete
+              : text.openOrdersUnavailable}
+        </strong>
         <span>{checkedLine}</span>
       </section>
     );

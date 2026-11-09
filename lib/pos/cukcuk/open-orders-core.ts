@@ -38,7 +38,8 @@ export type OpenOrderErrorCode =
   | "orders_page_bound"
   | "order_detail_mismatch"
   | "order_detail_lines_missing"
-  | "order_detail_duplicate_line";
+  | "order_detail_duplicate_line"
+  | "orders_vanished_unconfirmed";
 
 export class OpenOrderSyncError extends Error {
   code: OpenOrderErrorCode;
@@ -245,6 +246,8 @@ function normalizeLine(row: unknown): OrderLine {
     quantity,
     price: toFiniteNumber(pick(row, ["Price", "UnitPrice"])) ?? 0,
     amount: toFiniteNumber(row.Amount) ?? 0,
+    // Line Status is a separate POS field (probe: header 4 with every line 1). It is stored
+    // raw and never used for order classification or line cancellation.
     lineStatus: toFiniteNumber(row.Status),
     isOption: Boolean(parentDetailId || additionId),
     isOrphanOption: false,
@@ -386,15 +389,32 @@ export function classifyOrdersForBusinessDate(
   return result;
 }
 
+/** Orders that were not finished in the previous snapshot (open or unverified status). */
+export function unfinishedOrderIds(previous: { orderId: string; statusClass: OrderStatusClass }[]) {
+  return previous.filter((order) => order.statusClass !== "paid_candidate").map((order) => toId(order.orderId)).filter(Boolean);
+}
+
+export const MAX_VANISHED_CONFIRMATIONS = 20;
+
 /**
- * Full rescan of one business date. LastSyncDate is only a lower bound for the list
- * request (24h before the business day starts); membership is decided from each
- * order's own date, and every run replaces the snapshot, so quantity changes,
- * cancellations and payment transitions are picked up even when LastSyncDate lags.
+ * FULL collection of one business date — the only mode used. Incremental collection
+ * (LastSyncDate near "now" to fetch only changed orders) is NOT used anywhere: the
+ * 2026-11-09 read-only probe returned Total=0 for it, and nothing guarantees it returns
+ * every changed order. LastSyncDate here is a fixed wide lower bound (24h before the
+ * business day starts), never a cursor; membership comes from each order's own Date;
+ * completeness comes from Total + page checks; every run replaces the snapshot.
+ *
+ * Termination is never inferred from absence. The probe showed finished (paid) orders
+ * stay listed with Status=4, so an order unfinished in the previous snapshot that is
+ * missing from a full list is re-read by ID; if that read cannot confirm it, the run
+ * fails (orders_vanished_unconfirmed) and the previous snapshot is kept instead of
+ * being overwritten by a false "0 open orders". A list where every order is finished
+ * (or a day that never had orders) still commits a real 0.
  */
 export async function collectOpenOrderSnapshot(
   transport: OrderTransport,
-  input: { branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number }
+  input: { branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number;
+    previousUnfinishedIds?: string[] }
 ) {
   const windowStart = Date.parse(input.windowFrom);
   if (!Number.isFinite(windowStart)) throw new OpenOrderSyncError("orders_page_bound", "window");
@@ -416,15 +436,37 @@ export async function collectOpenOrderSnapshot(
     detailCount++;
     orders.push(mergeOrderDetail(summary, detail, input.cutoff));
   }
+
+  const listedIds = new Set(selected.map((order) => order.orderId));
+  const vanished = [...new Set(input.previousUnfinishedIds ?? [])].map(toId).filter((id) => id && !listedIds.has(id));
+  if (vanished.length > MAX_VANISHED_CONFIRMATIONS) throw new OpenOrderSyncError("orders_vanished_unconfirmed", `${vanished.length} missing`);
+  for (const orderId of vanished) {
+    let confirmed: CollectedOrder;
+    try {
+      const detail = await callProvider(transport, { kind: "detail", orderId }, state, input.retryDelayMs);
+      detailCount++;
+      const data = isObject(detail.Data) ? detail.Data : null;
+      confirmed = mergeOrderDetail(normalizeOrderSummary(data), detail, input.cutoff);
+    } catch {
+      throw new OpenOrderSyncError("orders_vanished_unconfirmed", "detail unavailable");
+    }
+    if (confirmed.orderId !== orderId || confirmed.businessDate !== input.businessDate) {
+      throw new OpenOrderSyncError("orders_vanished_unconfirmed", "detail outside business date");
+    }
+    orders.push(confirmed);
+  }
   return {
     orders,
     manifest: {
       businessDate: input.businessDate,
+      mode: "full",
       lastSyncDate,
       total: listed.total,
       pages: listed.pages,
       enumeratedCount: listed.orders.length,
       selectedCount: selected.length,
+      previousUnfinishedCount: input.previousUnfinishedIds?.length ?? 0,
+      vanishedConfirmedCount: vanished.length,
       detailCount,
       relogins: state.relogins,
     },
@@ -449,8 +491,11 @@ export async function runOpenOrderSync(
   });
   if (claim.status !== "collecting") return claim;
   try {
+    // The previous snapshot of this date decides which orders must still be accounted for.
+    const previous = await deps.rpc("pos_open_orders_read", { p_scope: input.scope, p_business_date: input.businessDate });
+    const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as { orderId: string; statusClass: OrderStatusClass }[]) : [];
     await deps.transport.login();
-    const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, input);
+    const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, { ...input, previousUnfinishedIds: unfinishedOrderIds(previousOrders) });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
       orderId: order.orderId, orderNo: order.orderNo, status: order.status, statusClass: order.statusClass,
@@ -461,7 +506,10 @@ export async function runOpenOrderSync(
       p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
     });
   } catch (error) {
-    const code = error instanceof OpenOrderSyncError ? error.code : "collection_failed";
+    // DB guard codes (e.g. open_orders_vanished from commit) are kept; anything else is generic.
+    const code = error instanceof OpenOrderSyncError
+      ? error.code
+      : error instanceof Error && /^open_orders_[a-z_]{1,40}$/.test(error.message) ? error.message : "collection_failed";
     try {
       await deps.rpc("pos_open_orders_fail", { p_run_id: runId, p_owner_token: ownerToken, p_code: code });
     } catch {
@@ -478,7 +526,10 @@ export type OpenOrderSyncState = {
   lastErrorCode: string | null;
 };
 
-export type OpenOrderKpiStatus = "not_enabled" | "closed" | "unavailable" | "stale" | "ok";
+export type OpenOrderKpiStatus = "not_enabled" | "closed" | "unavailable" | "incomplete" | "stale" | "ok";
+
+/** The latest attempt could not confirm that previously unfinished orders ended. */
+export const INCOMPLETE_SYNC_CODES = new Set(["orders_vanished_unconfirmed", "open_orders_vanished"]);
 
 export type OpenOrderKpi = {
   status: OpenOrderKpiStatus;
@@ -535,6 +586,9 @@ export function buildOpenOrderKpi(input: {
   // After close (or for any non-live date) the estimate is never added to confirmed sales.
   if (input.isClosed || !input.isLiveBusinessDay) return { ...base, status: "closed" };
   if (!sync || !lastSuccessAt || !input.classified || ageMs === null || !Number.isFinite(ageMs)) return { ...base, status: "unavailable" };
+  // last_error_code is cleared on every success, so a vanished code means the newest
+  // attempt failed to confirm order endings: the older snapshot is not shown as current.
+  if (sync.lastErrorCode && INCOMPLETE_SYNC_CODES.has(sync.lastErrorCode)) return { ...base, status: "incomplete" };
   if (ageMs > (input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS)) return { ...base, status: "stale" };
 
   let orphanOptions = 0;
