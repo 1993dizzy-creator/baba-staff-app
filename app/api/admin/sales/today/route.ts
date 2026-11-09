@@ -4,6 +4,12 @@ import { calculateModifiedReceiptTaxSaving } from "@/lib/sales/tax-saving";
 import { resolveAdminSalesBusinessDate } from "@/lib/sales/admin-sales-business-time";
 import { findOldestPendingCloseHoldDate } from "@/lib/sales/pos-pending-payment";
 import { supabaseServer } from "@/lib/supabase/server";
+import { buildPaymentSummary } from "@/lib/sales/payment-summary";
+import {
+  buildDailyPaymentSales,
+  compareDailyCloseSnapshot,
+  type DailyCloseSnapshotRow,
+} from "@/lib/sales/daily-sales-summary";
 
 type ReceiptRow = {
   id: number;
@@ -40,7 +46,9 @@ type LineRow = {
 };
 
 type PaymentRow = {
+  id: number | null;
   receipt_id: number | null;
+  business_date: string;
   payment_type: number | null;
   payment_name: string | null;
   card_name: string | null;
@@ -247,75 +255,6 @@ function buildTopItems(lines: LineRow[], paidReceiptIds: Set<number>) {
       return b.amount - a.amount;
     })
     .slice(0, 5);
-}
-
-function normalizePaymentName(value: string | null | undefined) {
-  return (value || "").trim().toLowerCase();
-}
-
-function isCashPayment(paymentName: string, cardName: string) {
-  return paymentName === "tiền mặt" || cardName === "tiền mặt";
-}
-
-function isTransferPayment(paymentName: string, cardName: string) {
-  return paymentName === "chuyển khoản" || cardName === "chuyển khoản";
-}
-
-function isCardLikePayment(payment: PaymentRow, paymentName: string, cardName: string) {
-  if (isCashPayment(paymentName, cardName) || isTransferPayment(paymentName, cardName)) {
-    return false;
-  }
-
-  return (
-    payment.payment_type === 2 ||
-    Boolean(cardName) ||
-    paymentName.includes("visa") ||
-    paymentName.includes("master") ||
-    paymentName.includes("card") ||
-    cardName.includes("visa") ||
-    cardName.includes("master") ||
-    cardName.includes("card")
-  );
-}
-
-function isOtherPayment(paymentName: string, cardName: string) {
-  return (
-    paymentName === "khác" ||
-    paymentName === "khac" ||
-    cardName === "khác" ||
-    cardName === "khac"
-  );
-}
-
-function buildPaymentSummary(payments: PaymentRow[]) {
-  return payments.reduce(
-    (summary, payment) => {
-      const amount = toNumber(payment.amount);
-      const paymentName = normalizePaymentName(payment.payment_name);
-      const cardName = normalizePaymentName(payment.card_name);
-
-      summary.paymentTotalAmount += amount;
-
-      if (isCashPayment(paymentName, cardName)) {
-        summary.cashAmount += amount;
-      } else if (isTransferPayment(paymentName, cardName)) {
-        summary.transferAmount += amount;
-      } else if (isCardLikePayment(payment, paymentName, cardName)) {
-        summary.cardAmount += amount;
-      } else if (isOtherPayment(paymentName, cardName)) {
-        summary.otherAmount += amount;
-      }
-
-      return summary;
-    },
-    {
-      cashAmount: 0,
-      transferAmount: 0,
-      cardAmount: 0,
-      otherAmount: 0,
-      paymentTotalAmount: 0,
-    }
-  );
 }
 
 function normalizeTaxSummary(value: unknown): TaxSummarySnapshot | null {
@@ -546,6 +485,18 @@ export async function GET(req: Request) {
       );
     }
 
+    // Latest confirmed close (read-only), started alongside the three source reads.
+    // Promise.resolve starts the lazy query builder now instead of at the later await.
+    const closurePromise = Promise.resolve(
+      supabaseServer
+        .from("pos_sales_business_day_closures")
+        .select("revision, closed_at, source_snapshot")
+        .eq("business_date", businessDate)
+        .order("revision", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    );
+
     const [
       { data: receipts, error: receiptsError },
       { data: lines, error: linesError },
@@ -565,7 +516,7 @@ export async function GET(req: Request) {
         .eq("business_date", businessDate),
       supabaseServer
         .from("pos_sales_receipt_payments")
-        .select("receipt_id, payment_type, payment_name, card_name, amount")
+        .select("id, receipt_id, business_date, payment_type, payment_name, card_name, amount")
         .eq("business_date", businessDate),
     ]);
 
@@ -585,22 +536,27 @@ export async function GET(req: Request) {
     const lineRows = (lines || []) as LineRow[];
     const paymentRows = (payments || []) as PaymentRow[];
 
-    const paidReceipts = receiptRows.filter((receipt) =>
-      isPaid(receipt.payment_status)
+    // Line/top-item scope is unchanged (payment_status only).
+    const paidReceiptIds = new Set(
+      receiptRows
+        .filter((receipt) => isPaid(receipt.payment_status))
+        .map((receipt) => receipt.id)
     );
-    const paidReceiptIds = new Set(paidReceipts.map((receipt) => receipt.id));
-    const paidPaymentRows = paymentRows.filter(
-      (payment) => payment.receipt_id !== null && paidReceiptIds.has(payment.receipt_id)
-    );
+    // Total sales = POS payments of paid, non-canceled receipts; split payments count once per payment id.
+    const dailySales = buildDailyPaymentSales(receiptRows, paymentRows);
+    const paidPaymentRows = dailySales.paidPaymentRows;
     const canceledReceipts = receiptRows.filter(isCanceled);
-    const totalSales = paidReceipts.reduce(
-      (sum, receipt) => sum + toNumber(receipt.total_amount),
-      0
-    );
-    const paidReceiptCount = paidReceipts.length;
+    const totalSales = dailySales.totalSales;
+    const paidReceiptCount = dailySales.paidReceiptCount;
     const paidActiveLines = lineRows.filter((line) =>
       isPaidReceiptLine(line, paidReceiptIds)
     );
+
+    const { data: closure, error: closureError } = await closurePromise;
+    if (closureError) {
+      throw new Error(`Failed to fetch sales close: ${closureError.message}`);
+    }
+
     const summary = {
       totalSales,
       receiptCount: paidReceiptCount,
@@ -609,8 +565,7 @@ export async function GET(req: Request) {
       lineCount: paidActiveLines.length,
       salesLineCount: paidActiveLines.filter(isSalesLine).length,
       optionLineCount: paidActiveLines.filter(isOptionLine).length,
-      averageReceiptAmount:
-        paidReceiptCount > 0 ? Math.round(totalSales / paidReceiptCount) : 0,
+      averageReceiptAmount: dailySales.averageReceiptAmount,
       deductionTargetLineCount: paidActiveLines.filter(isDeductionTargetLine).length,
     };
 
@@ -623,6 +578,11 @@ export async function GET(req: Request) {
         canceled: canceledReceipts.length,
       },
       paymentSummary: buildPaymentSummary(paidPaymentRows),
+      paymentReconciliation: dailySales.reconciliation,
+      closeCheck: compareDailyCloseSnapshot(
+        (closure as DailyCloseSnapshotRow | null) ?? null,
+        totalSales
+      ),
       taxSummary: buildTaxSummary(receiptRows, lineRows),
       hourlySales: buildHourlySales(receiptRows),
       topItems: buildTopItems(lineRows, paidReceiptIds),

@@ -29,7 +29,8 @@ const salesTabs = [
 type SalesDailyText = (typeof salesText)[keyof typeof salesText]["daily"];
 type SalesCommonText = (typeof salesText)[keyof typeof salesText]["common"];
 type CommonText = (typeof commonText)[keyof typeof commonText];
-type SalesDailyViewText = SalesCommonText &
+// Daily keys (e.g. paymentTotal) override the shared common label of the same name.
+type SalesDailyViewText = Omit<SalesCommonText, keyof SalesDailyText> &
   SalesDailyText &
   Pick<
     CommonText,
@@ -94,6 +95,22 @@ type SalesTodayResponse = {
     cardAmount: number;
     otherAmount: number;
     paymentTotalAmount: number;
+  };
+  paymentReconciliation?: {
+    status: "matched" | "mismatch";
+    receiptTotal: number;
+    paymentTotal: number;
+    delta: number;
+    mismatchReceiptCount: number;
+    missingPaymentReceiptCount: number;
+  };
+  closeCheck?: {
+    status: "not_closed" | "matched" | "mismatch" | "snapshot_invalid";
+    revision: number | null;
+    closedAt: string | null;
+    closedTotal: number | null;
+    currentTotal: number;
+    delta: number | null;
   };
   taxSummary?: {
     totalTaxAmount: number;
@@ -171,6 +188,11 @@ function formatVnd(value?: number) {
     currency: "VND",
     maximumFractionDigits: 0,
   }).format(value || 0);
+}
+
+function formatSignedVnd(value?: number | null) {
+  const amount = value || 0;
+  return `${amount > 0 ? "+" : ""}${formatVnd(amount)}`;
 }
 
 function formatNumber(value?: number) {
@@ -403,6 +425,8 @@ export default function SalesPage() {
   const summary = salesData?.summary;
   const paymentSummary = salesData?.paymentSummary;
   const taxSummary = salesData?.taxSummary;
+  const paymentReconciliation = salesData?.paymentReconciliation;
+  const closeCheck = salesData?.closeCheck;
   const hasError = Boolean(errorMessage);
 
   // Live day: KPIs are paid receipts so far; open (unpaid) orders are not included.
@@ -536,6 +560,37 @@ export default function SalesPage() {
             />
           ))}
         </section>
+
+        {!isLoading && !hasError && paymentReconciliation?.status === "mismatch" ? (
+          <section role="alert" style={warningCardStyle}>
+            <strong>{dailyText.paymentMismatchWarning}</strong>
+            <span>
+              {dailyText.mismatchReceiptLabel} {formatNumber(paymentReconciliation.mismatchReceiptCount)}
+              {dailyText.receiptCountSuffix} · {dailyText.receiptTotalLabel}{" "}
+              {formatVnd(paymentReconciliation.receiptTotal)} · {dailyText.paymentTotal}{" "}
+              {formatVnd(paymentReconciliation.paymentTotal)} · {dailyText.differenceLabel}{" "}
+              {formatSignedVnd(paymentReconciliation.delta)}
+            </span>
+          </section>
+        ) : null}
+
+        {!isLoading && !hasError && closeCheck?.status === "mismatch" ? (
+          <section role="alert" style={warningCardStyle}>
+            <strong>{dailyText.closeMismatchWarning}</strong>
+            <span>
+              {dailyText.closedTotalLabel} {formatVnd(closeCheck.closedTotal ?? 0)} ·{" "}
+              {dailyText.currentPaymentTotalLabel} {formatVnd(closeCheck.currentTotal)} ·{" "}
+              {dailyText.differenceLabel} {formatSignedVnd(closeCheck.delta)}
+            </span>
+            <span>{dailyText.closeMismatchHint}</span>
+          </section>
+        ) : null}
+
+        {!isLoading && !hasError && closeCheck?.status === "snapshot_invalid" ? (
+          <section role="alert" style={warningCardStyle}>
+            <strong>{dailyText.closeSnapshotInvalid}</strong>
+          </section>
+        ) : null}
 
         <section style={cardStyle}>
           <div style={sectionHeaderStyle}>
@@ -820,6 +875,20 @@ const noticeTitleStyle: CSSProperties = {
   fontSize: 13,
   fontWeight: 800,
   color: "#111827",
+};
+
+const warningCardStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #fcd34d",
+  background: "#fffbeb",
+  color: "#92400e",
+  fontSize: 12,
+  lineHeight: 1.45,
+  fontWeight: 600,
 };
 
 const errorTextStyle: CSSProperties = {
