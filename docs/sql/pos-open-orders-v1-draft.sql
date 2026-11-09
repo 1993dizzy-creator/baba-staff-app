@@ -140,16 +140,21 @@ end $$;
 -- Replace the snapshot of the run's business date in one transaction.
 create function pos_open_orders_private.commit_v1(p_run_id uuid, p_owner_token uuid, p_manifest jsonb, p_orders jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare r pos_open_orders_private.runs%rowtype; v_now timestamptz := clock_timestamp(); v_order jsonb; v_line jsonb;
+declare r pos_open_orders_private.runs%rowtype; v_now timestamptz; v_done timestamptz; v_order jsonb; v_line jsonb;
   v_orders integer := 0; v_lines integer := 0;
 begin
+  -- NULL never passes a comparison check: reject missing identity or payload up front.
+  if p_run_id is null or p_owner_token is null then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
+  if p_orders is null or p_manifest is null then raise exception 'open_orders_payload_invalid' using errcode = '22023'; end if;
   select * into r from pos_open_orders_private.runs where id = p_run_id;
-  if not found or r.owner_token <> p_owner_token then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
+  if not found or r.owner_token is distinct from p_owner_token then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
   perform pg_advisory_xact_lock(hashtextextended('pos_open_orders:' || r.scope, 0));
   select * into r from pos_open_orders_private.runs where id = p_run_id for update;
   if r.status = 'committed' then return jsonb_build_object('status', 'committed', 'runId', r.id, 'replay', true); end if;
+  -- Lease is judged at the real time after the lock wait, not at function entry.
+  v_now := clock_timestamp();
   if r.status <> 'collecting' or r.lease_until <= v_now then raise exception 'open_orders_lease_lost' using errcode = '55000'; end if;
-  if jsonb_typeof(p_orders) <> 'array' or jsonb_typeof(p_manifest) <> 'object'
+  if jsonb_typeof(p_orders) is distinct from 'array' or jsonb_typeof(p_manifest) is distinct from 'object'
     or (select count(*) from jsonb_array_elements(p_orders) o where o->>'businessDate' is distinct from r.business_date::text) > 0
     or (select count(distinct o->>'orderId') from jsonb_array_elements(p_orders) o) <> jsonb_array_length(p_orders) then
     raise exception 'open_orders_payload_invalid' using errcode = '22023';
@@ -183,14 +188,17 @@ begin
     end if;
   end loop;
 
-  update pos_open_orders_private.runs set status = 'committed', finished_at = v_now,
+  -- A run whose lease ran out while storing must not succeed: the whole replacement rolls back.
+  v_done := clock_timestamp();
+  if r.lease_until <= v_done then raise exception 'open_orders_lease_lost' using errcode = '55000'; end if;
+  update pos_open_orders_private.runs set status = 'committed', finished_at = v_done,
     manifest = p_manifest || jsonb_build_object('storedOrders', v_orders, 'storedLines', v_lines) where id = r.id;
-  update pos_open_orders_private.sync_state set business_date = r.business_date, last_success_at = v_now,
+  update pos_open_orders_private.sync_state set business_date = r.business_date, last_success_at = v_done,
     last_success_run_id = r.id, last_error_code = null, last_error_at = null, consecutive_failures = 0
     where scope = r.scope;
   -- Old data: snapshots older than 7 business days and runs older than 30 days are dropped.
   delete from pos_open_orders_private.orders where scope = r.scope and business_date < r.business_date - 7;
-  delete from pos_open_orders_private.runs where scope = r.scope and status <> 'collecting' and started_at < v_now - interval '30 days';
+  delete from pos_open_orders_private.runs where scope = r.scope and status <> 'collecting' and started_at < v_done - interval '30 days';
   return jsonb_build_object('status', 'committed', 'runId', r.id, 'orders', v_orders, 'lines', v_lines);
 end $$;
 
@@ -200,8 +208,9 @@ create function pos_open_orders_private.fail_v1(p_run_id uuid, p_owner_token uui
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare r pos_open_orders_private.runs%rowtype; v_code text := case when p_code ~ '^[a-z0-9_]{1,64}$' then p_code else 'collection_failed' end;
 begin
+  if p_run_id is null or p_owner_token is null then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
   select * into r from pos_open_orders_private.runs where id = p_run_id;
-  if not found or r.owner_token <> p_owner_token then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
+  if not found or r.owner_token is distinct from p_owner_token then raise exception 'open_orders_run_conflict' using errcode = '22023'; end if;
   perform pg_advisory_xact_lock(hashtextextended('pos_open_orders:' || r.scope, 0));
   update pos_open_orders_private.runs set status = 'failed', finished_at = clock_timestamp(), failure_code = v_code
     where id = p_run_id and status = 'collecting';

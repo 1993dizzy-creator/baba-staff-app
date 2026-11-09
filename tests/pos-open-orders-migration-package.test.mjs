@@ -8,7 +8,7 @@ import { PGlite } from '@electric-sql/pglite';
 
 const MIGRATION = 'supabase/migrations/20261109210000_pos_open_orders_v1.sql';
 const DRAFT = 'docs/sql/pos-open-orders-v1-draft.sql';
-const SHA256 = '570331478253b760be480e7236e854cba43a1acf03c25cb4ce5259e8176f3988';
+const SHA256 = 'bc764969537709ea0c7999b7a63f9d64a1082a535b982ef738d45f073f6cf44e';
 const sql = (name) => readFileSync(`supabase/pos_open_orders_v1_${name}.sql`, 'utf8');
 const migration = readFileSync(MIGRATION, 'utf8');
 
@@ -20,11 +20,11 @@ async function database() {
 const checks = async (db, name) => (await db.query(sql(name))).rows;
 const failing = (rows) => rows.filter((r) => r.pass !== true).map((r) => r.check_name);
 
-test('migration file is byte-identical to the reviewed draft (sha256, 286 lines, LF)', () => {
+test('migration file is byte-identical to the reviewed draft (sha256, 295 lines, LF)', () => {
   const a = readFileSync(DRAFT), b = readFileSync(MIGRATION);
   assert.equal(Buffer.compare(a, b), 0);
   assert.equal(createHash('sha256').update(b).digest('hex'), SHA256);
-  assert.equal(b.toString('utf8').split('\n').length - 1, 286);
+  assert.equal(b.toString('utf8').split('\n').length - 1, 295);
   assert.equal(b.includes('\r\n'), false);
   // Recorded in the review document as well.
   assert.match(readFileSync('docs/pos-open-orders-v1-migration-review.md', 'utf8'), new RegExp(SHA256));

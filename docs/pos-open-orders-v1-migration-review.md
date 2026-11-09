@@ -7,9 +7,10 @@
 | 항목 | 값 |
 |---|---|
 | Migration | `supabase/migrations/20261109210000_pos_open_orders_v1.sql` |
-| 검토 원본 | `docs/sql/pos-open-orders-v1-draft.sql` (`c7e355a2` 이후 변경 없음) |
-| SHA-256 (두 파일 동일) | `570331478253b760be480e7236e854cba43a1acf03c25cb4ce5259e8176f3988` |
-| 크기 | 18,434 bytes · 286줄 · LF |
+| 검토 원본 | `docs/sql/pos-open-orders-v1-draft.sql` (독립 SQL 감사 결함 3건 수정 반영) |
+| SHA-256 (두 파일 동일) | `bc764969537709ea0c7999b7a63f9d64a1082a535b982ef738d45f073f6cf44e` |
+| 이전 SHA-256 (`af600ba4`, 대체됨) | `570331478253b760be480e7236e854cba43a1acf03c25cb4ce5259e8176f3988` |
+| 크기 | 19,312 bytes · 295줄 · LF |
 | 버전 순서 | 운영 최신 적용 `20261108170000` 다음 |
 
 동일성은 바이트 비교로 확인했다(`tests/pos-open-orders-migration-package.test.mjs`). 파일 첫 줄의 `DRAFT — NOT APPLIED` 주석도 동일성 유지를 위해 그대로 둔다.
@@ -120,11 +121,24 @@ Migration 본문 범위:
 | `query_to_xml` 미지원 환경 | PostgreSQL 기본 함수다. 설치 전 점검의 Migration 이력 확인에만 쓴다 |
 | 주문 Status 1·3·7·8, 옵션, 취소 주문 실표본 미확보 | Migration과는 무관하다. 기능 ON 전에 확인할 항목이다(`docs/pos-open-orders-sync.md`) |
 
+## 6-1. 독립 SQL 감사 결함 수정 (시그니처·오류 코드 유지)
+
+| # | 결함 | 수정 |
+|---|---|---|
+| 1 | `commit_v1`·`fail_v1`의 `r.owner_token <> p_owner_token`이 NULL 토큰에서 NULL로 평가되어 통과 | `p_run_id`·`p_owner_token`이 NULL이면 먼저 `open_orders_run_conflict`로 거부. 비교는 `is distinct from` |
+| 2 | `p_orders`·`p_manifest`가 SQL NULL이면 타입 검사가 NULL로 평가되어 통과. 진행 주문이 없는 스냅샷이면 삭제 후 성공으로 기록 | 두 값이 NULL이면 먼저 `open_orders_payload_invalid`로 거부. 타입 검사는 `is distinct from 'array'/'object'` |
+| 3 | lease를 함수 진입 시각(`v_now`)으로 검증해서 잠금 대기 중 만료된 실행도 통과 | 잠금 획득 후 `clock_timestamp()`로 다시 측정해 검증. 저장 직후 `v_done`으로 한 번 더 검증(만료되면 전체 rollback). `finished_at`·`last_success_at`은 `v_done` |
+
+`tests/pos-open-orders-sql-audit.test.mjs`(5건)는 각 사례를 수정 SQL과 수정 전 SQL(`af600ba4`)에 모두 실행한다. 수정 전 SQL에서는 결함이 재현되고, 수정 SQL에서는 차단된다.
+- **잠금 대기 사례의 재현 방식:** 두 세션 간 실제 잠금 대기는 PGlite(단일 연결)에서 재현할 수 없다(네이티브 Postgres 미설치). 그래서 저장 지연 트리거로 '시작 시 유효 → 완료 전 만료'를 재현하고, 함수 본문 순서 검사로 '잠금 → 실제 시각 측정 → lease 비교'를 확인했다.
+- **잠금 대기 중 만료도 차단되는 이유:** 완료 직전의 실제 시각 검사가 진입 이후 어느 시점의 만료든 거부하므로, 잠금 대기 중 만료도 여기에 포함된다.
+
 ## 7. 검증 결과
 
 | 범위 | 결과 |
 |---|---|
-| SQL 동작·권한·잠금·시간 제한 (`c7e355a2`/`44ad1973`) | 54/54 PASS 재사용. SQL이 변경되지 않아 다시 실행하지 않음 |
+| SQL 동작·권한·잠금·시간 제한 | SQL 변경으로 영향 범위(PGlite DB 14건, SQL을 읽는 core 21건)를 다시 실행해 모두 PASS. TS 코드 변경이 없는 일간매출 테스트는 이전 PASS를 재사용 |
+| 감사 결함 테스트 `tests/pos-open-orders-sql-audit.test.mjs` | 5/5 PASS(수정 전 SQL의 결함 재현 포함) |
 | 패키지 테스트 `tests/pos-open-orders-migration-package.test.mjs` (PGlite) | 아래 참고 |
 
 패키지 테스트 항목:
