@@ -62,7 +62,9 @@ type ResolvedBase = {
  */
 function resolveLevelBase(input: EmployeeLevelCalculationInput): ResolvedBase {
   if (input.levelBaseMode === "hire_month") {
-    const baseMonth = hireMonthBase(input.hireDate);
+    // The month fixed when the version was saved wins, so a later hire-date edit or a
+    // rehire never rewrites past levels. Only rows without a version derive it live.
+    const baseMonth = baseMonthFromStartDate(input.levelBaseDateOverride) ?? hireMonthBase(input.hireDate);
     return { baseDate: baseMonth ? `${baseMonth}-01` : null, baseDateSource: baseMonth ? "hire_month" : null, baseMonth, levelZeroFrom: input.hireDate };
   }
   if (input.levelBaseMode === "override_month") {

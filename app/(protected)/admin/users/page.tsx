@@ -73,7 +73,8 @@ type LevelPolicyDraft = {
   baseDateOverride: string;
   /** "YYYY-MM" for override_month. */
   baseMonth: string;
-  salaryRaiseEnabled: boolean;
+  /** null = not chosen yet (required when the level is turned ON). */
+  salaryRaiseEnabled: boolean | null;
   effectiveMonth: "current" | "next";
 };
 
@@ -111,7 +112,8 @@ function draftFromBase(included: boolean, base: ReturnType<typeof policyBaseForM
     baseDateMode: base.mode,
     baseDateOverride: base.mode === "override" ? base.baseDate ?? "" : "",
     baseMonth: base.mode === "override_month" ? (base.baseDate ?? "").slice(0, 7) : "",
-    salaryRaiseEnabled: base.salaryRaiseEnabled,
+    // A level that is OFF has no raise decision yet: turning it ON must choose one.
+    salaryRaiseEnabled: included ? base.salaryRaiseEnabled : null,
     effectiveMonth,
   };
 }
@@ -124,13 +126,16 @@ function initialLevelPolicyDraft(user: UserRow): LevelPolicyDraft {
 }
 
 /** True when the draft differs from the policy in force for the chosen effective month. */
-function levelDraftChanged(user: UserRow, draft: LevelPolicyDraft) {
+function levelDraftChanged(user: UserRow, draft: LevelPolicyDraft, hireDate: string | null) {
   const base = policyBaseForMonth(user, draft.effectiveMonth);
+  const hireMonth = hireMonthBase(hireDate);
   return draft.included !== policyEnabledForMonth(user, draft.effectiveMonth)
     || draft.baseDateMode !== base.mode
     || (draft.baseDateMode === "override" && draft.baseDateOverride !== base.baseDate)
     || (draft.baseDateMode === "override_month" && `${draft.baseMonth}-01` !== base.baseDate)
-    || draft.salaryRaiseEnabled !== base.salaryRaiseEnabled;
+    // hire_month: a hire-date edit that moves the base month needs a new policy version.
+    || (draft.baseDateMode === "hire_month" && base.mode === "hire_month" && hireMonth !== null && `${hireMonth}-01` !== base.baseDate)
+    || (draft.salaryRaiseEnabled !== null && draft.salaryRaiseEnabled !== base.salaryRaiseEnabled);
 }
 
 type UsersResponse = {
@@ -321,7 +326,7 @@ function UserCard({
 }: {
   user: UserRow;
   onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
-  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean) => void;
+  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean, salaryRaiseEnabled: boolean | null) => void;
   isSaving: boolean;
 }) {
   const { lang } = useLanguage();
@@ -331,6 +336,7 @@ function UserCard({
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
   const [rehireLevelEnabled, setRehireLevelEnabled] = useState(true);
+  const [rehireSalaryRaise, setRehireSalaryRaise] = useState<boolean | null>(null);
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => initialLevelPolicyDraft(user));
 
   const displayName = user.name || user.full_name || user.username;
@@ -344,7 +350,7 @@ function UserCard({
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
   const hasLevelEditor = !user.is_system_account;
   const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
-  const levelStateChanged = levelDraftChanged(user, levelDraft);
+  const levelStateChanged = levelDraftChanged(user, levelDraft, draft.hire_date);
   // Month modes are the policy; an existing legacy date basis stays selectable so that
   // other edits never reset it.
   const legacyMode = comparedBase.mode === "hire_date" || comparedBase.mode === "override" ? comparedBase.mode : null;
@@ -600,7 +606,7 @@ function UserCard({
                         {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
                       </label>)}
                     </div>
-                    {levelDraft.salaryRaiseEnabled ? null : <span style={styles.fieldNotice}>{text.levelRaiseNotAppliedNotice}</span>}
+                    {levelDraft.salaryRaiseEnabled === false ? <span style={styles.fieldNotice}>{text.levelRaiseNotAppliedNotice}</span> : levelDraft.salaryRaiseEnabled === null ? <span style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</span> : null}
                     <span style={styles.fieldNotice}>{text.levelHourlyRaiseNotice}</span>
                   </>
                 ) : null}
@@ -641,7 +647,8 @@ function UserCard({
                 <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
                 <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
                 <div style={styles.segmented}>{[true,false].map(enabled=><label key={String(enabled)} style={rehireLevelEnabled===enabled?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-level-${user.id}`} checked={rehireLevelEnabled===enabled} onChange={()=>setRehireLevelEnabled(enabled)}/>{enabled?text.levelEnabled:text.levelDisabled}</label>)}</div>
-                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled)}>{text.rehire}</button>
+                {rehireLevelEnabled?<div style={styles.segmented}>{[true,false].map(applied=><label key={String(applied)} style={rehireSalaryRaise===applied?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-raise-${user.id}`} checked={rehireSalaryRaise===applied} onChange={()=>setRehireSalaryRaise(applied)}/>{applied?text.levelSalaryRaiseApplied:text.levelSalaryRaiseNotApplied}</label>)}</div>:null}
+                <button type="button" disabled={!rehireDate||isSaving||(rehireLevelEnabled&&rehireSalaryRaise===null)} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled?rehireSalaryRaise:null)}>{text.rehire}</button>
               </div> : null}
             </div>
           ) : null}
@@ -798,6 +805,7 @@ export default function AdminUsersPage() {
 
     try {
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (levelDraft.included && levelDraft.salaryRaiseEnabled === null) throw new Error(text.levelSalaryRaiseChoose);
       if (levelDraft.baseDateMode === "hire_month" || levelDraft.baseDateMode === "override_month") {
         // Month rules (the server re-validates): hire date needed; a direct base month is
         // "YYYY-MM", not before the actual hire month and not after the termination month.
@@ -860,7 +868,7 @@ export default function AdminUsersPage() {
           levelBaseDateOverride: levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : null,
           levelBaseMonth: levelDraft.baseDateMode === "override_month" ? levelDraft.baseMonth : null,
           levelSalaryRaiseEnabled: levelDraft.salaryRaiseEnabled,
-          levelEffectiveFrom: levelDraftChanged(original, levelDraft) ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
+          levelEffectiveFrom: levelDraftChanged(original, levelDraft, draft.hire_date) ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
         }),
       });
       const result = (await res.json()) as UsersResponse;
@@ -889,11 +897,11 @@ export default function AdminUsersPage() {
     }
   }
 
-  async function rehireUser(user: UserRow, rehireDate: string, levelProgramEnabled: boolean) {
+  async function rehireUser(user: UserRow, rehireDate: string, levelProgramEnabled: boolean, levelSalaryRaiseEnabled: boolean | null) {
     if (!window.confirm(text.rehireWarning)) return;
     setSavingId(user.id); setMessage("");
     try {
-      const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,levelProgramEnabled,confirmPreviousPayrollCompleted:true}) });
+      const res = await attendanceFetch("/api/admin/users", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"rehire",id:user.id,lang,rehireDate,levelProgramEnabled,levelSalaryRaiseEnabled,confirmPreviousPayrollCompleted:true}) });
       const result=(await res.json()) as UsersResponse;
       if(!res.ok||!result.ok||!result.user)throw new Error(result.error||text.saveFailed);
       setUsers(current=>current.map(item=>item.id===user.id?result.user!:item)); window.alert(text.saveSuccess);
@@ -963,7 +971,7 @@ function UserGroup({
   users: UserRow[];
   text: AdminUsersPageText;
   onSave: (user: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) => Promise<boolean>;
-  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean) => void;
+  onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean, salaryRaiseEnabled: boolean | null) => void;
   savingId: number | string | null;
 }) {
   const meta = getGroupMeta(groupKey, text);

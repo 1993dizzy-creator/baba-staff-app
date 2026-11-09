@@ -36,7 +36,8 @@ type FormState = {
   level_program_enabled: boolean;
   level_base_mode: "hire_month" | "override_month";
   level_base_month: string;
-  level_salary_raise_enabled: boolean;
+  /** null until chosen: required when the level is ON (no implicit raise). */
+  level_salary_raise_enabled: boolean | null;
   attendance_tracking_enabled: boolean;
   app_login_enabled: boolean;
 };
@@ -61,7 +62,7 @@ const initialForm: FormState = {
   level_program_enabled: true,
   level_base_mode: "hire_month",
   level_base_month: "",
-  level_salary_raise_enabled: true,
+  level_salary_raise_enabled: null,
   attendance_tracking_enabled: true,
   app_login_enabled: true,
 };
@@ -451,7 +452,9 @@ export default function AdminUserCreatePage() {
                     </label>
                   ))}
                 </div>
-                {form.level_salary_raise_enabled ? null : <span style={styles.helpText}>{text.levelRaiseNotAppliedNotice}</span>}
+                {form.level_salary_raise_enabled === false
+                  ? <span style={styles.helpText}>{text.levelRaiseNotAppliedNotice}</span>
+                  : form.level_salary_raise_enabled === null ? <span style={styles.shortShiftNotice}>{text.levelSalaryRaiseChoose}</span> : null}
               </> : null}
               {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
             </div>

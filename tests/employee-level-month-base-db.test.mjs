@@ -193,16 +193,21 @@ test('profile-only saves of a month-mode employee pass the mirror checks (hire-m
 test('create v6 defaults to the automatic hire month; rehire v4 uses the rehire date month rule', async () => {
   const db = await database();
   try {
-    const created = (await db.query(`select public.employee_create_with_schedule_v6($1, true, null, null, null, 'employee_created_level_enabled', 1, 'han') r`,
+    // Level ON without a raise decision is refused; with an explicit decision it is created.
+    await assert.rejects(db.query(`select public.employee_create_with_schedule_v6($1, true, null, null, null, 'x', 1, 'han')`,
+      [JSON.stringify({ username: 'new0', password: 'x', name: 'New0', role: 'staff', position: 'staff', hire_date: '2026-11-16', work_start_time: '16:00', work_end_time: '01:00' })]), /SALARY_RAISE_DECISION_REQUIRED/);
+    const created = (await db.query(`select public.employee_create_with_schedule_v6($1, true, null, null, false, 'employee_created_level_enabled', 1, 'han') r`,
       [JSON.stringify({ username: 'new1', password: 'x', name: 'New', role: 'staff', position: 'staff', hire_date: '2026-11-16', work_start_time: '16:00', work_end_time: '01:00' })])).rows[0].r;
     assert.deepEqual(await user(db, created.id), { level_program_enabled: true, level_base_date_override: null, level_base_mode: 'hire_month' });
-    assert.deepEqual((await versions(db, created.id)).map((r) => [r.effective_from, r.base_date, r.base_date_mode, r.salary_raise_enabled]), [['2026-11-01', '2026-12-01', 'hire_month', true]]);
+    assert.deepEqual((await versions(db, created.id)).map((r) => [r.effective_from, r.base_date, r.base_date_mode, r.salary_raise_enabled]), [['2026-11-01', '2026-12-01', 'hire_month', false]]);
     await assert.rejects(db.query(`select public.employee_create_with_schedule_v6($1, true, 'override_month', '2026-10-01', true, 'x', 1, 'han')`,
       [JSON.stringify({ username: 'new2', password: 'x', name: 'New2', role: 'staff', position: 'staff', hire_date: '2026-11-16', work_start_time: '16:00', work_end_time: '01:00' })]), /BASE_MONTH_BEFORE_HIRE_MONTH/);
     await assert.rejects(db.query(`select public.employee_create_with_schedule_v6($1, true, 'override', '2026-11-20', true, 'x', 1, 'han')`,
       [JSON.stringify({ username: 'new3', password: 'x', name: 'New3', role: 'staff', position: 'staff', hire_date: '2026-11-16', work_start_time: '16:00', work_end_time: '01:00' })]), /INVALID_BASE_DATE_MODE/);
 
-    await db.query(`select public.employee_rehire_with_level_policy_v4(9::bigint, $1::date, true, 'employee_rehired_level_enabled', 1::bigint, 'han', 0::smallint)`, [vnToday()]);
+    await assert.rejects(db.query(`select public.employee_rehire_with_level_policy_v4(9::bigint, $1::date, true, 'x', 1::bigint, 'han', 0::smallint, null)`, [vnToday()]), /SALARY_RAISE_DECISION_REQUIRED/);
+    await db.query(`select public.employee_rehire_with_level_policy_v4(9::bigint, $1::date, true, 'employee_rehired_level_enabled', 1::bigint, 'han', 0::smallint, false)`, [vnToday()]);
+    assert.equal((await versions(db, 9)).at(-1).salary_raise_enabled, false);
     const rehired = await user(db, 9);
     assert.equal(rehired.level_base_mode, 'hire_month');
     assert.equal(rehired.level_base_date_override, null);
@@ -211,12 +216,64 @@ test('create v6 defaults to the automatic hire month; rehire v4 uses the rehire 
   } finally { await db.close(); }
 });
 
+test('turning the level ON from OFF needs an explicit raise decision; existing ON employees keep theirs', async () => {
+  const db = await database();
+  try {
+    await db.exec(`insert into users(id, username, password, name, role, hire_date, level_program_enabled) values (30, 'pt', 'x', 'PT', 'staff', '2026-08-16', false);
+      insert into employee_level_program_versions(user_id, enabled, effective_from, base_date, base_date_mode, revision, change_reason, created_by_username)
+        values (30, false, '2026-08-01', '2026-08-16', 'hire_date', 1, 'admin_level_disabled', 'han');`);
+    await assert.rejects(v10(db, { userId: 30, mode: 'hire_month', raise: null }), /SALARY_RAISE_DECISION_REQUIRED/);
+    await v10(db, { userId: 30, mode: 'hire_month', raise: false });
+    assert.deepEqual((await versions(db, 30)).at(-1).salary_raise_enabled, false);
+    // Already ON (DIEP): a basis change without a raise argument keeps raise = true.
+    await v10(db, { userId: 5, mode: 'hire_month', raise: null });
+    assert.equal((await versions(db, 5)).at(-1).salary_raise_enabled, true);
+  } finally { await db.close(); }
+});
+
+test('a hire-date edit cannot silently move a stored automatic base month; a new version keeps the old one intact', async () => {
+  const db = await database();
+  try {
+    await db.exec(`insert into users(id, username, password, name, role, hire_date, level_program_enabled) values (31, 'h15', 'x', 'H15', 'staff', '2026-11-15', null)`);
+    await v10(db, { userId: 31, mode: 'hire_month', raise: true });
+    assert.equal((await versions(db, 31)).at(-1).base_date, '2026-11-01');
+    const edit = `select public.employee_update_profile_and_level_v10(31, '{"hire_date":"2026-11-16","work_start_time":"16:00","work_end_time":"01:00"}', true, $1, 'hire_month', null, null, 'admin_level_base_date_changed', 1, 'han')`;
+    await assert.rejects(db.query(edit, [null]), /LEVEL_BASE_MONTH_REVIEW_REQUIRED/);
+    // Saved with an effective month (next month): a new version; the current one keeps 2026-11.
+    const next = new Date(Date.UTC(Number(CURRENT_MONTH.slice(0, 4)), Number(CURRENT_MONTH.slice(5, 7)), 1)).toISOString().slice(0, 10);
+    await db.query(edit, [next]);
+    const rows = await versions(db, 31);
+    assert.deepEqual(rows.map((r) => [r.effective_from, r.effective_to, r.base_date]), [[CURRENT_MONTH, next, '2026-11-01'], [next, null, '2026-12-01']]);
+    // A hire-date edit that keeps the same base month needs nothing.
+    await db.query(`select public.employee_update_profile_and_level_v10(31, '{"hire_date":"2026-11-20","work_start_time":"16:00","work_end_time":"01:00"}', true, null, 'hire_month', null, null, null, 1, 'han')`);
+  } finally { await db.close(); }
+});
+
+test('the current app RPCs (v9/v5/v3) still work on legacy employees after the migration', async () => {
+  const flatten = readFileSync('supabase/migrations/202608070006_flatten_employee_management_rpcs.sql', 'utf8');
+  const fn = (name) => { const i = flatten.indexOf(`create or replace function public.${name}(`); return flatten.slice(i, flatten.indexOf('$$;', i) + 3); };
+  const db = await database();
+  try {
+    for (const name of ['employee_update_profile_and_level_v9', 'employee_create_with_schedule_v5', 'employee_rehire_with_level_policy_v3']) await db.exec(fn(name));
+    // v9 profile save + level change on a legacy employee.
+    await db.query(`select public.employee_update_profile_and_level_v9(6, '{"name":"Linh v9","work_start_time":"16:00","work_end_time":"01:00"}', true, $1, 'override', '2026-01-03', null, 1, 'han')`, [null]);
+    await db.query(`select public.employee_update_profile_and_level_v9(5, '{"work_start_time":"16:00","work_end_time":"01:00"}', false, $1, 'hire_date', null, 'admin_level_disabled', 1, 'han')`, [CURRENT_MONTH]);
+    assert.equal((await versions(db, 5)).at(-1).enabled, false);
+    // v5 create and v3 rehire.
+    const created = (await db.query(`select public.employee_create_with_schedule_v5($1, true, 'employee_created_level_enabled', 1, 'han') r`,
+      [JSON.stringify({ username: 'old5', password: 'x', name: 'Old5', role: 'staff', position: 'staff', hire_date: '2026-11-03', work_start_time: '16:00', work_end_time: '01:00' })])).rows[0].r;
+    assert.deepEqual((await versions(db, created.id)).map((r) => [r.base_date_mode, r.salary_raise_enabled]), [['hire_date', true]]);
+    await db.query(`select public.employee_rehire_with_level_policy_v3(9::bigint, $1::date, true, 'employee_rehired_level_enabled', 1::bigint, 'han', 0::smallint)`, [vnToday()]);
+    assert.equal((await versions(db, 9)).at(-1).base_date_mode, 'hire_date');
+  } finally { await db.close(); }
+});
+
 test('privileges match the existing RPCs: service_role only', async () => {
   const db = await database();
   try {
     for (const fn of ['employee_update_profile_and_level_v10(bigint,jsonb,boolean,date,text,date,boolean,text,bigint,text)',
       'employee_create_with_schedule_v6(jsonb,boolean,text,date,boolean,text,bigint,text)',
-      'employee_rehire_with_level_policy_v4(bigint,date,boolean,text,bigint,text,smallint)', 'employee_level_hire_month_base(date)']) {
+      'employee_rehire_with_level_policy_v4(bigint,date,boolean,text,bigint,text,smallint,boolean)', 'employee_level_hire_month_base(date)']) {
       for (const role of ['anon', 'authenticated', 'service_role']) {
         const ok = (await db.query(`select has_function_privilege($1, $2, 'execute') ok`, [role, `public.${fn}`])).rows[0].ok;
         assert.equal(ok, role === 'service_role', `${role} ${fn}`);

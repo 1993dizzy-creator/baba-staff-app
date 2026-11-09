@@ -215,7 +215,8 @@ test("level policy mutations use server-owned stable audit reason codes", () => 
   assert.doesNotMatch(createRoute, /body\.level_change_reason/);
   assert.doesNotMatch(page, /levelStateChanged && !levelDraft/);
   assert.match(page, /disabled=\{isSaving\}/);
-  assert.match(page, /disabled=\{!rehireDate\|\|isSaving\}/);
+  // Rehire with the level ON also needs an explicit raise decision.
+  assert.match(page, /disabled=\{!rehireDate\|\|isSaving\|\|\(rehireLevelEnabled&&rehireSalaryRaise===null\)\}/);
   assert.doesNotMatch(createPage, /level_change_reason|levelChangeReason/);
   assert.doesNotMatch(text, /levelChangeReason/);
 });

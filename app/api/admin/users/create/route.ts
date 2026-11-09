@@ -94,7 +94,16 @@ export async function POST(req: Request) {
     // month); override_month takes "YYYY-MM", never before the actual hire month.
     const levelBaseMode = body.level_base_mode === "override_month" ? "override_month" : "hire_month";
     const levelBaseMonth = levelBaseMode === "override_month" ? normalizeText(body.level_base_month) : null;
-    const salaryRaiseEnabled = typeof body.level_salary_raise_enabled === "boolean" ? body.level_salary_raise_enabled : true;
+    // No default when the level is ON: the raise must be chosen explicitly (part-timers
+    // on the level program must not get an unintended raise).
+    const salaryRaiseEnabled = typeof body.level_salary_raise_enabled === "boolean" ? body.level_salary_raise_enabled : null;
+    if (levelProgramEnabled && salaryRaiseEnabled === null) {
+      return NextResponse.json({
+        ok: false,
+        code: "SALARY_RAISE_DECISION_REQUIRED",
+        error: lang === "vi" ? "Khi áp dụng cấp, vui lòng chọn có tính tăng lương theo cấp vào lương hay không." : "레벨을 적용하려면 레벨 인상의 급여 반영 여부를 선택해주세요.",
+      }, { status: 400 });
+    }
     if (hireDate) {
       const baseCheck = validateEmployeeLevelBaseMonth({ mode: levelBaseMode, baseMonth: levelBaseMonth, hireDate });
       if (!baseCheck.valid) {

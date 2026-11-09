@@ -10,7 +10,7 @@ import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLev
 import { loadMealAllowanceEligibilityAt, loadMealAllowanceEligibilityVersionsAt } from "@/lib/payroll/meal-allowance-eligibility-server";
 import { selectMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance";
 import { validateEmployeeLevelBaseMonth, validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
-import { isEmployeeLevelBaseMonth } from "@/lib/employee-level/month";
+import { hireMonthBase, isEmployeeLevelBaseMonth } from "@/lib/employee-level/month";
 import {
   isEmployeeLevelBaseMode,
   isEmployeeLevelEligibleRole,
@@ -155,7 +155,7 @@ type LevelPolicyErrorCode =
   | "BASE_DATE_REQUIRED" | "INVALID_BASE_DATE" | "BASE_DATE_BEFORE_HIRE_DATE"
   | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE"
   | "INVALID_BASE_MONTH" | "BASE_MONTH_BEFORE_HIRE_MONTH" | "BASE_MONTH_AFTER_TERMINATION"
-  | "INVALID_SALARY_RAISE_SETTING";
+  | "INVALID_SALARY_RAISE_SETTING" | "SALARY_RAISE_DECISION_REQUIRED";
 
 function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
   const messages: Record<LevelPolicyErrorCode, { ko: string; vi: string }> = {
@@ -173,6 +173,7 @@ function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
     BASE_MONTH_BEFORE_HIRE_MONTH: { ko: "레벨 기준월은 실제 입사월보다 빠를 수 없습니다.", vi: "Tháng mốc tính cấp không thể sớm hơn tháng vào làm." },
     BASE_MONTH_AFTER_TERMINATION: { ko: "레벨 기준월은 퇴사월보다 늦을 수 없습니다.", vi: "Tháng mốc tính cấp không thể sau tháng nghỉ việc." },
     INVALID_SALARY_RAISE_SETTING: { ko: "레벨 급여 인상 적용 설정이 올바르지 않습니다.", vi: "Thiết lập áp dụng tăng lương theo cấp không hợp lệ." },
+    SALARY_RAISE_DECISION_REQUIRED: { ko: "레벨을 적용하려면 레벨 인상의 급여 반영 여부를 선택해주세요.", vi: "Khi áp dụng cấp, vui lòng chọn có tính tăng lương theo cấp vào lương hay không." },
   };
   return messages[code][lang];
 }
@@ -345,6 +346,11 @@ export async function PATCH(req: Request) {
       if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate) || typeof rehireLevelEnabled !== "boolean") {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng xác nhận và nhập ngày làm lại hợp lệ." : "확인 후 올바른 복귀일을 입력해주세요." }, { status: 400 });
       }
+      // Rehire with the level ON needs an explicit raise decision (no silent raise).
+      const rehireSalaryRaise = body.levelSalaryRaiseEnabled;
+      if (rehireLevelEnabled && typeof rehireSalaryRaise !== "boolean") {
+        return policyResponse("SALARY_RAISE_DECISION_REQUIRED", lang);
+      }
       const { data: target } = await supabaseServer.from("users").select(USER_SELECT).eq("id", id).maybeSingle();
       if (!target || target.is_system_account || target.is_active !== false || !target.termination_date) {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Không thể xử lý làm lại cho tài khoản này." : "이 계정은 복귀 처리할 수 없습니다." }, { status: 409 });
@@ -364,6 +370,7 @@ export async function PATCH(req: Request) {
           ? "employee_rehired_level_enabled"
           : "employee_rehired_level_disabled",
         p_previous_level: previousInfo.level,
+        p_salary_raise_enabled: typeof rehireSalaryRaise === "boolean" ? rehireSalaryRaise : null,
       });
       if (error) throw new Error(`Failed to rehire user: ${error.message}`);
       const [versions, nextVersions, mealAllowanceEligibility] = await Promise.all([
@@ -583,14 +590,25 @@ export async function PATCH(req: Request) {
       : null;
     const comparisonSalaryRaiseEnabled = comparisonVersion?.salaryRaiseEnabled !== false;
     let salaryRaiseEnabled = comparisonSalaryRaiseEnabled;
-    if (Object.prototype.hasOwnProperty.call(body, "levelSalaryRaiseEnabled")) {
-      if (typeof body.levelSalaryRaiseEnabled !== "boolean") return policyResponse("INVALID_SALARY_RAISE_SETTING", lang);
-      salaryRaiseEnabled = body.levelSalaryRaiseEnabled;
+    // null/absent keeps the decision in force; turning the level ON (new or from OFF)
+    // requires an explicit choice so no part-timer gets an unintended raise.
+    const salaryRaiseChoice = body.levelSalaryRaiseEnabled;
+    if (salaryRaiseChoice !== undefined && salaryRaiseChoice !== null && typeof salaryRaiseChoice !== "boolean") {
+      return policyResponse("INVALID_SALARY_RAISE_SETTING", lang);
     }
+    if (!comparisonEnabled && levelProgramEnabled && typeof salaryRaiseChoice !== "boolean") {
+      return policyResponse("SALARY_RAISE_DECISION_REQUIRED", lang);
+    }
+    if (typeof salaryRaiseChoice === "boolean") salaryRaiseEnabled = salaryRaiseChoice;
     const baseUsesOverride = requestedBaseDateMode === "override" || requestedBaseDateMode === "override_month";
+    // hire_month: the month stored on the version vs the month the (edited) hire date gives.
+    const hireMonthChanged = requestedBaseDateMode === "hire_month" && comparisonBaseDateMode === "hire_month"
+      && Boolean(comparisonVersion?.baseDate)
+      && comparisonVersion?.baseDate !== `${hireMonthBase(resultingHireDate)}-01`;
     const levelPolicyChanged = comparisonEnabled !== levelProgramEnabled
       || comparisonBaseDateMode !== requestedBaseDateMode
       || (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride)
+      || hireMonthChanged
       || comparisonSalaryRaiseEnabled !== salaryRaiseEnabled;
     const levelEffectiveFrom = levelPolicyChanged ? requestedEffectiveFrom : "";
     if (levelPolicyChanged && !levelEffectiveFrom) {
@@ -600,7 +618,7 @@ export async function PATCH(req: Request) {
       ? levelProgramEnabled ? "admin_level_enabled" : "admin_level_disabled"
       : comparisonBaseDateMode !== requestedBaseDateMode
         ? `admin_level_base_${requestedBaseDateMode}`
-        : baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride
+        : (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride) || hireMonthChanged
           ? "admin_level_base_date_changed"
           : salaryRaiseEnabled ? "admin_level_salary_raise_enabled" : "admin_level_salary_raise_disabled";
     if (target.is_system_account && levelProgramEnabled === true) {

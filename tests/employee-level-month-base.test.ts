@@ -147,6 +147,27 @@ test("13: legacy employees keep byte-identical level info, compensation and hash
   assert.equal(levelUserFieldsFromVersion(serializeEmployeeLevelProgramVersion({ ...row, base_date_mode: "hire_date", base_date: "2025-11-02" })).level_base_date_override, null);
 });
 
+test("hire_month history is fixed by the stored version month: hire-date edits and rehires never rewrite past levels", () => {
+  const stored = (baseDate: string) => levelUserFieldsFromVersion(serializeEmployeeLevelProgramVersion({
+    id: 1, user_id: 1, enabled: true, effective_from: "2026-11-01", effective_to: null, base_date: baseDate, base_date_mode: "hire_month", revision: 1,
+  }));
+  const at = (fields: ReturnType<typeof stored>, hireDate: string, asOf: string) => calculateEmployeeLevel({
+    role: "staff", hireDate, levelBaseDateOverride: fields.level_base_date_override, levelBaseMode: fields.level_base_mode, asOfDate: asOf,
+  });
+  // Saved with hire date 2026-11-15 -> base 2026-11. Editing the hire date to 11-16 (or a
+  // rehire moving it to 2027-05-20) leaves the version's levels unchanged.
+  const v = stored("2026-11-01");
+  for (const hireDate of ["2026-11-15", "2026-11-16", "2027-05-20"]) {
+    assert.equal(at(v, hireDate, "2027-02-01").level, 1, hireDate);
+    assert.equal(at(v, hireDate, "2027-02-01").baseMonth, "2026-11", hireDate);
+  }
+  // Before the fix the month was re-derived from the current hire date (11-16 -> Lv.0).
+  assert.equal(calculateEmployeeLevel({ role: "staff", hireDate: "2026-11-16", levelBaseDateOverride: null, levelBaseMode: "hire_month", asOfDate: "2027-02-01" }).level, 0);
+  // A new version saved after the edit carries 2026-12 and applies only from its month.
+  assert.equal(at(stored("2026-12-01"), "2026-11-16", "2027-03-01").level, 1);
+  assert.equal(at(stored("2026-12-01"), "2026-11-16", "2027-02-28").level, 0);
+});
+
 test("11: level OFF and hourly part-timers keep their pay; a monthly part-timer can keep the level without the raise", () => {
   const hourly = { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0 } as never;
   for (const raise of [true, false]) {

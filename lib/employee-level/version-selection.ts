@@ -33,8 +33,8 @@ const serializeVersion = serializeEmployeeLevelProgramVersion;
 
 /**
  * The user-level fields a version implies for one day. Legacy modes give exactly the
- * previous values (override date only for "override"); month modes carry the mode so
- * the calculator derives the base month (hire_month from the hire date).
+ * previous values (override date only for "override"). Month modes carry the mode and
+ * the base month stored on the version (hire_month included), so history stays fixed.
  */
 export function levelUserFieldsFromVersion(version: EmployeeLevelProgramVersion): {
   level_program_enabled: boolean;
@@ -45,7 +45,7 @@ export function levelUserFieldsFromVersion(version: EmployeeLevelProgramVersion)
   const mode = version.baseDateMode;
   return {
     level_program_enabled: version.enabled,
-    level_base_date_override: mode === "override" || mode === "override_month" ? version.baseDate : null,
+    level_base_date_override: mode === "override" || mode === "override_month" || mode === "hire_month" ? version.baseDate : null,
     level_base_mode: mode === "hire_month" || mode === "override_month" ? mode : null,
     level_salary_raise_enabled: version.salaryRaiseEnabled !== false,
   };

@@ -107,7 +107,8 @@ test("level and payroll loaders map hire-date versions to a null override", () =
   // One shared mapping: legacy hire_date -> null override; override / override_month -> base date.
   const selection = read("lib/employee-level/version-selection.ts");
   assert.match(selection, /EMPLOYEE_LEVEL_VERSION_SELECT =\s*\n?\s*"id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,salary_raise_enabled,revision"/);
-  assert.match(selection, /level_base_date_override: mode === "override" \|\| mode === "override_month" \? version\.baseDate : null/);
+  // Month modes carry the stored base month (hire_month included, so history stays fixed).
+  assert.match(selection, /level_base_date_override: mode === "override" \|\| mode === "override_month" \|\| mode === "hire_month" \? version\.baseDate : null/);
   assert.match(server, /\.\.\.levelUserFieldsFromVersion\(version\)/);
   assert.match(server, /EMPLOYEE_LEVEL_VERSION_SELECT/);
   assert.match(payroll, /EMPLOYEE_LEVEL_VERSION_SELECT/);

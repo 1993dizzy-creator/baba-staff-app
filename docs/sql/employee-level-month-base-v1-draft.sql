@@ -283,6 +283,16 @@ begin
     );
   end if;
 
+  -- A hire-date edit must not silently move a stored automatic base month: the change
+  -- has to be saved as a new level version (p_effective_from) so history stays fixed.
+  if v_before.hire_date is distinct from v_after.hire_date and p_effective_from is null
+    and exists (select 1 from public.employee_level_program_versions
+      where user_id = p_user_id and base_date_mode = 'hire_month'
+        and effective_to is null
+        and base_date is distinct from public.employee_level_hire_month_base(v_after.hire_date)) then
+    raise exception 'LEVEL_BASE_MONTH_REVIEW_REQUIRED' using errcode = '22023';
+  end if;
+
   -- === work schedule (unchanged from v9) ===
   if coalesce(v_after.attendance_tracking_enabled, true) then
     v_work_start_time := nullif(v_after.work_start_time::text, '');
@@ -378,7 +388,11 @@ begin
   order by effective_from desc, revision desc
   limit 1 for update;
 
-  -- NULL keeps the raise decision of the version in force (true when there is none).
+  -- Turning the level ON (no version, or the version in force is OFF) needs an explicit
+  -- raise decision; otherwise NULL keeps the decision of the version in force.
+  if p_level_program_enabled and v_level_target.enabled is distinct from true and p_salary_raise_enabled is null then
+    raise exception 'SALARY_RAISE_DECISION_REQUIRED' using errcode = '22023';
+  end if;
   v_salary_raise_enabled := coalesce(p_salary_raise_enabled, v_level_target.salary_raise_enabled, true);
 
   if found
@@ -506,6 +520,9 @@ begin
   end if;
   if not v_attendance_tracking_enabled then v_start_time := null; v_end_time := null; end if;
   if v_hire_date is null then raise exception 'HIRE_DATE_REQUIRED' using errcode = '22023'; end if;
+  if p_level_program_enabled and p_salary_raise_enabled is null then
+    raise exception 'SALARY_RAISE_DECISION_REQUIRED' using errcode = '22023';
+  end if;
 
   v_base_date := case when v_mode = 'hire_month' then public.employee_level_hire_month_base(v_hire_date) else p_base_date_override end;
   if v_base_date is null or extract(day from v_base_date) <> 1 then
@@ -558,10 +575,11 @@ begin
 end;
 $function$;
 
--- 6. Rehire v4 (v3 + hire_month base for the new hire date + audit snapshot) -----------
+-- 6. Rehire v4 (v3 + hire_month base for the new hire date + explicit raise decision +
+--    audit snapshot) -----------------------------------------------------------------
 create function public.employee_rehire_with_level_policy_v4(
   p_user_id bigint, p_rehire_date date, p_level_program_enabled boolean, p_change_reason text,
-  p_actor_id bigint, p_actor_username text, p_previous_level smallint)
+  p_actor_id bigint, p_actor_username text, p_previous_level smallint, p_salary_raise_enabled boolean)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $function$
 declare
   v_actor public.users%rowtype;
@@ -575,6 +593,10 @@ declare
 begin
   if p_rehire_date is null then raise exception 'INVALID_REHIRE_DATE' using errcode = '22023'; end if;
   if nullif(btrim(p_change_reason), '') is null then raise exception 'CHANGE_REASON_REQUIRED' using errcode = '22023'; end if;
+  -- Rehire with the level ON needs an explicit raise decision (no silent raise).
+  if p_level_program_enabled and p_salary_raise_enabled is null then
+    raise exception 'SALARY_RAISE_DECISION_REQUIRED' using errcode = '22023';
+  end if;
   select * into v_actor from public.users
   where id = p_actor_id and username = p_actor_username and is_active = true for share;
   if not found or v_actor.role not in ('owner', 'master') then
@@ -621,7 +643,7 @@ begin
   if v_existing.id is not null then
     update public.employee_level_program_versions
     set enabled = p_level_program_enabled, effective_to = v_next_effective_from,
-        base_date = v_base_date, base_date_mode = 'hire_month', salary_raise_enabled = true,
+        base_date = v_base_date, base_date_mode = 'hire_month', salary_raise_enabled = coalesce(p_salary_raise_enabled, true),
         change_reason = btrim(p_change_reason), created_by = p_actor_id,
         created_by_username = p_actor_username, created_at = now()
     where id = v_existing.id;
@@ -632,7 +654,7 @@ begin
       user_id, enabled, effective_from, effective_to, base_date, base_date_mode, salary_raise_enabled,
       revision, change_reason, created_by, created_by_username
     ) values (
-      p_user_id, p_level_program_enabled, v_effective_from, v_next_effective_from, v_base_date, 'hire_month', true,
+      p_user_id, p_level_program_enabled, v_effective_from, v_next_effective_from, v_base_date, 'hire_month', coalesce(p_salary_raise_enabled, true),
       v_revision, btrim(p_change_reason), p_actor_id, p_actor_username
     );
   end if;
@@ -649,10 +671,10 @@ $function$;
 revoke all on function public.employee_level_hire_month_base(date),
   public.employee_update_profile_and_level_v10(bigint, jsonb, boolean, date, text, date, boolean, text, bigint, text),
   public.employee_create_with_schedule_v6(jsonb, boolean, text, date, boolean, text, bigint, text),
-  public.employee_rehire_with_level_policy_v4(bigint, date, boolean, text, bigint, text, smallint)
+  public.employee_rehire_with_level_policy_v4(bigint, date, boolean, text, bigint, text, smallint, boolean)
   from public, anon, authenticated;
 grant execute on function public.employee_level_hire_month_base(date),
   public.employee_update_profile_and_level_v10(bigint, jsonb, boolean, date, text, date, boolean, text, bigint, text),
   public.employee_create_with_schedule_v6(jsonb, boolean, text, date, boolean, text, bigint, text),
-  public.employee_rehire_with_level_policy_v4(bigint, date, boolean, text, bigint, text, smallint)
+  public.employee_rehire_with_level_policy_v4(bigint, date, boolean, text, bigint, text, smallint, boolean)
   to service_role;
