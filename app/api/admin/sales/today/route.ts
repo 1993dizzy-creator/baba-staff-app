@@ -8,6 +8,7 @@ import { buildPaymentSummary } from "@/lib/sales/payment-summary";
 import {
   buildDailyPaymentSales,
   compareDailyCloseSnapshot,
+  fetchAllExactPages,
   type DailyCloseSnapshotRow,
 } from "@/lib/sales/daily-sales-summary";
 
@@ -502,22 +503,39 @@ export async function GET(req: Request) {
       { data: lines, error: linesError },
       { data: payments, error: paymentsError },
     ] = await Promise.all([
-      supabaseServer
-        .from("pos_sales_receipts")
-        .select(
-          "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode"
-        )
-        .eq("business_date", businessDate),
-      supabaseServer
-        .from("pos_sales_receipt_lines")
-        .select(
-          "id, receipt_id, business_date, payment_status, is_canceled, is_option, is_excluded, mapping_status, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount"
-        )
-        .eq("business_date", businessDate),
-      supabaseServer
-        .from("pos_sales_receipt_payments")
-        .select("id, receipt_id, business_date, payment_type, payment_name, card_name, amount")
-        .eq("business_date", businessDate),
+      // Paged with exact counts: an incomplete read fails instead of showing a partial total.
+      fetchAllExactPages<ReceiptRow>((from, to) =>
+        supabaseServer
+          .from("pos_sales_receipts")
+          .select(
+            "id, ref_id, business_date, ref_date, payment_status, is_canceled, total_amount, final_amount, vat_amount, is_modified, original_tax_summary, original_amount_summary, tax_override_mode",
+            { count: "exact" }
+          )
+          .eq("business_date", businessDate)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllExactPages<LineRow>((from, to) =>
+        supabaseServer
+          .from("pos_sales_receipt_lines")
+          .select(
+            "id, receipt_id, business_date, payment_status, is_canceled, is_option, is_excluded, mapping_status, item_code, item_name, quantity, amount, final_amount, tax_rate, tax_amount",
+            { count: "exact" }
+          )
+          .eq("business_date", businessDate)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllExactPages<PaymentRow>((from, to) =>
+        supabaseServer
+          .from("pos_sales_receipt_payments")
+          .select("id, receipt_id, business_date, payment_type, payment_name, card_name, amount", {
+            count: "exact",
+          })
+          .eq("business_date", businessDate)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
     ]);
 
     if (receiptsError) {
@@ -532,18 +550,14 @@ export async function GET(req: Request) {
       throw new Error(`Failed to fetch sales payments: ${paymentsError.message}`);
     }
 
-    const receiptRows = (receipts || []) as ReceiptRow[];
-    const lineRows = (lines || []) as LineRow[];
-    const paymentRows = (payments || []) as PaymentRow[];
+    const receiptRows = receipts ?? [];
+    const lineRows = lines ?? [];
+    const paymentRows = payments ?? [];
 
-    // Line/top-item scope is unchanged (payment_status only).
-    const paidReceiptIds = new Set(
-      receiptRows
-        .filter((receipt) => isPaid(receipt.payment_status))
-        .map((receipt) => receipt.id)
-    );
     // Total sales = POS payments of paid, non-canceled receipts; split payments count once per payment id.
     const dailySales = buildDailyPaymentSales(receiptRows, paymentRows);
+    // Sold-item counts and top items use the same paid, non-canceled receipts as totals and receipt count.
+    const paidReceiptIds = new Set(dailySales.paidReceipts.map((receipt) => receipt.id));
     const paidPaymentRows = dailySales.paidPaymentRows;
     const canceledReceipts = receiptRows.filter(isCanceled);
     const totalSales = dailySales.totalSales;

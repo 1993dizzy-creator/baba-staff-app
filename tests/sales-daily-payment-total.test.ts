@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { buildDailyPaymentSales, compareDailyCloseSnapshot } from "../lib/sales/daily-sales-summary.ts";
+import {
+  DAILY_SALES_PAGE_SIZE,
+  DAILY_SALES_SOURCE_INCOMPLETE,
+  buildDailyPaymentSales,
+  compareDailyCloseSnapshot,
+  fetchAllExactPages,
+} from "../lib/sales/daily-sales-summary.ts";
 import { buildPaymentSummary } from "../lib/sales/payment-summary.ts";
 import { salesText } from "../lib/text/sales.ts";
 
@@ -152,6 +158,64 @@ test("KO/VI: daily bottom label is POS-based; monthly label unchanged; warnings 
     assert.match(page, new RegExp(`dailyText\\.${key}`));
   }
   assert.match(page, /\{dailyText\.paymentTotal\}/);
+});
+
+test("paging collects every row past the 1,000-row cap and fails instead of returning a partial list", async () => {
+  const all = Array.from({ length: 2345 }, (_, i) => ({ id: i + 1 }));
+  const calls: [number, number][] = [];
+  const server = (rows: { id: number }[], cap = 1000) => async (from: number, to: number) => {
+    calls.push([from, to]);
+    return { data: rows.slice(from, Math.min(to + 1, from + cap)), error: null, count: rows.length };
+  };
+  const ok = await fetchAllExactPages(server(all));
+  assert.equal(ok.error, null);
+  assert.equal(ok.data?.length, 2345);
+  assert.deepEqual(new Set(ok.data?.map((r) => r.id)).size, 2345);
+  assert.deepEqual(calls.slice(0, 2), [[0, 499], [500, 999]]);
+  assert.equal(DAILY_SALES_PAGE_SIZE, 500);
+
+  // A server cap smaller than the page size must not end collection early.
+  const capped = await fetchAllExactPages(server(all, 300));
+  assert.equal(capped.data?.length, 2345);
+
+  const empty = await fetchAllExactPages(server([]));
+  assert.deepEqual(empty, { data: [], error: null });
+
+  // Rows added/removed between pages (count changes) -> incomplete, not a partial total.
+  let n = 0;
+  const shifting = await fetchAllExactPages(async (from, to) => ({ data: all.slice(from, to + 1), error: null, count: n++ === 0 ? 2345 : 2346 }));
+  assert.deepEqual(shifting, { data: null, error: { message: DAILY_SALES_SOURCE_INCOMPLETE } });
+
+  // Missing count, early empty page, or a page error -> no data.
+  assert.equal((await fetchAllExactPages(async () => ({ data: all.slice(0, 10), error: null, count: null }))).data, null);
+  assert.equal((await fetchAllExactPages(async (from) => ({ data: from === 0 ? all.slice(0, 500) : [], error: null, count: 2345 }))).error?.message, DAILY_SALES_SOURCE_INCOMPLETE);
+  const failed = await fetchAllExactPages(async (from) => from === 0
+    ? { data: all.slice(0, 500), error: null, count: 2345 }
+    : { data: null, error: { message: "timeout" }, count: null });
+  assert.deepEqual(failed, { data: null, error: { message: "timeout" } });
+});
+
+test("route: all three source reads are paged with exact counts and keep per-table failures", () => {
+  for (const table of ["pos_sales_receipts", "pos_sales_receipt_lines", "pos_sales_receipt_payments"]) {
+    const start = route.indexOf(`.from("${table}")`);
+    const block = route.slice(start, route.indexOf(".range(from, to)", start) + 16);
+    assert.match(block, /\{\s*count: "exact",?\s*\}/);
+    assert.match(block, /\.order\("id", \{ ascending: true \}\)/);
+    assert.match(route.slice(start - 120, start), /fetchAllExactPages<\w+>\(\(from, to\) =>/);
+  }
+  assert.match(route, /Failed to fetch sales receipts: \$\{receiptsError\.message\}/);
+  assert.match(route, /Failed to fetch sales lines: \$\{linesError\.message\}/);
+  assert.match(route, /Failed to fetch sales payments: \$\{paymentsError\.message\}/);
+});
+
+test("canceled-flag paid receipts are excluded from item counts and top items like totals and receipt count", () => {
+  assert.match(route, /const paidReceiptIds = new Set\(dailySales\.paidReceipts\.map\(\(receipt\) => receipt\.id\)\);/);
+  assert.match(route, /isPaidReceiptLine\(line, paidReceiptIds\)/);
+  assert.match(route, /topItems: buildTopItems\(lineRows, paidReceiptIds\)/);
+  const daily = buildDailyPaymentSales([receipt(1, 100000), receipt(2, 200000, 3, true)], [cash(1, 1, 100000), cash(2, 2, 200000)]);
+  assert.deepEqual(daily.paidReceipts.map((r) => r.id), [1]);
+  assert.equal(daily.paidReceiptCount, 1);
+  assert.equal(daily.totalSales, 100000);
 });
 
 test("buildPaymentSummary remains the shared bucket helper", () => {

@@ -10,6 +10,38 @@ import { posSnapshotTotals } from "./pos-business-day-final-policy.ts";
 
 export type DailySalesPaymentRow = PosPaymentRow & { id?: number | null };
 
+export const DAILY_SALES_PAGE_SIZE = 500;
+export const DAILY_SALES_SOURCE_INCOMPLETE = "DAILY_SALES_SOURCE_INCOMPLETE";
+
+type ExactPage<T> = { data: T[] | null; error: { message: string } | null; count: number | null };
+
+/**
+ * Same rule as the close source loader (lib/ledger/pos-sales.ts): PostgREST caps each response,
+ * so read id-ordered pages with an exact count and fail unless every row was collected.
+ * Returns { data, error } so callers keep their per-table error handling; never a partial list.
+ */
+export async function fetchAllExactPages<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<ExactPage<T>>,
+  pageSize = DAILY_SALES_PAGE_SIZE
+): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const rows: T[] = [];
+  let expected: number | null = null;
+  const incomplete = { data: null, error: { message: DAILY_SALES_SOURCE_INCOMPLETE } };
+  for (;;) {
+    // Advance by rows actually received, so a server cap below pageSize cannot skip rows.
+    const offset = rows.length;
+    const result = await fetchPage(offset, offset + pageSize - 1);
+    if (result.error) return { data: null, error: result.error };
+    if (result.count === null || (expected !== null && expected !== result.count)) return incomplete;
+    expected = result.count;
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (rows.length >= expected) break;
+    if (page.length === 0) return incomplete;
+  }
+  return rows.length === expected ? { data: rows, error: null } : incomplete;
+}
+
 /** Same eligibility as the close source: paid (3) and not canceled. */
 export function isCountedPaidReceipt(receipt: PosReceiptPaymentEligibility) {
   return receipt.payment_status === PAID_POS_PAYMENT_STATUS && receipt.is_canceled !== true;
