@@ -7,10 +7,11 @@ const VN_OFFSET_MS = 7 * 3600_000;
 /** First start minute of the service window: 16:00 (Asia/Ho_Chi_Minh). */
 export const OPEN_ORDERS_CRON_FIRST_START_MINUTE = 16 * 60;
 /**
- * Last start minute: 02:56 (inclusive, i.e. up to 02:56:59). A run started then ends
- * within its 3-minute lease before the 03:00 business-day cutoff; 02:57 and later skip.
+ * Last start minute: 02:54 (inclusive, i.e. up to 02:54:59); 02:55:00 until 16:00 skip.
+ * Even if the DB claim lands up to ~2 minutes after the cron start (cold start, store
+ * settings RPC), the 3-minute lease still ends before the 03:00 business-day cutoff.
  */
-export const OPEN_ORDERS_CRON_LAST_START_MINUTE = 2 * 60 + 56;
+export const OPEN_ORDERS_CRON_LAST_START_MINUTE = 2 * 60 + 54;
 
 export function evaluateOpenOrdersCronWindow(now: Date) {
   const vn = new Date(now.getTime() + VN_OFFSET_MS);
