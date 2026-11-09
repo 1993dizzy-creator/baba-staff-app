@@ -149,9 +149,10 @@ test("application runtime code (app/lib/components/scripts) has zero references 
 test("application runtime code still calls exactly the 3 latest entries", () => {
   const usersRoute = read("app/api/admin/users/route.ts");
   const createRoute = read("app/api/admin/users/create/route.ts");
-  assert.match(usersRoute, /"employee_update_profile_and_level_v9"/);
-  assert.match(usersRoute, /"employee_rehire_with_level_policy_v3"/);
-  assert.match(createRoute, /"employee_create_with_schedule_v5"/);
+  // Month-based level base (docs/sql/employee-level-month-base-v1-draft.sql): v10/v4/v6.
+  assert.match(usersRoute, /"employee_update_profile_and_level_v10"/);
+  assert.match(usersRoute, /"employee_rehire_with_level_policy_v4"/);
+  assert.match(createRoute, /"employee_create_with_schedule_v6"/);
 });
 
 test("this migration's own DROP statements match exactly the 13 names with zero runtime references found above — the investigation and the DROP list are the same set", () => {

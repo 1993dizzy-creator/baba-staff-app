@@ -203,6 +203,11 @@ export function CompensationCard({
                 <Row label={t.contractSalary} value={formatContractRate(employee.amounts.contractSalary, employee.contract.payType, lang)} />
                 <Row label={t.fixedRaise} value={formatContractRate(employee.amounts.fixedRaiseAmount, employee.contract.payType, lang, "+")} />
                 <Row label={t.levelRaise} value={formatContractRate(employee.amounts.levelRaiseAmount, employee.contract.payType, lang, "+")} />
+                {employee.levelInfo.eligible && employee.levelApplication.raiseExcluded === "salary_raise_disabled"
+                  ? <p>{t.levelRaiseNotApplied}</p>
+                  : employee.levelInfo.eligible && employee.contract.payType !== "monthly" && employee.levelInfo.earnedRaiseCount > 0
+                    ? <p>{t.hourlyLevelRaiseNotApplied}</p>
+                    : null}
                 <CombinedSalarySummary
                   label={t.combinedSalary}
                   value={formatContractRate(combined, employee.contract.payType, lang)}

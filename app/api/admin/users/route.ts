@@ -9,9 +9,12 @@ import { isMasterGeneralEditBlocked, isPayrollOverrideOnlyUpdate } from "@/lib/e
 import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions, loadEmployeeLevelProgramVersionsForDatesUnscoped, withEmployeeLevelInfo } from "@/lib/employee-level/server";
 import { loadMealAllowanceEligibilityAt, loadMealAllowanceEligibilityVersionsAt } from "@/lib/payroll/meal-allowance-eligibility-server";
 import { selectMealAllowanceEligibilityAt } from "@/lib/payroll/meal-allowance";
-import { validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
+import { validateEmployeeLevelBaseMonth, validateEmployeeLevelConfiguration } from "@/lib/employee-level/validation";
+import { isEmployeeLevelBaseMonth } from "@/lib/employee-level/month";
 import {
+  isEmployeeLevelBaseMode,
   isEmployeeLevelEligibleRole,
+  isEmployeeLevelMonthBaseMode,
   type EmployeeLevelProgramVersion,
   type EmployeeLevelValidationCode,
 } from "@/lib/employee-level/types";
@@ -39,18 +42,26 @@ function withLevelPolicyState(
   const nextUser = applyEmployeeLevelProgramVersion(user, nextVersion);
   const currentEnabled = isEmployeeLevelEligibleRole(currentUser.role, currentUser.level_program_enabled);
   const nextEnabled = isEmployeeLevelEligibleRole(nextUser.role, nextUser.level_program_enabled);
+  const fallbackMode = (row: UserRow) => isEmployeeLevelMonthBaseMode(row.level_base_mode)
+    ? row.level_base_mode
+    : row.level_base_date_override ? "override" : "hire_date";
+  const currentSalaryRaiseEnabled = currentVersion?.salaryRaiseEnabled !== false;
+  const nextSalaryRaiseEnabled = nextVersion?.salaryRaiseEnabled !== false;
   return {
     ...withEmployeeLevelInfo(currentUser, today),
     levelProgramPolicy: {
       currentEnabled,
       nextEnabled,
-      currentBaseDateMode: currentVersion?.baseDateMode ?? (currentUser.level_base_date_override ? "override" : "hire_date"),
-      nextBaseDateMode: nextVersion?.baseDateMode ?? (nextUser.level_base_date_override ? "override" : "hire_date"),
+      currentBaseDateMode: currentVersion?.baseDateMode ?? fallbackMode(currentUser),
+      nextBaseDateMode: nextVersion?.baseDateMode ?? fallbackMode(nextUser),
       currentBaseDate: currentVersion?.baseDate ?? currentUser.hire_date,
       nextBaseDate: nextVersion?.baseDate ?? nextUser.hire_date,
+      currentSalaryRaiseEnabled,
+      nextSalaryRaiseEnabled,
       hasScheduledChange: currentEnabled !== nextEnabled
         || currentVersion?.baseDateMode !== nextVersion?.baseDateMode
-        || currentVersion?.baseDate !== nextVersion?.baseDate,
+        || currentVersion?.baseDate !== nextVersion?.baseDate
+        || currentSalaryRaiseEnabled !== nextSalaryRaiseEnabled,
       nextEffectiveFrom: nextMonthStart(today),
     },
   };
@@ -82,6 +93,7 @@ const USER_SELECT = `
   payroll_eligible_override,
   level_program_enabled,
   level_base_date_override,
+  level_base_mode,
   attendance_tracking_enabled,
   app_login_enabled
 `;
@@ -141,7 +153,9 @@ type LevelPolicyErrorCode =
   | "INVALID_LEVEL_PROGRAM_SETTING"
   | "HIRE_DATE_REQUIRED"
   | "BASE_DATE_REQUIRED" | "INVALID_BASE_DATE" | "BASE_DATE_BEFORE_HIRE_DATE"
-  | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE";
+  | "BASE_DATE_AFTER_TERMINATION_DATE" | "BASE_DATE_IN_FUTURE"
+  | "INVALID_BASE_MONTH" | "BASE_MONTH_BEFORE_HIRE_MONTH" | "BASE_MONTH_AFTER_TERMINATION"
+  | "INVALID_SALARY_RAISE_SETTING";
 
 function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
   const messages: Record<LevelPolicyErrorCode, { ko: string; vi: string }> = {
@@ -155,6 +169,10 @@ function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
     BASE_DATE_BEFORE_HIRE_DATE: { ko: "레벨 기준일은 입사일보다 빠를 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sớm hơn ngày vào làm." },
     BASE_DATE_AFTER_TERMINATION_DATE: { ko: "레벨 기준일은 퇴사일보다 늦을 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sau ngày nghỉ việc." },
     BASE_DATE_IN_FUTURE: { ko: "레벨 기준일은 오늘 이후 날짜로 설정할 수 없습니다.", vi: "Ngày bắt đầu tính cấp không thể sau ngày hôm nay." },
+    INVALID_BASE_MONTH: { ko: "레벨 기준월을 YYYY-MM 형식으로 선택해주세요.", vi: "Vui lòng chọn tháng mốc tính cấp theo định dạng YYYY-MM." },
+    BASE_MONTH_BEFORE_HIRE_MONTH: { ko: "레벨 기준월은 실제 입사월보다 빠를 수 없습니다.", vi: "Tháng mốc tính cấp không thể sớm hơn tháng vào làm." },
+    BASE_MONTH_AFTER_TERMINATION: { ko: "레벨 기준월은 퇴사월보다 늦을 수 없습니다.", vi: "Tháng mốc tính cấp không thể sau tháng nghỉ việc." },
+    INVALID_SALARY_RAISE_SETTING: { ko: "레벨 급여 인상 적용 설정이 올바르지 않습니다.", vi: "Thiết lập áp dụng tăng lương theo cấp không hợp lệ." },
   };
   return messages[code][lang];
 }
@@ -162,6 +180,7 @@ function levelPolicyError(code: LevelPolicyErrorCode, lang: "ko" | "vi") {
 function validationCodeToPolicyCode(code: EmployeeLevelValidationCode): LevelPolicyErrorCode {
   if (code === "MISSING_HIRE_DATE") return "HIRE_DATE_REQUIRED";
   if (code === "INVALID_DATE") return "INVALID_BASE_DATE";
+  if (code === "SYSTEM_ACCOUNT_NOT_ELIGIBLE") return "SYSTEM_ACCOUNT_NOT_ELIGIBLE";
   return code as LevelPolicyErrorCode;
 }
 
@@ -336,7 +355,8 @@ export async function PATCH(req: Request) {
         applyEmployeeLevelProgramVersion(target as UserRow, previousVersions.get(Number(id))),
         today,
       );
-      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_policy_v3", {
+      // v4: the rehire date sets a hire_month base (1–15 -> that month, 16+ -> next month).
+      const { data, error } = await supabaseServer.rpc("employee_rehire_with_level_policy_v4", {
         p_user_id: id, p_rehire_date: rehireDate, p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
         p_level_program_enabled: rehireLevelEnabled,
@@ -384,7 +404,7 @@ export async function PATCH(req: Request) {
 
     const { data: target, error: targetError } = await supabaseServer
       .from("users")
-      .select("id, role, hire_date, termination_date, is_active, is_system_account, payroll_eligible_override, level_program_enabled, level_base_date_override")
+      .select("id, role, hire_date, termination_date, is_active, is_system_account, payroll_eligible_override, level_program_enabled, level_base_date_override, level_base_mode")
       .eq("id", id)
       .maybeSingle();
 
@@ -537,24 +557,41 @@ export async function PATCH(req: Request) {
       : currentVersion;
     const comparisonEnabled = comparisonVersion?.enabled
       ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
+    // Four bases: legacy date modes stay selectable only to keep an existing basis while
+    // toggling other settings; month modes are the current policy.
     const requestedBaseDateMode = body.levelBaseDateMode;
-    if (requestedBaseDateMode !== "hire_date" && requestedBaseDateMode !== "override") {
+    if (!isEmployeeLevelBaseMode(requestedBaseDateMode)) {
       return policyResponse("INVALID_BASE_DATE", lang);
     }
-    const requestedBaseDateOverride = requestedBaseDateMode === "override"
-      ? normalizeText(body.levelBaseDateOverride)
-      : null;
-    if (requestedBaseDateMode === "override" && (!requestedBaseDateOverride || !isDateKey(requestedBaseDateOverride))) {
-      return policyResponse("INVALID_BASE_DATE", lang);
+    let requestedBaseDateOverride: string | null = null;
+    if (requestedBaseDateMode === "override") {
+      requestedBaseDateOverride = normalizeText(body.levelBaseDateOverride);
+      if (!requestedBaseDateOverride || !isDateKey(requestedBaseDateOverride)) {
+        return policyResponse("INVALID_BASE_DATE", lang);
+      }
+    } else if (requestedBaseDateMode === "override_month") {
+      const baseMonth = normalizeText(body.levelBaseMonth);
+      if (!isEmployeeLevelBaseMonth(baseMonth)) return policyResponse("INVALID_BASE_MONTH", lang);
+      requestedBaseDateOverride = `${baseMonth}-01`;
     }
     const comparisonBaseDateMode = comparisonVersion?.baseDateMode
-      ?? (target.level_base_date_override ? "override" : "hire_date");
-    const comparisonBaseDateOverride = comparisonBaseDateMode === "override"
+      ?? (isEmployeeLevelMonthBaseMode(target.level_base_mode)
+        ? target.level_base_mode
+        : target.level_base_date_override ? "override" : "hire_date");
+    const comparisonBaseDateOverride = comparisonBaseDateMode === "override" || comparisonBaseDateMode === "override_month"
       ? comparisonVersion?.baseDate ?? target.level_base_date_override
       : null;
+    const comparisonSalaryRaiseEnabled = comparisonVersion?.salaryRaiseEnabled !== false;
+    let salaryRaiseEnabled = comparisonSalaryRaiseEnabled;
+    if (Object.prototype.hasOwnProperty.call(body, "levelSalaryRaiseEnabled")) {
+      if (typeof body.levelSalaryRaiseEnabled !== "boolean") return policyResponse("INVALID_SALARY_RAISE_SETTING", lang);
+      salaryRaiseEnabled = body.levelSalaryRaiseEnabled;
+    }
+    const baseUsesOverride = requestedBaseDateMode === "override" || requestedBaseDateMode === "override_month";
     const levelPolicyChanged = comparisonEnabled !== levelProgramEnabled
       || comparisonBaseDateMode !== requestedBaseDateMode
-      || (requestedBaseDateMode === "override" && comparisonBaseDateOverride !== requestedBaseDateOverride);
+      || (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride)
+      || comparisonSalaryRaiseEnabled !== salaryRaiseEnabled;
     const levelEffectiveFrom = levelPolicyChanged ? requestedEffectiveFrom : "";
     if (levelPolicyChanged && !levelEffectiveFrom) {
       return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng." : "적용 월을 선택해주세요." }, { status: 400 });
@@ -562,20 +599,30 @@ export async function PATCH(req: Request) {
     const automaticChangeReason = comparisonEnabled !== levelProgramEnabled
       ? levelProgramEnabled ? "admin_level_enabled" : "admin_level_disabled"
       : comparisonBaseDateMode !== requestedBaseDateMode
-        ? requestedBaseDateMode === "hire_date" ? "admin_level_base_hire_date" : "admin_level_base_override"
-        : "admin_level_base_date_changed";
+        ? `admin_level_base_${requestedBaseDateMode}`
+        : baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride
+          ? "admin_level_base_date_changed"
+          : salaryRaiseEnabled ? "admin_level_salary_raise_enabled" : "admin_level_salary_raise_disabled";
     if (target.is_system_account && levelProgramEnabled === true) {
       return policyResponse("SYSTEM_ACCOUNT_NOT_ELIGIBLE", lang, 403);
     }
     if (
       !target.is_system_account
     ) {
-      const levelValidation = validateEmployeeLevelConfiguration({
-        hireDate: resultingHireDate,
-        levelBaseDateOverride: requestedBaseDateOverride,
-        terminationDate: resultingTerminationDate,
-        today,
-      });
+      // Legacy date rules for date modes (unchanged); month rules for month modes.
+      const levelValidation = isEmployeeLevelMonthBaseMode(requestedBaseDateMode)
+        ? validateEmployeeLevelBaseMonth({
+            mode: requestedBaseDateMode,
+            baseMonth: requestedBaseDateOverride ? requestedBaseDateOverride.slice(0, 7) : null,
+            hireDate: resultingHireDate,
+            terminationDate: resultingTerminationDate,
+          })
+        : validateEmployeeLevelConfiguration({
+            hireDate: resultingHireDate,
+            levelBaseDateOverride: requestedBaseDateOverride,
+            terminationDate: resultingTerminationDate,
+            today,
+          });
       if (!levelValidation.valid) {
         return policyResponse(validationCodeToPolicyCode(levelValidation.codes[0]), lang);
       }
@@ -585,7 +632,7 @@ export async function PATCH(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v9",
+      "employee_update_profile_and_level_v10",
       {
         p_user_id: id,
         p_updates: { ...update, position: derivedPosition },
@@ -593,6 +640,7 @@ export async function PATCH(req: Request) {
         p_effective_from: levelPolicyChanged ? levelEffectiveFrom : null,
         p_base_date_mode: requestedBaseDateMode,
         p_base_date_override: requestedBaseDateOverride,
+        p_salary_raise_enabled: salaryRaiseEnabled,
         p_change_reason: levelPolicyChanged ? automaticChangeReason : null,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,

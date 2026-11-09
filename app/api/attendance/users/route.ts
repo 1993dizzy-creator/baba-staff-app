@@ -14,7 +14,7 @@ import {
 import { applyEmployeeLevelProgramVersion, loadEmployeeLevelProgramVersions, withEmployeeLevelInfo, type EmployeeLevelUser } from "@/lib/employee-level/server";
 
 const BASE_USER_FIELDS =
-  "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,attendance_tracking_enabled";
+  "id,username,name,role,is_active,part,position,work_start_time,work_end_time,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,level_base_mode,attendance_tracking_enabled";
 const USER_FIELDS_WITH_BIRTH_DATE = `${BASE_USER_FIELDS},birth_date`;
 type AttendanceUserRow = EmployeeLevelUser & {
   id: number;

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const auth = await requirePayrollActor();
   if (auth.response) return auth.response;
-  const { data, error } = await supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,part,position,role,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override,attendance_tracking_enabled").eq("is_system_account",false).eq("is_active",true).order("id");
+  const { data, error } = await supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,part,position,role,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override,level_base_mode,attendance_tracking_enabled").eq("is_system_account",false).eq("is_active",true).order("id");
   if (error) return payrollJson({ ok: false, code: "PAYROLL_USERS_READ_FAILED" }, 500);
   const users = (data ?? []).filter(isPayrollEligible) as unknown as Array<EmployeeLevelUser & { id: number; attendance_tracking_enabled: boolean }>;
   const levelAsOfDate = getVietnamDateKey();

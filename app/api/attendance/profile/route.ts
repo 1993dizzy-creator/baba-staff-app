@@ -13,7 +13,7 @@ import {
 import { supabaseServer } from "@/lib/supabase/server";
 
 const PROFILE_FIELDS =
-  "id,username,name,full_name,role,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override";
+  "id,username,name,full_name,role,hire_date,termination_date,is_system_account,level_program_enabled,level_base_date_override,level_base_mode";
 export async function GET() {
   try {
     const auth = await requireAttendanceActor();

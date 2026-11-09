@@ -26,11 +26,32 @@ export function isEmployeeLevelEligibleRole(
 
 export type EmployeeLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
+/**
+ * hire_date / override: legacy date-based bases (kept for existing versions, never
+ * rewritten). hire_month: base month derived from the hire date (1–15 -> hire month,
+ * 16+ -> next month). override_month: admin-chosen base month stored as "YYYY-MM-01".
+ */
+export const EMPLOYEE_LEVEL_BASE_MODES = ["hire_date", "override", "hire_month", "override_month"] as const;
+export type EmployeeLevelBaseMode = (typeof EMPLOYEE_LEVEL_BASE_MODES)[number];
+export const EMPLOYEE_LEVEL_MONTH_BASE_MODES = ["hire_month", "override_month"] as const;
+
+export function isEmployeeLevelBaseMode(value: unknown): value is EmployeeLevelBaseMode {
+  return EMPLOYEE_LEVEL_BASE_MODES.some((mode) => mode === value);
+}
+
+export function isEmployeeLevelMonthBaseMode(value: unknown): value is "hire_month" | "override_month" {
+  return value === "hire_month" || value === "override_month";
+}
+
 export type EmployeeLevelCalculationInput = {
   role: string | null;
   levelProgramEnabled?: boolean | null;
   hireDate: string | null;
   levelBaseDateOverride: string | null;
+  /** Absent/null keeps the legacy behaviour (override date, else hire date). */
+  levelBaseMode?: EmployeeLevelBaseMode | null;
+  /** Level raise reaches pay only when true (default). Level itself is unaffected. */
+  salaryRaiseEnabled?: boolean | null;
   terminationDate?: string | null;
   isSystemAccount?: boolean;
   asOfDate: string;
@@ -50,7 +71,13 @@ export type EmployeeLevelInfo = {
   level: EmployeeLevel | null;
   displayLabel: string | null;
   baseDate: string | null;
-  baseDateSource: "hire_date" | "override" | null;
+  baseDateSource: EmployeeLevelBaseMode | null;
+  // The two fields below are present ONLY when non-default. Payroll hashes skip absent
+  // keys, so legacy employees keep byte-identical level snapshots and calculation hashes.
+  /** "YYYY-MM"; present only for month-based modes. */
+  baseMonth?: string;
+  /** Present (false) only when the level raise must not reach pay (shown as 0₫ applied). */
+  salaryRaiseEnabled?: false;
   calculationDate: string | null;
   completedQuarterCount: number;
   earnedRaiseCount: number;
@@ -67,7 +94,9 @@ export type EmployeeLevelProgramVersion = {
   effectiveFrom: string;
   effectiveTo: string | null;
   baseDate: string | null;
-  baseDateMode: "hire_date" | "override" | null;
+  baseDateMode: EmployeeLevelBaseMode | null;
+  /** Present (false) only when the version disables the level raise; absent = true. */
+  salaryRaiseEnabled?: false;
   revision: number;
 };
 
@@ -77,7 +106,10 @@ export type EmployeeLevelValidationCode =
   | "BASE_DATE_BEFORE_HIRE_DATE"
   | "BASE_DATE_AFTER_TERMINATION_DATE"
   | "BASE_DATE_IN_FUTURE"
-  | "SYSTEM_ACCOUNT_NOT_ELIGIBLE";
+  | "SYSTEM_ACCOUNT_NOT_ELIGIBLE"
+  | "INVALID_BASE_MONTH"
+  | "BASE_MONTH_BEFORE_HIRE_MONTH"
+  | "BASE_MONTH_AFTER_TERMINATION";
 
 export type EmployeeLevelValidationResult = {
   valid: boolean;

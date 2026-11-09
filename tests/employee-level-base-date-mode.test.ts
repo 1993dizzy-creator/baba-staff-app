@@ -77,7 +77,7 @@ test("legacy repair uses the current effective policy instead of any historical 
 
 test("v6 changes participation and basis independently without empty periods", () => {
   // 202608060001 Migration부터 API는 v6의 로직을 그대로 계승한 v9를 호출한다.
-  assert.match(route, /employee_update_profile_and_level_v9/);
+  assert.match(route, /employee_update_profile_and_level_v10/);
   assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
   assert.match(route, /comparisonBaseDateMode !== requestedBaseDateMode/);
   assert.match(route, /p_base_date_mode: requestedBaseDateMode/);
@@ -92,7 +92,10 @@ test("admin UI restores independent bilingual basis controls and reset-on-cancel
   for (const copy of ["레벨 계산 기준", "입사일 기준", "직접 기준", "Mốc tính cấp", "Theo ngày vào làm", "Ngày chỉ định"]) {
     assert.match(read("lib/text/admin-users.ts"), new RegExp(copy));
   }
-  assert.match(page, /baseDateMode: "hire_date" \| "override"/);
+  assert.match(page, /baseDateMode: EmployeeLevelBaseMode/);
+  assert.match(page, /levelLegacyDateMode/);
+  assert.match(page, /levelHireMonthMode/);
+  assert.match(page, /levelOverrideMonthMode/);
   assert.match(page, /levelDraft\.baseDateMode === "hire_date"/);
   assert.match(page, /levelDraft\.baseDateOverride/);
   assert.match(page, /setLevelDraft\(initialLevelPolicyDraft\(user\)\)/);
@@ -101,10 +104,14 @@ test("admin UI restores independent bilingual basis controls and reset-on-cancel
 });
 
 test("level and payroll loaders map hire-date versions to a null override", () => {
-  assert.match(server, /base_date_mode/);
-  assert.match(server, /version\.baseDateMode === "override" \? version\.baseDate : null/);
-  assert.match(payroll, /base_date_mode/);
-  assert.match(payroll, /version\.baseDateMode==="override"\?version\.baseDate:null/);
+  // One shared mapping: legacy hire_date -> null override; override / override_month -> base date.
+  const selection = read("lib/employee-level/version-selection.ts");
+  assert.match(selection, /EMPLOYEE_LEVEL_VERSION_SELECT =\s*\n?\s*"id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,salary_raise_enabled,revision"/);
+  assert.match(selection, /level_base_date_override: mode === "override" \|\| mode === "override_month" \? version\.baseDate : null/);
+  assert.match(server, /\.\.\.levelUserFieldsFromVersion\(version\)/);
+  assert.match(server, /EMPLOYEE_LEVEL_VERSION_SELECT/);
+  assert.match(payroll, /EMPLOYEE_LEVEL_VERSION_SELECT/);
+  assert.match(payroll, /\.\.\.levelUserFieldsFromVersion\(version\)/);
   assert.match(payroll, /levelProgramVersion/);
   assert.match(payroll, /contractSnapshot:contracts/);
 });

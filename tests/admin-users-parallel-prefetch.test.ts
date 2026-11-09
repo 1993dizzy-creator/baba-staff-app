@@ -55,7 +55,7 @@ test("new level-versions loader preserves exact date-bound semantics of the exis
   const existing = extractFunctionBody(levelServer, "export async function loadEmployeeLevelProgramVersionsForDates(");
   const unscoped = extractFunctionBody(levelServer, "export async function loadEmployeeLevelProgramVersionsForDatesUnscoped(");
 
-  const sameSelect = 'select("id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,revision")';
+  const sameSelect = 'select(EMPLOYEE_LEVEL_VERSION_SELECT)';
   assert.match(existing, new RegExp(sameSelect.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(unscoped, new RegExp(sameSelect.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 

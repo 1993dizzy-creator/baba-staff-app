@@ -112,9 +112,12 @@ test("list page: the level calculation basis section only renders when levelDraf
   const includedBranchStart = listPage.indexOf("{levelDraft.included ? (");
   const levelStateChangedIndex = listPage.indexOf("{levelStateChanged ? <>", includedBranchStart);
   const includedBranch = listPage.slice(includedBranchStart, levelStateChangedIndex);
-  assert.match(includedBranch, /text\.levelHireDateMode/);
-  assert.match(includedBranch, /text\.levelOverrideMode/);
+  // Month bases are the policy; an existing legacy date basis stays selectable.
+  assert.match(includedBranch, /text\.levelHireMonthMode/);
+  assert.match(includedBranch, /text\.levelOverrideMonthMode/);
+  assert.match(includedBranch, /text\.levelLegacyDateMode/);
   assert.match(includedBranch, /text\.levelCalculationStartDate/);
+  assert.match(includedBranch, /text\.levelSalaryRaise/);
 });
 
 test("list page: the 적용/미적용 toggle itself and the month-effective selector stay outside the included-only block (always available)", () => {
@@ -133,16 +136,19 @@ test("list page: toggling included back to true does not reset baseDateMode/base
   );
 });
 
-test("create page: there is no calculation-basis (hire_date/override) selector to begin with, so nothing needs conditional hiding", () => {
-  // Documented finding: unlike the list/edit page, the create page never had a
-  // levelCalculationBasis / hire-date-vs-override selector or a base-date display.
-  // New employees are always base-dated off hire_date server-side. There is nothing
-  // for this task's "hide calculation basis when disabled" requirement to hide here.
-  assert.doesNotMatch(createPage, /levelCalculationBasis/);
+test("create page: new employees get month bases only (auto hire month / direct base month), shown only while the level is enabled", () => {
+  // Month-based policy: new employees default to the automatic hire-month base; a direct
+  // base month is optional. Legacy date bases (hire date / base date) are never offered.
   assert.doesNotMatch(createPage, /levelHireDateMode/);
-  assert.doesNotMatch(createPage, /levelOverrideMode/);
+  assert.doesNotMatch(createPage, /levelOverrideMode\b/);
   assert.doesNotMatch(createPage, /levelCalculationStartDate/);
-  // The only level UI is the enabled/disabled toggle plus its help text.
+  const enabledBlock = createPage.slice(createPage.indexOf("{form.level_program_enabled ? <>"), createPage.indexOf("</> : null}", createPage.indexOf("{form.level_program_enabled ? <>")));
+  assert.match(enabledBlock, /text\.levelCalculationBasis/);
+  assert.match(enabledBlock, /text\.levelHireMonthMode/);
+  assert.match(enabledBlock, /text\.levelOverrideMonthMode/);
+  assert.match(enabledBlock, /type="month"/);
+  assert.match(enabledBlock, /text\.levelSalaryRaise/);
+  assert.match(createPage, /level_base_mode: "hire_month"/);
   assert.match(createPage, /text\.levelEnabled/);
   assert.match(createPage, /text\.levelDisabled/);
   assert.match(createPage, /text\.levelPolicyHelp/);

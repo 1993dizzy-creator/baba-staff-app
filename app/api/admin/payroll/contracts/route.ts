@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const userId = validId(new URL(request.url).searchParams.get("userId"));
   if (!userId) return payrollJson({ ok: false, code: "INVALID_USER_ID" }, 400);
   const [{ data: user, error: userError }, { data, error }, { data: auditData, error: auditError }, { data: scheduleData, error: scheduleError }] = await Promise.all([
-    supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,is_system_account,role,level_program_enabled,level_base_date_override").eq("id", userId).eq("is_system_account",false).maybeSingle(),
+    supabaseServer.from("users").select("id,name,full_name,username,is_active,hire_date,termination_date,is_system_account,role,level_program_enabled,level_base_date_override,level_base_mode").eq("id", userId).eq("is_system_account",false).maybeSingle(),
     supabaseServer.from("payroll_contract_versions").select(FIELDS).eq("user_id", userId).order("effective_from", { ascending: false }),
     supabaseServer.from("payroll_contract_audit_logs").select("id,contract_version_id,action,actor_user_id,reason,created_at").eq("user_id", userId).order("id", { ascending: true }),
     supabaseServer.from("employee_work_schedule_versions").select("id,user_id,start_time,end_time,unpaid_break_minutes,effective_from,effective_to,revision,change_reason").eq("user_id", userId).order("effective_from", { ascending: false }),

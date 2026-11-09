@@ -38,7 +38,7 @@ export async function getBarZones(): Promise<BarZoneRecord[]> {
   const levelAsOfDate = getVietnamDateKey();
   const [usersResult, profilesResult, versions, signedUrls] = await Promise.all([
     assigneeIds.length
-      ? supabaseServer.from("users").select("id, username, name, full_name, role, hire_date, termination_date, is_active, is_system_account, level_program_enabled, level_base_date_override").in("id", assigneeIds)
+      ? supabaseServer.from("users").select("id, username, name, full_name, role, hire_date, termination_date, is_active, is_system_account, level_program_enabled, level_base_date_override, level_base_mode").in("id", assigneeIds)
       : Promise.resolve({ data: [], error: null }),
     assigneeIds.length
       ? supabaseServer.from("bar_staff_profiles").select("user_id, color_key").in("user_id", assigneeIds)

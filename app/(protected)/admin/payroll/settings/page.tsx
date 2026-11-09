@@ -380,7 +380,10 @@ export default function PayrollSettingsPage() {
     return () => cancelAnimationFrame(frame);
   }, [contractsLoading, employeeListOpen, scrollRequestVersion, selectedId, selectedInsuranceLoading]);
   const current = currentContract;
+  // Same rule as the payroll engine: only monthly pay with the level raise enabled.
   const levelRaise = selected?.levelInfo.eligible
+    && selected.levelInfo.salaryRaiseEnabled !== false
+    && current?.payType === "monthly"
     ? selected.levelInfo.earnedRaiseCount *
       selected.levelInfo.raiseAmountPerStep
     : 0;

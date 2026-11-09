@@ -51,6 +51,8 @@ export type PayrollOverviewEmployee = {
     raiseAmountPerStep: number | null;
     accruedRaiseAmount: number | null;
     status: "applied" | "not_applicable" | "requires_review";
+    /** Present only when the level counts but its raise is not paid (accrued = 0₫). */
+    raiseExcluded?: "salary_raise_disabled";
   };
   amounts: {
     contractSalary: number | null;
@@ -211,6 +213,11 @@ export function buildPayrollOverviewEmployee(input: {
       raiseAmountPerStep: levelInfo.eligible || levelInfo.reason === "PROGRAM_DISABLED" ? levelInfo.raiseAmountPerStep : null,
       accruedRaiseAmount: compensation?.levelRaiseAmount ?? null,
       status: levelStatus,
+      // Absent for every legacy case (keeps calculation hashes); explains a 0₫ raise.
+      // Hourly pay never receives the level raise; the UI reads that from contract.payType.
+      ...(levelInfo.eligible && compensation?.levelRaiseExcluded
+        ? { raiseExcluded: compensation.levelRaiseExcluded }
+        : {}),
     },
     amounts: {
       contractSalary: contract?.baseSalary ?? null,

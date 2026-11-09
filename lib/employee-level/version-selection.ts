@@ -1,4 +1,7 @@
-import type { EmployeeLevelProgramVersion } from "./types";
+import { isEmployeeLevelBaseMode, type EmployeeLevelBaseMode, type EmployeeLevelProgramVersion } from "./types.ts";
+
+export const EMPLOYEE_LEVEL_VERSION_SELECT =
+  "id,user_id,enabled,effective_from,effective_to,base_date,base_date_mode,salary_raise_enabled,revision";
 
 export type EmployeeLevelProgramVersionRow = {
   id: number | string;
@@ -8,10 +11,11 @@ export type EmployeeLevelProgramVersionRow = {
   effective_to: string | null;
   base_date: string | null;
   base_date_mode: string | null;
+  salary_raise_enabled?: boolean | null;
   revision: number | string;
 };
 
-function serializeVersion(
+export function serializeEmployeeLevelProgramVersion(
   row: EmployeeLevelProgramVersionRow,
 ): EmployeeLevelProgramVersion {
   return {
@@ -20,11 +24,30 @@ function serializeVersion(
     effectiveFrom: String(row.effective_from),
     effectiveTo: row.effective_to ? String(row.effective_to) : null,
     baseDate: row.base_date ? String(row.base_date) : null,
-    baseDateMode:
-      row.base_date_mode === "hire_date" || row.base_date_mode === "override"
-        ? row.base_date_mode
-        : null,
+    baseDateMode: isEmployeeLevelBaseMode(row.base_date_mode) ? row.base_date_mode : null,
+    ...(row.salary_raise_enabled === false ? { salaryRaiseEnabled: false as const } : {}),
     revision: Number(row.revision),
+  };
+}
+const serializeVersion = serializeEmployeeLevelProgramVersion;
+
+/**
+ * The user-level fields a version implies for one day. Legacy modes give exactly the
+ * previous values (override date only for "override"); month modes carry the mode so
+ * the calculator derives the base month (hire_month from the hire date).
+ */
+export function levelUserFieldsFromVersion(version: EmployeeLevelProgramVersion): {
+  level_program_enabled: boolean;
+  level_base_date_override: string | null;
+  level_base_mode: EmployeeLevelBaseMode | null;
+  level_salary_raise_enabled: boolean;
+} {
+  const mode = version.baseDateMode;
+  return {
+    level_program_enabled: version.enabled,
+    level_base_date_override: mode === "override" || mode === "override_month" ? version.baseDate : null,
+    level_base_mode: mode === "hire_month" || mode === "override_month" ? mode : null,
+    level_salary_raise_enabled: version.salaryRaiseEnabled !== false,
   };
 }
 

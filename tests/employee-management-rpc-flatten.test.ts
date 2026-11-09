@@ -188,9 +188,10 @@ test("rehire v3 touches exactly the same tables the same number of times as the 
 // ---------------------------------------------------------------------------
 
 test("application code still calls only the 3 latest entries, untouched by this migration", () => {
-  assert.match(usersRoute, /\.rpc\(\s*\n?\s*"employee_update_profile_and_level_v9"/);
-  assert.match(usersRoute, /\.rpc\("employee_rehire_with_level_policy_v3"/);
-  assert.match(createRoute, /"employee_create_with_schedule_v5"/);
+  // Month-based level base (docs/sql/employee-level-month-base-v1-draft.sql): v10/v4/v6.
+  assert.match(usersRoute, /\.rpc\(\s*\n?\s*"employee_update_profile_and_level_v10"/);
+  assert.match(usersRoute, /\.rpc\("employee_rehire_with_level_policy_v4"/);
+  assert.match(createRoute, /"employee_create_with_schedule_v6"/);
   for (const oldName of [
     "employee_update_profile_and_level_v8", "employee_update_profile_and_level_v7",
     "employee_create_with_schedule_v4", "employee_create_with_schedule_v3",

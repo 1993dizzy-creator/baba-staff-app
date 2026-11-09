@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { toLegacyEmployeePosition } from "@/lib/common/roles";
+import { validateEmployeeLevelBaseMonth } from "@/lib/employee-level/validation";
 
 type JsonObject = Record<string, unknown>;
 
@@ -89,6 +90,24 @@ export async function POST(req: Request) {
       );
     }
 
+    // New employees: month base. Default hire_month (1–15 -> hire month, 16+ -> next
+    // month); override_month takes "YYYY-MM", never before the actual hire month.
+    const levelBaseMode = body.level_base_mode === "override_month" ? "override_month" : "hire_month";
+    const levelBaseMonth = levelBaseMode === "override_month" ? normalizeText(body.level_base_month) : null;
+    const salaryRaiseEnabled = typeof body.level_salary_raise_enabled === "boolean" ? body.level_salary_raise_enabled : true;
+    if (hireDate) {
+      const baseCheck = validateEmployeeLevelBaseMonth({ mode: levelBaseMode, baseMonth: levelBaseMonth, hireDate });
+      if (!baseCheck.valid) {
+        return NextResponse.json({
+          ok: false,
+          code: baseCheck.codes[0],
+          error: baseCheck.codes[0] === "BASE_MONTH_BEFORE_HIRE_MONTH"
+            ? lang === "vi" ? "Tháng mốc tính cấp không thể sớm hơn tháng vào làm." : "레벨 기준월은 실제 입사월보다 빠를 수 없습니다."
+            : lang === "vi" ? "Vui lòng chọn tháng mốc tính cấp theo định dạng YYYY-MM." : "레벨 기준월을 YYYY-MM 형식으로 선택해주세요.",
+        }, { status: 400 });
+      }
+    }
+
     const { data: existing, error: existingError } = await supabaseServer
       .from("users")
       .select("id")
@@ -110,7 +129,7 @@ export async function POST(req: Request) {
     const appLoginEnabled = body.app_login_enabled !== false;
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_create_with_schedule_v5",
+      "employee_create_with_schedule_v6",
       { p_employee: {
         username,
         password,
@@ -129,7 +148,11 @@ export async function POST(req: Request) {
         is_system_account: false,
         attendance_tracking_enabled: attendanceTrackingEnabled,
         app_login_enabled: appLoginEnabled,
-      }, p_level_program_enabled: levelProgramEnabled, p_change_reason: automaticChangeReason,
+      }, p_level_program_enabled: levelProgramEnabled,
+        p_base_date_mode: levelBaseMode,
+        p_base_date_override: levelBaseMonth ? `${levelBaseMonth}-01` : null,
+        p_salary_raise_enabled: salaryRaiseEnabled,
+        p_change_reason: automaticChangeReason,
         p_actor_id: auth.actor.id, p_actor_username: auth.actor.username },
     );
 

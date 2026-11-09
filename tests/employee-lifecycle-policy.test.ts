@@ -229,7 +229,7 @@ test("termination cancellation is explicit, preserves hire date, and does not by
   assert.match(api,/update\.hire_date === target\.hire_date/);
   assert.match(api,/allowExplicitReactivationOnClear: isCancelTermination/);
   assert.match(policy,/hasExplicitActiveUpdate/);
-  assert.match(api,/body\.action === "rehire"[\s\S]*employee_rehire_with_level_policy_v3/);
+  assert.match(api,/body\.action === "rehire"[\s\S]*employee_rehire_with_level_policy_v4/);
   assert.doesNotMatch(policy,/hire_date|level_program|payroll/);
   assert.match(api,/if \(target\.termination_date && levelPolicyChanged\)/);
 });

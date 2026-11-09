@@ -13,7 +13,7 @@ export async function GET() {
     if (!canAssignBarZone(actor)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
     const [{ data: users, error: usersError }, { data: profiles, error: profilesError }] = await Promise.all([
-      supabaseServer.from("users").select("id, username, name, full_name, role, part, hire_date, termination_date, is_system_account, level_program_enabled, level_base_date_override").eq("is_active", true),
+      supabaseServer.from("users").select("id, username, name, full_name, role, part, hire_date, termination_date, is_system_account, level_program_enabled, level_base_date_override, level_base_mode").eq("is_active", true),
       supabaseServer.from("bar_staff_profiles").select("user_id, color_key"),
     ]);
     if (usersError) throw usersError;

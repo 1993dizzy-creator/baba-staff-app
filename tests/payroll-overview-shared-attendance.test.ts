@@ -111,7 +111,8 @@ test("no other query (users/schedules/store_setting_versions/manual overrides/ho
   assert.match(standing, /\.from\("store_setting_versions"\)/);
   assert.match(standing, /\.from\("attendance_record_manual_overrides"\)/);
   assert.match(standing, /\.from\("store_holidays"\)/);
-  assert.match(snapshot, /\.from\("users"\)\.select\("id,name,full_name,username,is_active,role,part,position,birth_date,hire_date,termination_date,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override"\)/);
+  // level_base_mode: month-based level base mirror (docs/sql/employee-level-month-base-v1-draft.sql).
+  assert.match(snapshot, /\.from\("users"\)\.select\("id,name,full_name,username,is_active,role,part,position,birth_date,hire_date,termination_date,is_system_account,payroll_eligible_override,level_program_enabled,level_base_date_override,level_base_mode"\)/);
   assert.match(snapshot, /\.from\("employee_work_schedule_versions"\)/);
   assert.match(snapshot, /\.from\("payroll_insurance_setting_versions"\)/);
   assert.match(snapshot, /\.from\("payroll_settings"\)/);

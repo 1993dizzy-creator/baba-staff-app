@@ -13,6 +13,7 @@ import { attendanceFetch } from "@/lib/auth/client-session";
 import { PART_VALUES } from "@/lib/common/parts";
 import { EDITABLE_EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel } from "@/lib/common/roles";
 import { GENDER_VALUES, getGenderLabel } from "@/lib/common/genders";
+import { hireMonthBase } from "@/lib/employee-level/month";
 
 type CreateResponse = {
   ok: boolean;
@@ -33,6 +34,9 @@ type FormState = {
   work_end_time: string;
   is_active: boolean;
   level_program_enabled: boolean;
+  level_base_mode: "hire_month" | "override_month";
+  level_base_month: string;
+  level_salary_raise_enabled: boolean;
   attendance_tracking_enabled: boolean;
   app_login_enabled: boolean;
 };
@@ -55,6 +59,9 @@ const initialForm: FormState = {
   work_end_time: "01:00",
   is_active: true,
   level_program_enabled: true,
+  level_base_mode: "hire_month",
+  level_base_month: "",
+  level_salary_raise_enabled: true,
   attendance_tracking_enabled: true,
   app_login_enabled: true,
 };
@@ -422,6 +429,30 @@ export default function AdminUserCreatePage() {
                 ))}
               </div>
               <span style={styles.helpText}>{text.levelPolicyHelp}</span>
+              {form.level_program_enabled ? <>
+                <strong style={styles.fieldLabel}>{text.levelCalculationBasis}</strong>
+                <div style={styles.segmented}>
+                  {(["hire_month", "override_month"] as const).map((mode) => (
+                    <label key={mode} style={form.level_base_mode === mode ? styles.segmentActive : styles.segment}>
+                      <input type="radio" name="level-base-mode" checked={form.level_base_mode === mode} onChange={() => update("level_base_mode", mode)} />
+                      {mode === "hire_month" ? text.levelHireMonthMode : text.levelOverrideMonthMode}
+                    </label>
+                  ))}
+                </div>
+                {form.level_base_mode === "hire_month"
+                  ? <span style={styles.helpText}>{text.levelBaseMonth}: {hireMonthBase(form.hire_date) ?? "-"} · {text.levelHireMonthRule}</span>
+                  : <input type="month" aria-label={text.levelBaseMonth} min={form.hire_date ? form.hire_date.slice(0, 7) : undefined} value={form.level_base_month} onChange={(event) => update("level_base_month", event.target.value)} />}
+                <strong style={styles.fieldLabel}>{text.levelSalaryRaise}</strong>
+                <div style={styles.segmented}>
+                  {[true, false].map((applied) => (
+                    <label key={String(applied)} style={form.level_salary_raise_enabled === applied ? styles.segmentActive : styles.segment}>
+                      <input type="radio" name="level-salary-raise" checked={form.level_salary_raise_enabled === applied} onChange={() => update("level_salary_raise_enabled", applied)} />
+                      {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
+                    </label>
+                  ))}
+                </div>
+                {form.level_salary_raise_enabled ? null : <span style={styles.helpText}>{text.levelRaiseNotAppliedNotice}</span>}
+              </> : null}
               {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
             </div>
           </Section>

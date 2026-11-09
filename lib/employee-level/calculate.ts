@@ -6,10 +6,12 @@ import {
   EMPLOYEE_LEVEL_RAISE_AMOUNT,
   isEmployeeLevelEligibleRole,
   type EmployeeLevel,
+  type EmployeeLevelBaseMode,
   type EmployeeLevelCalculationInput,
   type EmployeeLevelInfo,
   type EmployeeLevelIneligibleReason,
 } from "./types.ts";
+import { baseMonthFromStartDate, hireMonthBase } from "./month.ts";
 
 const DATE_KEY = /^\d{4}-(0[1-9]|1[0-2])-([012]\d|3[01])$/;
 
@@ -38,11 +40,46 @@ function completedCalendarMonths(baseDate: string, calculationDate: string) {
   return Math.max(0, months);
 }
 
+/** Non-default extras only: absent keys keep legacy payroll hashes unchanged. */
+function optionalLevelFields(baseMonth: string | null, salaryRaiseEnabled: boolean) {
+  return {
+    ...(baseMonth ? { baseMonth } : {}),
+    ...(salaryRaiseEnabled ? {} : { salaryRaiseEnabled: false as const }),
+  };
+}
+
+type ResolvedBase = {
+  baseDate: string | null;
+  baseDateSource: EmployeeLevelBaseMode | null;
+  baseMonth: string | null;
+  /** Month modes only: from this date until the base month starts the employee is Lv.0. */
+  levelZeroFrom: string | null;
+};
+
+/**
+ * Legacy (mode absent, "hire_date", "override"): exactly the previous rule — the
+ * override date, else the hire date. Month modes resolve to the base month's 1st day.
+ */
+function resolveLevelBase(input: EmployeeLevelCalculationInput): ResolvedBase {
+  if (input.levelBaseMode === "hire_month") {
+    const baseMonth = hireMonthBase(input.hireDate);
+    return { baseDate: baseMonth ? `${baseMonth}-01` : null, baseDateSource: baseMonth ? "hire_month" : null, baseMonth, levelZeroFrom: input.hireDate };
+  }
+  if (input.levelBaseMode === "override_month") {
+    const baseMonth = baseMonthFromStartDate(input.levelBaseDateOverride);
+    return { baseDate: baseMonth ? `${baseMonth}-01` : null, baseDateSource: baseMonth ? "override_month" : null, baseMonth, levelZeroFrom: input.hireDate };
+  }
+  const baseDate = input.levelBaseDateOverride || input.hireDate;
+  const baseDateSource = input.levelBaseDateOverride ? "override" : input.hireDate ? "hire_date" : null;
+  return { baseDate, baseDateSource, baseMonth: null, levelZeroFrom: null };
+}
+
 function ineligible(
   reason: EmployeeLevelIneligibleReason,
   baseDate: string | null,
-  baseDateSource: "hire_date" | "override" | null,
-  calculationDate: string | null
+  baseDateSource: EmployeeLevelBaseMode | null,
+  calculationDate: string | null,
+  extra: { baseMonth?: string | null; salaryRaiseEnabled?: boolean } = {}
 ): EmployeeLevelInfo {
   return {
     eligible: false,
@@ -51,6 +88,7 @@ function ineligible(
     displayLabel: null,
     baseDate,
     baseDateSource,
+    ...optionalLevelFields(extra.baseMonth ?? null, extra.salaryRaiseEnabled !== false),
     calculationDate,
     completedQuarterCount: 0,
     earnedRaiseCount: 0,
@@ -67,37 +105,55 @@ function ineligible(
 export function calculateEmployeeLevel(
   input: EmployeeLevelCalculationInput
 ): EmployeeLevelInfo {
-  const baseDate = input.levelBaseDateOverride || input.hireDate;
-  const baseDateSource = input.levelBaseDateOverride
-    ? "override"
-    : input.hireDate
-      ? "hire_date"
-      : null;
+  const { baseDate, baseDateSource, baseMonth, levelZeroFrom } = resolveLevelBase(input);
+  const salaryRaiseEnabled = input.salaryRaiseEnabled !== false;
+  const extra = { baseMonth, salaryRaiseEnabled };
 
   if (input.isSystemAccount) {
-    return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null);
+    return ineligible("SYSTEM_ACCOUNT", baseDate, baseDateSource, null, extra);
   }
   if (input.levelProgramEnabled === false) {
-    return ineligible("PROGRAM_DISABLED", baseDate, baseDateSource, null);
+    return ineligible("PROGRAM_DISABLED", baseDate, baseDateSource, null, extra);
   }
   if (!isEmployeeLevelEligibleRole(input.role, input.levelProgramEnabled)) {
-    return ineligible("ROLE_NOT_ELIGIBLE", baseDate, baseDateSource, null);
+    return ineligible("ROLE_NOT_ELIGIBLE", baseDate, baseDateSource, null, extra);
   }
   if (!baseDate) {
-    return ineligible("MISSING_BASE_DATE", null, null, null);
+    return ineligible("MISSING_BASE_DATE", null, null, null, { salaryRaiseEnabled });
   }
 
   const dates = [input.asOfDate, baseDate];
   if (input.terminationDate) dates.push(input.terminationDate);
+  if (levelZeroFrom) dates.push(levelZeroFrom);
   if (dates.some((date) => !isEmployeeLevelDate(date))) {
-    return ineligible("INVALID_DATE", null, null, null);
+    return ineligible("INVALID_DATE", null, null, null, { salaryRaiseEnabled });
   }
 
   const calculationDate = input.terminationDate && input.terminationDate < input.asOfDate
     ? input.terminationDate
     : input.asOfDate;
   if (calculationDate < baseDate) {
-    return ineligible("BEFORE_BASE_DATE", baseDate, baseDateSource, calculationDate);
+    // Month modes: employed before the base month starts (e.g. hired on the 16th+) = Lv.0.
+    if (levelZeroFrom && calculationDate >= levelZeroFrom) {
+      return {
+        eligible: true,
+        reason: null,
+        level: 0,
+        displayLabel: "Lv.0",
+        baseDate,
+        baseDateSource,
+        ...optionalLevelFields(baseMonth, salaryRaiseEnabled),
+        calculationDate,
+        completedQuarterCount: 0,
+        earnedRaiseCount: 0,
+        raiseAmountPerStep: EMPLOYEE_LEVEL_RAISE_AMOUNT,
+        cumulativeRaiseAmount: 0,
+        nextLevelDate: addCalendarMonthsClamped(baseDate, EMPLOYEE_LEVEL_INTERVAL_MONTHS),
+        negotiationEligibleAt: addCalendarMonthsClamped(baseDate, EMPLOYEE_LEVEL_NEGOTIATION_MONTHS),
+        negotiationEligible: false,
+      };
+    }
+    return ineligible("BEFORE_BASE_DATE", baseDate, baseDateSource, calculationDate, extra);
   }
 
   const completedMonths = completedCalendarMonths(baseDate, calculationDate);
@@ -134,6 +190,7 @@ export function calculateEmployeeLevel(
     displayLabel: negotiationEligible ? "Lv.7★" : `Lv.${level}`,
     baseDate,
     baseDateSource,
+    ...optionalLevelFields(baseMonth, salaryRaiseEnabled),
     calculationDate,
     completedQuarterCount,
     earnedRaiseCount,

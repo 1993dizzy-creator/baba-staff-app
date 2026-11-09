@@ -8,6 +8,8 @@ export type CombinedSalaryResult = {
   levelRaiseAmount: number | null;
   combinedSalary: number | null;
   additionalRaiseCount: number | null;
+  /** Present only when an eligible level raise is deliberately not paid. */
+  levelRaiseExcluded?: "salary_raise_disabled";
 };
 
 export function calculateCombinedSalary(contract: PayrollContract, levelInfo: EmployeeLevelInfo): CombinedSalaryResult {
@@ -19,6 +21,11 @@ export function calculateCombinedSalary(contract: PayrollContract, levelInfo: Em
   }
   if (!levelInfo.eligible) {
     return { contractSalary: contract.baseSalary, fixedRaiseAmount: contract.fixedRaiseAmount, levelRaiseAmount: 0, combinedSalary: contract.baseSalary + contract.fixedRaiseAmount, additionalRaiseCount: 0 };
+  }
+  // Level counts but its raise is not paid (e.g. a part-timer kept on the level program).
+  // The special raise (contract fixedRaiseAmount) is unaffected and never duplicated.
+  if (levelInfo.salaryRaiseEnabled === false) {
+    return { contractSalary: contract.baseSalary, fixedRaiseAmount: contract.fixedRaiseAmount, levelRaiseAmount: 0, combinedSalary: contract.baseSalary + contract.fixedRaiseAmount, additionalRaiseCount: 0, levelRaiseExcluded: "salary_raise_disabled" };
   }
   const additionalRaiseCount = levelInfo.earnedRaiseCount;
   const levelRaiseAmount = levelInfo.earnedRaiseCount * levelInfo.raiseAmountPerStep;
