@@ -23,6 +23,10 @@
 --   3. later, optionally revoke v9/v5/v3.
 
 -- 1. Columns (defaults keep every existing row's behaviour) ------------------------------
+-- Execute this entire file on one connection; on error ROLLBACK before retrying.
+-- DDL, SECURITY DEFINER creation and final ACLs become visible together at COMMIT.
+BEGIN;
+
 alter table public.employee_level_program_versions
   add column salary_raise_enabled boolean not null default true;
 
@@ -590,6 +594,8 @@ declare
   v_revision bigint;
   v_next_effective_from date;
   v_existing public.employee_level_program_versions%rowtype;
+  v_previous public.employee_level_program_versions%rowtype;
+  v_saved public.employee_level_program_versions%rowtype;
 begin
   if p_rehire_date is null then raise exception 'INVALID_REHIRE_DATE' using errcode = '22023'; end if;
   if nullif(btrim(p_change_reason), '') is null then raise exception 'CHANGE_REASON_REQUIRED' using errcode = '22023'; end if;
@@ -617,6 +623,13 @@ begin
   from public.employee_level_program_versions
   where user_id = p_user_id and effective_from > v_effective_from;
 
+  -- Capture the policy in force before closing any interval. A same-month row
+  -- is separately retained as the exact preimage when it is overwritten.
+  select * into v_previous from public.employee_level_program_versions
+  where user_id = p_user_id and effective_from <= v_effective_from
+    and (effective_to is null or effective_to > v_effective_from)
+  order by effective_from desc, revision desc limit 1 for update;
+
   update public.employee_level_program_versions set effective_to = v_effective_from
   where user_id = p_user_id and effective_from < v_effective_from
     and (effective_to is null or effective_to > v_effective_from);
@@ -625,28 +638,13 @@ begin
   where user_id = p_user_id and effective_from = v_effective_from
   order by revision desc limit 1 for update;
 
-  insert into public.employee_level_audit_logs(
-    user_id, action, previous_enabled, next_enabled,
-    previous_base_date_override, next_base_date_override,
-    previous_base_date_mode, next_base_date_mode,
-    previous_effective_base_date, next_effective_base_date,
-    previous_version_snapshot,
-    previous_level, next_level, actor_id, actor_username, change_reason
-  ) values (
-    p_user_id, 'level_reset_on_rehire', v_before.level_program_enabled, p_level_program_enabled,
-    v_before.level_base_date_override, null, v_before.level_base_mode, 'hire_month',
-    coalesce(v_before.level_base_date_override, v_before.hire_date), v_base_date,
-    case when v_existing.id is null then null else to_jsonb(v_existing) end,
-    p_previous_level, null, p_actor_id, p_actor_username, btrim(p_change_reason)
-  );
-
   if v_existing.id is not null then
     update public.employee_level_program_versions
     set enabled = p_level_program_enabled, effective_to = v_next_effective_from,
         base_date = v_base_date, base_date_mode = 'hire_month', salary_raise_enabled = coalesce(p_salary_raise_enabled, true),
         change_reason = btrim(p_change_reason), created_by = p_actor_id,
         created_by_username = p_actor_username, created_at = now()
-    where id = v_existing.id;
+    where id = v_existing.id returning * into v_saved;
   else
     select coalesce(max(revision), 0) + 1 into v_revision
     from public.employee_level_program_versions where user_id = p_user_id;
@@ -656,8 +654,27 @@ begin
     ) values (
       p_user_id, p_level_program_enabled, v_effective_from, v_next_effective_from, v_base_date, 'hire_month', coalesce(p_salary_raise_enabled, true),
       v_revision, btrim(p_change_reason), p_actor_id, p_actor_username
-    );
+    ) returning * into v_saved;
   end if;
+
+  insert into public.employee_level_audit_logs(
+    user_id, action, previous_enabled, next_enabled,
+    previous_base_date_override, next_base_date_override,
+    previous_base_date_mode, next_base_date_mode,
+    previous_effective_base_date, next_effective_base_date,
+    previous_salary_raise_enabled, next_salary_raise_enabled,
+    previous_version_snapshot, next_version_snapshot,
+    previous_level, next_level, actor_id, actor_username, change_reason
+  ) values (
+    p_user_id, 'level_reset_on_rehire', v_previous.enabled, v_saved.enabled,
+    v_before.level_base_date_override, null, v_previous.base_date_mode, v_saved.base_date_mode,
+    v_previous.base_date, v_saved.base_date,
+    v_previous.salary_raise_enabled, v_saved.salary_raise_enabled,
+    case when v_existing.id is not null then to_jsonb(v_existing)
+         when v_previous.id is not null then to_jsonb(v_previous) else null end,
+    to_jsonb(v_saved),
+    p_previous_level, null, p_actor_id, p_actor_username, btrim(p_change_reason)
+  );
 
   update public.users
   set level_program_enabled = p_level_program_enabled, level_base_date_override = null, level_base_mode = 'hire_month'
@@ -678,3 +695,5 @@ grant execute on function public.employee_level_hire_month_base(date),
   public.employee_create_with_schedule_v6(jsonb, boolean, text, date, boolean, text, bigint, text),
   public.employee_rehire_with_level_policy_v4(bigint, date, boolean, text, bigint, text, smallint, boolean)
   to service_role;
+
+COMMIT;

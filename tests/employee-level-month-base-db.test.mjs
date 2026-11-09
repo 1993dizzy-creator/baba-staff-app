@@ -49,7 +49,7 @@ create table public.employee_level_audit_logs (
 create table public.payroll_employee_payments (id bigint primary key, user_id bigint, calculation_snapshot jsonb, calculation_hash text, calculated_net_amount numeric, payment_status text);
 `;
 
-async function database() {
+async function database({ applyDraft = true } = {}) {
   const db = new PGlite();
   await db.exec(FIXTURE);
   // Seed (production-like): actor, legacy override employee (HAI LINH), legacy hire_date employee (DIEP).
@@ -69,7 +69,7 @@ async function database() {
     insert into payroll_employee_payments values (100, 6, '{"levelSnapshot":{"level":2}}', 'abc', 14000000, 'paid');
     select setval(pg_get_serial_sequence('public.users', 'id'), 100);
   `);
-  await db.exec(DRAFT);
+  if (applyDraft) await db.exec(DRAFT);
   return db;
 }
 const snapshot = async (db, sql) => createHash('sha256').update(JSON.stringify((await db.query(sql)).rows)).digest('hex');
@@ -250,11 +250,10 @@ test('a hire-date edit cannot silently move a stored automatic base month; a new
 });
 
 test('the current app RPCs (v9/v5/v3) still work on legacy employees after the migration', async () => {
-  const flatten = readFileSync('supabase/migrations/202608070006_flatten_employee_management_rpcs.sql', 'utf8');
-  const fn = (name) => { const i = flatten.indexOf(`create or replace function public.${name}(`); return flatten.slice(i, flatten.indexOf('$$;', i) + 3); };
-  const db = await database();
+  const db = await database({ applyDraft: false });
   try {
-    for (const name of ['employee_update_profile_and_level_v9', 'employee_create_with_schedule_v5', 'employee_rehire_with_level_policy_v3']) await db.exec(fn(name));
+    await installLegacy(db);
+    await db.exec(DRAFT);
     // v9 profile save + level change on a legacy employee.
     await db.query(`select public.employee_update_profile_and_level_v9(6, '{"name":"Linh v9","work_start_time":"16:00","work_end_time":"01:00"}', true, $1, 'override', '2026-01-03', null, 1, 'han')`, [null]);
     await db.query(`select public.employee_update_profile_and_level_v9(5, '{"work_start_time":"16:00","work_end_time":"01:00"}', false, $1, 'hire_date', null, 'admin_level_disabled', 1, 'han')`, [CURRENT_MONTH]);
@@ -281,3 +280,129 @@ test('privileges match the existing RPCs: service_role only', async () => {
     }
   } finally { await db.close(); }
 });
+
+// Focused safety regression cases: no network, credentials or production database.
+const legacyNames = ['employee_update_profile_and_level_v9', 'employee_create_with_schedule_v5', 'employee_rehire_with_level_policy_v3'];
+async function installLegacy(db) {
+  const sql = readFileSync('supabase/migrations/202608070006_flatten_employee_management_rpcs.sql', 'utf8');
+  for (const name of legacyNames) {
+    const start = sql.indexOf(`create or replace function public.${name}(`);
+    await db.exec(sql.slice(start, sql.indexOf('$$;', start) + 3));
+  }
+  const signatures = (await db.query(`select oid::regprocedure::text sig from pg_proc where proname = any($1::text[])`, [legacyNames])).rows;
+  for (const { sig } of signatures) await db.exec(`revoke all on function ${sig} from public, anon, authenticated; grant execute on function ${sig} to service_role;`);
+}
+async function catalog(db) {
+  return (await db.query(`select
+    (select jsonb_agg(to_jsonb(a) order by a.attrelid, a.attnum) from pg_attribute a join pg_class c on c.oid = a.attrelid where c.relnamespace = 'public'::regnamespace) attributes,
+    (select jsonb_agg(to_jsonb(c) order by c.oid) from pg_constraint c where c.connamespace = 'public'::regnamespace) constraints,
+    (select jsonb_agg(jsonb_build_object('name', oid::regprocedure::text, 'definition', pg_get_functiondef(oid), 'acl', proacl) order by oid) from pg_proc where pronamespace = 'public'::regnamespace) functions`)).rows[0];
+}
+async function dataState(db) {
+  const result = {};
+  for (const table of ['users', 'employee_level_program_versions', 'employee_level_audit_logs', 'payroll_employee_payments', 'employee_work_schedule_versions']) {
+    result[table] = await snapshot(db, `select * from ${table} order by id`);
+  }
+  return result;
+}
+
+test('explicit transaction rolls back DDL/functions/ACLs/data at multiple failures; retry installs completely', async () => {
+  assert.match(DRAFT, /\bBEGIN;/);
+  assert.match(DRAFT, /COMMIT;\s*$/);
+  const db = await database({ applyDraft: false });
+  try {
+    await installLegacy(db);
+    const beforeCatalog = await catalog(db);
+    const beforeData = await dataState(db);
+    // Split requests defeat any implicit single-request transaction in the driver.
+    // Failure points: after initial DDL, after RPC creation before REVOKE, after ACLs.
+    for (const marker of ['-- 2. Constraints', '-- 7. Privileges', 'COMMIT;']) {
+      const cut = DRAFT.indexOf(marker);
+      assert.ok(cut > 0);
+      await db.exec(DRAFT.slice(0, cut));
+      await assert.rejects(db.exec(`select 1 / 0;`), /division by zero/);
+      await assert.rejects(db.query('select 1'), /current transaction is aborted/);
+      await db.exec('ROLLBACK;');
+      assert.deepEqual(await catalog(db), beforeCatalog);
+      assert.deepEqual(await dataState(db), beforeData);
+    }
+    await db.exec(DRAFT);
+    const after = await catalog(db);
+    assert.deepEqual(after.functions.filter(f => legacyNames.some(n => f.name.startsWith(n + '('))),
+      beforeCatalog.functions);
+    for (const name of ['employee_update_profile_and_level_v10', 'employee_create_with_schedule_v6', 'employee_rehire_with_level_policy_v4', 'employee_level_hire_month_base']) {
+      assert.ok(after.functions.some(f => f.name.startsWith(name + '(')), name);
+    }
+    assert.equal((await dataState(db)).payroll_employee_payments, beforeData.payroll_employee_payments);
+  } finally { await db.close(); }
+});
+
+const rehire = (db, enabled, raise) => db.query(`select public.employee_rehire_with_level_policy_v4(9::bigint, '2026-11-16'::date, $1::boolean, '  audited rehire  ', 1::bigint, 'han', 2::smallint, $2::boolean)`, [enabled, raise]);
+const fullVersion = async (db, id) => (await db.query('select to_jsonb(v) row from employee_level_program_versions v where id = $1', [id])).rows[0]?.row;
+
+for (const sameMonth of [true, false]) {
+  for (const oldEnabled of [false, true]) {
+    for (const oldRaise of [false, true]) {
+      test(`rehire ${sameMonth ? 'UPDATE' : 'INSERT'} audits full pre/post rows: level ${oldEnabled}->${!oldEnabled}, raise ${oldRaise}->${!oldRaise}`, async () => {
+        const db = await database();
+        try {
+          // Closed historical row must remain entirely unchanged by rehire.
+          await db.exec(`update employee_level_program_versions set effective_to = '2026-08-01' where user_id = 9;
+            insert into employee_level_program_versions(user_id, enabled, salary_raise_enabled, effective_from, base_date, base_date_mode, revision, change_reason, created_by_username)
+              values (9, ${oldEnabled}, ${oldRaise}, '${sameMonth ? '2026-11-01' : '2026-09-01'}', '2026-03-16', 'hire_date', 2, 'previous policy', 'han');`);
+          // Deliberately disagreeing mirror: audit must use the version's actual policy.
+          await db.exec(`update users set level_program_enabled = ${!oldEnabled} where id = 9;`);
+          const previous = (await db.query(`select to_jsonb(v) row from employee_level_program_versions v where user_id = 9 and revision = 2`)).rows[0].row;
+          const historical = await fullVersion(db, 4);
+          const payments = await snapshot(db, 'select * from payroll_employee_payments order by id');
+          const oldAudit = await snapshot(db, 'select * from employee_level_audit_logs order by id');
+          await rehire(db, !oldEnabled, !oldRaise);
+          const saved = (await db.query(`select to_jsonb(v) row from employee_level_program_versions v where user_id = 9 order by revision desc limit 1`)).rows[0].row;
+          const audit = (await db.query(`select * from employee_level_audit_logs where user_id = 9 order by id desc limit 1`)).rows[0];
+          assert.deepEqual(audit.previous_version_snapshot, previous);
+          assert.deepEqual(audit.next_version_snapshot, saved);
+          assert.deepEqual([audit.previous_enabled, audit.next_enabled, audit.previous_salary_raise_enabled, audit.next_salary_raise_enabled], [oldEnabled, !oldEnabled, oldRaise, !oldRaise]);
+          assert.equal(audit.previous_effective_base_date.toISOString().slice(0, 10), previous.base_date);
+          assert.equal(audit.previous_base_date_mode, previous.base_date_mode);
+          assert.equal(audit.change_reason, 'audited rehire');
+          assert.equal(audit.actor_id, 1);
+          assert.equal(audit.actor_username, 'han');
+          assert.equal(new Date(audit.created_at).toISOString(), new Date(saved.created_at).toISOString());
+          assert.equal(saved.revision, sameMonth ? 2 : 3);
+          if (!sameMonth) assert.deepEqual(await fullVersion(db, previous.id), { ...previous, effective_to: '2026-11-01' });
+          assert.deepEqual(await fullVersion(db, 4), historical);
+          assert.equal(await snapshot(db, 'select * from payroll_employee_payments order by id'), payments);
+          assert.equal(await snapshot(db, `select * from employee_level_audit_logs where user_id <> 9 order by id`), oldAudit);
+        } finally { await db.close(); }
+      });
+    }
+  }
+}
+
+test('rehire with no previous version records NULL preimage and actual INSERT postimage', async () => {
+  const db = await database();
+  try {
+    await db.exec('delete from employee_level_program_versions where user_id = 9;');
+    await rehire(db, true, false);
+    const audit = (await db.query('select * from employee_level_audit_logs where user_id = 9')).rows[0];
+    assert.equal(audit.previous_salary_raise_enabled, null);
+    assert.equal(audit.previous_version_snapshot, null);
+    assert.equal(audit.previous_enabled, null);
+    assert.equal(audit.next_salary_raise_enabled, false);
+    assert.deepEqual(audit.next_version_snapshot, await fullVersion(db, audit.next_version_snapshot.id));
+  } finally { await db.close(); }
+});
+
+for (const sameMonth of [true, false]) {
+  test(`audit failure rolls back entire rehire ${sameMonth ? 'UPDATE' : 'INSERT'} including interval closing`, async () => {
+    const db = await database();
+    try {
+      if (sameMonth) await db.exec(`insert into employee_level_program_versions(user_id, enabled, effective_from, base_date, base_date_mode, revision, change_reason, created_by_username) values (9, false, '2026-11-01', '2026-03-16', 'hire_date', 2, 'before', 'han');`);
+      await db.exec(`create function reject_rehire_audit() returns trigger language plpgsql as $$ begin raise exception 'TEST_AUDIT_FAILURE'; end $$;
+        create trigger reject_rehire_audit before insert on employee_level_audit_logs for each row execute function reject_rehire_audit();`);
+      const before = await dataState(db);
+      await assert.rejects(rehire(db, true, false), /TEST_AUDIT_FAILURE/);
+      assert.deepEqual(await dataState(db), before);
+    } finally { await db.close(); }
+  });
+}
