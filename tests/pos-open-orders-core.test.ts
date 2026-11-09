@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  OPEN_ORDERS_DB_ERRORS,
+  OPEN_ORDERS_RPC,
+  openOrdersRpcErrorCode,
   OpenOrderSyncError,
   buildOpenOrderKpi,
   classifyOrderStatus,
@@ -409,6 +412,50 @@ test("LastSyncDate is a fixed wide lower bound, never an incremental cursor", as
   const collector = core.slice(core.indexOf("export async function collectOpenOrderSnapshot"), core.indexOf("export type OpenOrderRpc"));
   assert.doesNotMatch(collector, /lastSuccessAt|lastAttemptAt|Date\.now\(\)|new Date\(\)/);
   assert.match(collector, /mode: "full"/);
+});
+
+test("server RPCs are exactly the public SECURITY INVOKER wrappers in the draft; DB error codes pass through", () => {
+  const sql = readFileSync("docs/sql/pos-open-orders-v1-draft.sql", "utf8");
+  for (const name of Object.values(OPEN_ORDERS_RPC)) {
+    const start = sql.indexOf(`create function public.${name}(`);
+    assert.ok(start > 0, `${name} wrapper missing`);
+    const header = sql.slice(start, sql.indexOf("as $$", start));
+    assert.match(header, /security invoker set search_path = ''/);
+    assert.match(sql.slice(start, sql.indexOf("$$;", start)), /select pos_open_orders_private\.\w+_v1\(/);
+  }
+  // No public SECURITY DEFINER function remains.
+  const publicHeaders = sql.split("create function public.").slice(1).map((block) => block.slice(0, block.indexOf("as $$")));
+  assert.equal(publicHeaders.length, 4);
+  for (const header of publicHeaders) assert.doesNotMatch(header, /security definer/);
+  const privateHeaders = sql.split("create function pos_open_orders_private.").slice(1).map((block) => block.slice(0, block.indexOf("as $$")));
+  assert.equal(privateHeaders.length, 4);
+  for (const header of privateHeaders) assert.match(header, /security definer set search_path = ''/);
+  // Every DB error the internal functions raise is passed through by name.
+  for (const code of OPEN_ORDERS_DB_ERRORS) {
+    assert.match(sql, new RegExp(`raise exception '${code}'`));
+    assert.equal(openOrdersRpcErrorCode({ message: code, code: "P0001" }), code);
+  }
+  assert.equal(openOrdersRpcErrorCode({ message: "permission denied for function pos_open_orders_read", code: "42501" }), "open_orders_permission_denied");
+  assert.equal(openOrdersRpcErrorCode({ message: "Could not find the function", code: "PGRST202" }), "open_orders_rpc_missing");
+  assert.equal(openOrdersRpcErrorCode({ message: "duplicate key value violates ... secret detail", code: "23505" }), "open_orders_persistence_failed");
+
+  const read = (path: string) => readFileSync(path, "utf8");
+  const syncServer = read("lib/pos/cukcuk/open-orders-sync-server.ts");
+  const readServer = read("lib/sales/open-orders-read-server.ts");
+  const core = read("lib/pos/cukcuk/open-orders-core.ts");
+  for (const source of [syncServer, readServer, core]) {
+    // RPC names only via the constant; never a private function or table from the app.
+    assert.doesNotMatch(source.replace(/export const OPEN_ORDERS_RPC = \{[^}]+\}/, ""), /rpc\(\s*"pos_open_orders_/);
+    assert.doesNotMatch(source, /pos_open_orders_private|_v1"/);
+  }
+  assert.match(syncServer, /supabaseServer\.rpc\(name, args\)/);
+  assert.match(syncServer, /Object\.values\(OPEN_ORDERS_RPC\)/);
+  assert.match(readServer, /supabaseServer\.rpc\(OPEN_ORDERS_RPC\.read,/);
+  for (const source of [syncServer, readServer]) assert.match(source, /^import "server-only";/);
+  // The service-role client is read from a non-public env var only.
+  const client = read("lib/supabase/server.ts");
+  assert.match(client, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(client, /NEXT_PUBLIC_SUPABASE_SERVICE/);
 });
 
 test("browsers never reach CUKCUK: read paths import no CUKCUK transport or login", () => {

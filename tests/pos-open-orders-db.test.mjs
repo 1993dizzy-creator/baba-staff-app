@@ -16,13 +16,20 @@ const NEXT_DATE = vnDate(1);
 
 async function database() {
   const db = new PGlite();
-  await db.exec('create role anon; create role authenticated; create role service_role;');
+  // Supabase-like roles: service_role bypasses RLS but has no table grants here.
+  await db.exec('create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;');
   await db.exec(DRAFT);
   return db;
 }
-async function call(db, name, args) {
+async function asRole(db, role, fn) {
+  await db.exec(`set role ${role}`);
+  try { return await fn(); } finally { await db.exec('reset role'); }
+}
+// Every RPC goes through the public SECURITY INVOKER wrapper as service_role (the
+// server's real path); direct fixture manipulation below runs as the superuser.
+async function call(db, name, args, role = 'service_role') {
   const placeholders = args.map((_, i) => `$${i + 1}`).join(',');
-  return (await db.query(`select public.${name}(${placeholders}) as result`, args)).rows[0].result;
+  return asRole(db, role, async () => (await db.query(`select public.${name}(${placeholders}) as result`, args)).rows[0].result);
 }
 const claim = (db, runId, owner, date = DATE, minInterval = 60) => call(db, 'pos_open_orders_claim', [runId, owner, SCOPE, BRANCH, date, minInterval]);
 const lineOf = (id, extra = {}) => ({ detailId: `d${id}`, parentDetailId: null, additionId: null, itemId: `i${id}`, itemName: `Item ${id}`,
@@ -188,24 +195,110 @@ test('claims only accept the live business date range; retention removes snapsho
   } finally { await db.close(); }
 });
 
-test('server-only writes: anon/authenticated cannot read tables or run RPCs; service_role can only use the RPCs', async () => {
+const WRAPPERS = [
+  ['pos_open_orders_claim', 'uuid, uuid, text, text, date, integer'],
+  ['pos_open_orders_commit', 'uuid, uuid, jsonb, jsonb'],
+  ['pos_open_orders_fail', 'uuid, uuid, text'],
+  ['pos_open_orders_read', 'text, date'],
+];
+const INTERNAL = [
+  ['claim_v1', 'uuid, uuid, text, text, date, integer'],
+  ['commit_v1', 'uuid, uuid, jsonb, jsonb'],
+  ['fail_v1', 'uuid, uuid, text'],
+  ['read_v1', 'text, date'],
+];
+const TABLES = ['runs', 'sync_state', 'orders', 'order_lines'];
+
+test('service_role runs claim/commit/fail/read through the public wrappers; anon/authenticated are refused everywhere', async () => {
+  const db = await database();
+  try {
+    // Full cycle as service_role through the wrappers.
+    const runId = randomUUID(), owner = randomUUID();
+    assert.equal((await claim(db, runId, owner, DATE, 0)).status, 'collecting');
+    assert.equal((await call(db, 'pos_open_orders_commit', [runId, owner, {}, JSON.stringify([orderOf(1)])])).status, 'committed');
+    const r2 = randomUUID(), o2 = randomUUID();
+    await claim(db, r2, o2, DATE, 0);
+    assert.equal((await call(db, 'pos_open_orders_fail', [r2, o2, 'provider_timeout'])).status, 'failed');
+    assert.equal((await read(db)).orders.length, 1);
+    // Error codes raised inside the private functions reach the caller unchanged.
+    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), 'bad-scope', BRANCH, DATE, 0]), /open_orders_scope_invalid/);
+    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), `${'a'.repeat(64)}:other-branch`, BRANCH, DATE, 0]), /open_orders_scope_invalid/);
+
+    for (const role of ['anon', 'authenticated']) {
+      await asRole(db, role, async () => {
+        for (const [name] of WRAPPERS) {
+          const args = name === 'pos_open_orders_read' ? [SCOPE, DATE] : name === 'pos_open_orders_fail' ? [runId, owner, 'x']
+            : name === 'pos_open_orders_commit' ? [runId, owner, '{}', '[]'] : [randomUUID(), randomUUID(), SCOPE, BRANCH, DATE, 0];
+          const placeholders = args.map((_, i) => `$${i + 1}`).join(',');
+          await assert.rejects(db.query(`select public.${name}(${placeholders})`, args), /permission denied for function/);
+        }
+        await assert.rejects(db.query('select pos_open_orders_private.read_v1($1, $2)', [SCOPE, DATE]), /permission denied for schema/);
+        for (const table of TABLES) await assert.rejects(db.query(`select * from pos_open_orders_private.${table}`), /permission denied for schema/);
+      });
+    }
+  } finally { await db.close(); }
+});
+
+test('service_role cannot touch private tables directly, even with BYPASSRLS; only the functions can', async () => {
   const db = await database();
   try {
     await runOnce(db, [orderOf(1)]);
-    for (const role of ['anon', 'authenticated']) {
-      await db.exec(`set role ${role}`);
-      await assert.rejects(db.query('select * from pos_open_orders_private.orders'), /permission denied/);
-      await assert.rejects(db.query(`select public.pos_open_orders_read($1, $2)`, [SCOPE, DATE]), /permission denied/);
-      await assert.rejects(db.query(`select public.pos_open_orders_claim($1,$2,$3,$4,$5,$6)`, [randomUUID(), randomUUID(), SCOPE, BRANCH, DATE, 0]), /permission denied/);
-      await db.exec('reset role');
+    await asRole(db, 'service_role', async () => {
+      for (const table of TABLES) {
+        await assert.rejects(db.query(`select * from pos_open_orders_private.${table}`), /permission denied for table/);
+        await assert.rejects(db.query(`delete from pos_open_orders_private.${table}`), /permission denied for table/);
+        await assert.rejects(db.query(`update pos_open_orders_private.${table} set scope = scope`), /permission denied for table/);
+      }
+      await assert.rejects(db.query(`insert into pos_open_orders_private.sync_state(scope, branch_id) values ('x', 'y')`), /permission denied for table/);
+      // The internal function is callable (that is what the wrapper uses), the tables are not.
+      assert.equal((await db.query('select pos_open_orders_private.read_v1($1, $2) r', [SCOPE, DATE])).rows[0].r.orders.length, 1);
+    });
+  } finally { await db.close(); }
+});
+
+test('catalog: invoker wrappers, definer internals with empty search_path owned by postgres, minimal grants', async () => {
+  const db = await database();
+  try {
+    const proc = async (schema, name, args) => (await db.query(
+      `select p.prosecdef, p.proconfig, pg_get_userbyid(p.proowner) as owner, p.provolatile
+         from pg_proc p where p.oid = $1::regprocedure`, [`${schema}.${name}(${args})`])).rows[0];
+    for (const [name, args] of WRAPPERS) {
+      const p = await proc('public', name, args);
+      assert.equal(p.prosecdef, false, `${name} must be SECURITY INVOKER`);
+      assert.deepEqual(p.proconfig, ['search_path=""']);
     }
-    await db.exec('set role service_role');
-    await assert.rejects(db.query('select * from pos_open_orders_private.orders'), /permission denied/);
-    await assert.rejects(db.query('delete from pos_open_orders_private.orders'), /permission denied/);
-    assert.equal((await db.query(`select public.pos_open_orders_read($1, $2) r`, [SCOPE, DATE])).rows[0].r.orders.length, 1);
-    await db.exec('reset role');
-    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), 'bad-scope', BRANCH, DATE, 0]), /open_orders_scope_invalid/);
-    await assert.rejects(call(db, 'pos_open_orders_claim', [randomUUID(), randomUUID(), `${'a'.repeat(64)}:other-branch`, BRANCH, DATE, 0]), /open_orders_scope_invalid/);
+    for (const [name, args] of INTERNAL) {
+      const p = await proc('pos_open_orders_private', name, args);
+      assert.equal(p.prosecdef, true, `${name} must be SECURITY DEFINER`);
+      assert.deepEqual(p.proconfig, ['search_path=""']);
+      assert.equal(p.owner, 'postgres');
+    }
+    assert.equal((await proc('public', 'pos_open_orders_read', 'text, date')).provolatile, 's');
+    const priv = async (sql, params) => (await db.query(sql, params)).rows[0].ok;
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      const expected = role === 'service_role';
+      for (const [name, args] of WRAPPERS) {
+        assert.equal(await priv(`select has_function_privilege($1, $2, 'execute') ok`, [role, `public.${name}(${args})`]), expected, `${role} ${name}`);
+      }
+      for (const [name, args] of INTERNAL) {
+        assert.equal(await priv(`select has_function_privilege($1, $2, 'execute') ok`, [role, `pos_open_orders_private.${name}(${args})`]), expected, `${role} ${name}`);
+      }
+      assert.equal(await priv(`select has_schema_privilege($1, 'pos_open_orders_private', 'usage') ok`, [role]), expected);
+      assert.equal(await priv(`select has_schema_privilege($1, 'pos_open_orders_private', 'create') ok`, [role]), false);
+      for (const table of TABLES) {
+        for (const mode of ['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger']) {
+          assert.equal(await priv(`select has_table_privilege($1, $2, $3) ok`, [role, `pos_open_orders_private.${table}`, mode]), false, `${role} ${mode} ${table}`);
+        }
+      }
+    }
+    // PUBLIC holds nothing on the wrappers or internals.
+    const publicAcl = (await db.query(`select count(*)::int n from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+      where p.proname in ('pos_open_orders_claim','pos_open_orders_commit','pos_open_orders_fail','pos_open_orders_read','claim_v1','commit_v1','fail_v1','read_v1')
+        and a.grantee = 0`)).rows[0].n;
+    assert.equal(publicAcl, 0);
+    for (const table of TABLES) {
+      assert.equal((await db.query(`select relrowsecurity ok from pg_class where oid = $1::regclass`, [`pos_open_orders_private.${table}`])).rows[0].ok, true);
+    }
   } finally { await db.close(); }
 });
 

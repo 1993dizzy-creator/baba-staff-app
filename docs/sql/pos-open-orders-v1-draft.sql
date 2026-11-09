@@ -6,8 +6,12 @@
 -- ledger/inventory table. Order Status (CUKCUK orders API) is stored as-is and never
 -- compared with receipt payment_status inside SQL; the app links receipts by OrderId.
 --
--- Access: private schema, RLS on, all privileges revoked; only service_role may execute
--- the four RPCs. Admin reads go through a server route that checks the app role.
+-- Access: the private schema is never exposed to the Data API. Its tables have RLS on and
+-- no privileges for any API role. Logic lives in four SECURITY DEFINER functions in the
+-- private schema (owner postgres, search_path ''). The Data API reaches them only through
+-- four SECURITY INVOKER wrappers in public, executable by service_role alone; service_role
+-- holds private-schema USAGE and EXECUTE on those four functions, nothing else.
+-- Admin reads go through a server route that checks the app role.
 
 create schema pos_open_orders_private;
 revoke all on schema pos_open_orders_private from public, anon, authenticated, service_role;
@@ -90,9 +94,9 @@ revoke all on all tables in schema pos_open_orders_private from public, anon, au
 --   busy:       another run holds a live lease (overlapping trigger, no CUKCUK call)
 --   fresh:      a success for this date is newer than p_min_interval_seconds (throttle)
 --   <status>:   idempotent replay of an existing run id
-create function public.pos_open_orders_claim(p_run_id uuid, p_owner_token uuid, p_scope text, p_branch_id text,
+create function pos_open_orders_private.claim_v1(p_run_id uuid, p_owner_token uuid, p_scope text, p_branch_id text,
   p_business_date date, p_min_interval_seconds integer default 60)
-returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare r pos_open_orders_private.runs%rowtype; s pos_open_orders_private.sync_state%rowtype;
 begin
   if p_run_id is null or p_owner_token is null or p_business_date is null or nullif(p_branch_id, '') is null
@@ -134,8 +138,8 @@ begin
 end $$;
 
 -- Replace the snapshot of the run's business date in one transaction.
-create function public.pos_open_orders_commit(p_run_id uuid, p_owner_token uuid, p_manifest jsonb, p_orders jsonb)
-returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+create function pos_open_orders_private.commit_v1(p_run_id uuid, p_owner_token uuid, p_manifest jsonb, p_orders jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare r pos_open_orders_private.runs%rowtype; v_now timestamptz := clock_timestamp(); v_order jsonb; v_line jsonb;
   v_orders integer := 0; v_lines integer := 0;
 begin
@@ -192,8 +196,8 @@ end $$;
 
 -- Record a failed run. The previous snapshot is kept but keeps its old success time,
 -- so readers see it as stale instead of current.
-create function public.pos_open_orders_fail(p_run_id uuid, p_owner_token uuid, p_code text)
-returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+create function pos_open_orders_private.fail_v1(p_run_id uuid, p_owner_token uuid, p_code text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare r pos_open_orders_private.runs%rowtype; v_code text := case when p_code ~ '^[a-z0-9_]{1,64}$' then p_code else 'collection_failed' end;
 begin
   select * into r from pos_open_orders_private.runs where id = p_run_id;
@@ -208,8 +212,8 @@ begin
 end $$;
 
 -- Read model for the server route (role checked in the app before calling).
-create function public.pos_open_orders_read(p_scope text, p_business_date date)
-returns jsonb language sql stable security definer set search_path = pg_catalog, public as $$
+create function pos_open_orders_private.read_v1(p_scope text, p_business_date date)
+returns jsonb language sql stable security definer set search_path = '' as $$
   select jsonb_build_object(
     'sync', (select jsonb_build_object('businessDate', s.business_date, 'lastSuccessAt', s.last_success_at,
         'lastAttemptAt', s.last_attempt_at, 'lastErrorCode', s.last_error_code, 'consecutiveFailures', s.consecutive_failures)
@@ -228,9 +232,55 @@ returns jsonb language sql stable security definer set search_path = pg_catalog,
       from pos_open_orders_private.orders o where o.scope = p_scope and o.business_date = p_business_date), '[]'::jsonb))
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Ownership and privileges of the internal functions.
+-- Internal functions are SECURITY DEFINER with search_path = '' (every object is
+-- schema-qualified; pg_catalog is implicit). Their owner must be the migration owner
+-- (postgres), never an API role, so only they touch the private tables.
+alter function pos_open_orders_private.claim_v1(uuid, uuid, text, text, date, integer) owner to postgres;
+alter function pos_open_orders_private.commit_v1(uuid, uuid, jsonb, jsonb) owner to postgres;
+alter function pos_open_orders_private.fail_v1(uuid, uuid, text) owner to postgres;
+alter function pos_open_orders_private.read_v1(text, date) owner to postgres;
+
+revoke all on all functions in schema pos_open_orders_private from public, anon, authenticated, service_role;
+revoke all on all sequences in schema pos_open_orders_private from public, anon, authenticated, service_role;
+-- service_role: schema USAGE + EXECUTE on the four internal functions only. No table
+-- privileges, so direct SELECT/INSERT/UPDATE/DELETE on private tables stays denied.
+-- Do NOT add pos_open_orders_private to the Data API "exposed schemas".
+grant usage on schema pos_open_orders_private to service_role;
+grant execute on function pos_open_orders_private.claim_v1(uuid, uuid, text, text, date, integer),
+  pos_open_orders_private.commit_v1(uuid, uuid, jsonb, jsonb), pos_open_orders_private.fail_v1(uuid, uuid, text),
+  pos_open_orders_private.read_v1(text, date) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- Public, service-only RPC wrappers (the only names the Data API exposes).
+-- SECURITY INVOKER: they run as the caller, so a caller without the private grants
+-- above cannot get through them. Same names/arguments/results/error codes as before;
+-- lease, fencing (owner token) and idempotency live in the internal functions.
+create function public.pos_open_orders_claim(p_run_id uuid, p_owner_token uuid, p_scope text, p_branch_id text,
+  p_business_date date, p_min_interval_seconds integer default 60)
+returns jsonb language sql volatile security invoker set search_path = '' as $$
+  select pos_open_orders_private.claim_v1(p_run_id, p_owner_token, p_scope, p_branch_id, p_business_date, p_min_interval_seconds)
+$$;
+create function public.pos_open_orders_commit(p_run_id uuid, p_owner_token uuid, p_manifest jsonb, p_orders jsonb)
+returns jsonb language sql volatile security invoker set search_path = '' as $$
+  select pos_open_orders_private.commit_v1(p_run_id, p_owner_token, p_manifest, p_orders)
+$$;
+create function public.pos_open_orders_fail(p_run_id uuid, p_owner_token uuid, p_code text)
+returns jsonb language sql volatile security invoker set search_path = '' as $$
+  select pos_open_orders_private.fail_v1(p_run_id, p_owner_token, p_code)
+$$;
+create function public.pos_open_orders_read(p_scope text, p_business_date date)
+returns jsonb language sql stable security invoker set search_path = '' as $$
+  select pos_open_orders_private.read_v1(p_scope, p_business_date)
+$$;
+
+-- Supabase grants EXECUTE on new public functions to anon/authenticated by default:
+-- revoke everything, then allow service_role only.
 revoke all on function public.pos_open_orders_claim(uuid, uuid, text, text, date, integer),
   public.pos_open_orders_commit(uuid, uuid, jsonb, jsonb), public.pos_open_orders_fail(uuid, uuid, text),
   public.pos_open_orders_read(text, date) from public, anon, authenticated, service_role;
 grant execute on function public.pos_open_orders_claim(uuid, uuid, text, text, date, integer),
   public.pos_open_orders_commit(uuid, uuid, jsonb, jsonb), public.pos_open_orders_fail(uuid, uuid, text),
   public.pos_open_orders_read(text, date) to service_role;
+

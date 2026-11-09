@@ -103,8 +103,15 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | `pos_open_orders_claim` / `_commit` / `_fail` | `runOpenOrderSync` ← `runCentralOpenOrderSync`(`open-orders-sync-server.ts`) | `supabaseServer`(service_role 키). **호출하는 route·cron 없음** |
 | `pos_open_orders_read` | 수집기(이전 스냅샷 확인) / `loadOpenOrderKpi` ← `/api/admin/sales/today` | service_role. 조회 경로는 `requireRole(owner, master, manager)` 이후, `POS_OPEN_ORDERS_READ_ENABLED=true`일 때만 |
 
-- DB 실행 권한은 `service_role`에만 있다. 브라우저의 anon/authenticated 키로는 실행할 수 없다.
-- private 스키마는 PostgREST에 노출되지 않는다.
+- 위 이름은 모두 `public`의 **SECURITY INVOKER 래퍼**다. 서버는 `OPEN_ORDERS_RPC` 상수에 있는 이 4개 이름만 호출한다.
+- 래퍼는 호출자 권한으로 private 스키마의 **SECURITY DEFINER 내부 함수**(`claim_v1`/`commit_v1`/`fail_v1`/`read_v1`)를 부른다. 내부 함수는 소유자 postgres, `search_path = ''`이다.
+- DB 실행 권한은 `service_role`에만 있다. 브라우저의 anon/authenticated 키로는 래퍼·내부 함수·테이블 어디에도 접근할 수 없다(PGlite 격리 테스트로 확인).
+- `service_role`은 private 스키마 USAGE와 내부 함수 4개 EXECUTE만 갖는다. 테이블 권한이 없으므로 BYPASSRLS여도 테이블을 직접 조회·변경할 수 없다.
+- private 스키마는 Data API 노출 스키마에 추가하지 않는다.
+- 오류 처리:
+  - 내부 함수의 오류 코드(`open_orders_*`)는 그대로 전달된다.
+  - 권한 누락(42501)은 `open_orders_permission_denied`, 함수 미배포(PGRST202)는 `open_orders_rpc_missing`으로 바뀐다.
+  - 그 밖의 DB 오류는 `open_orders_persistence_failed`로 숨긴다.
 - 참고(기존 코드, 이번 범위 밖): `lib/supabase/server.ts`에는 `import "server-only"`가 없다. service_role 키는 `NEXT_PUBLIC_`가 아니어서 브라우저 번들에 들어가지 않지만, 명시적 보호는 별도로 검토할 수 있다.
 
 ## 기존 매출과의 분리
@@ -161,7 +168,7 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 ## DB 초안 요약
 
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
-- RPC 4개는 security definer이며, `service_role`만 실행할 수 있다.
+- 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.
   - `claim`: advisory lock과 scope별 활성 run 1개 제한으로 단일 실행을 보장한다. lease는 3분이다.
     - 영업일은 베트남 날짜 -1~+1일만 받는다. 잘못된 먼 날짜로 커밋되면 보관 기한 삭제가 현재 스냅샷을 지울 수 있기 때문이다.
     - lease가 만료된 이전 수집기의 늦은 commit은 `lease_lost`로 거부되고, 늦은 fail은 `ignored`로 무시된다.
@@ -182,6 +189,24 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
    - 날짜 형식
    - 상세 `OrderDetails` 필드명
 2. **운영 DB Migration**: `docs/sql/pos-open-orders-v1-draft.sql`을 `supabase/migrations/`로 옮겨 적용한다. 운영 DDL 승인이 따로 필요하다.
+   - 생성 객체:
+     - 스키마 `pos_open_orders_private`
+     - 테이블 4개 `runs`, `sync_state`, `orders`, `order_lines`
+     - 인덱스 2개 `pos_open_orders_active_scope`(부분 unique), `pos_open_orders_runs_recent`
+     - 내부 함수 4개 `claim_v1`, `commit_v1`, `fail_v1`, `read_v1`
+     - public 래퍼 4개 `pos_open_orders_claim`, `pos_open_orders_commit`, `pos_open_orders_fail`, `pos_open_orders_read`
+   - 권한:
+     - RLS를 켜고 테이블 권한은 전부 회수한다.
+     - `service_role`에는 private 스키마 USAGE, 내부 함수 4개 EXECUTE, 래퍼 4개 EXECUTE만 준다.
+     - PUBLIC·anon·authenticated는 전부 회수한다.
+   - 사전 점검(읽기 전용):
+     - 위 이름의 객체가 아직 없는지
+     - `postgres`·`service_role` 역할이 있는지
+     - Data API 노출 스키마에 private 스키마가 없는지
+   - 사후 점검:
+     - `has_function_privilege`, `has_schema_privilege`, `has_table_privilege` 매트릭스(테스트와 같은 항목)
+     - 래퍼는 `prosecdef=false`, 내부 함수는 `prosecdef=true`, `proconfig`가 `search_path=""`, 내부 함수 소유자가 postgres인지
+   - 되돌리기: 래퍼 4개를 삭제하고 `drop schema pos_open_orders_private cascade`를 실행한다(새 객체만 해당).
 3. **Cron 활성화**: `/api/cron/pos-open-orders` route를 추가한다(`authorizeCron` 재사용, `runCentralOpenOrderSync` 호출).
    - `vercel.json`에 영업시간대 일정을 등록한다. 예: 16:00~03:00(+07) = 09:00~20:00 UTC, 2분 간격.
    - Cron·배포 승인이 필요하다.

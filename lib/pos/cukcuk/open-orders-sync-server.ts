@@ -5,7 +5,14 @@ import { openOrdersBranchId, openOrdersScope } from "@/lib/pos/cukcuk/open-order
 import { buildCukcukHeaders, CUKCUK_BASE_URL } from "@/lib/pos/cukcuk/sales-receipt-sync";
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
-import { OpenOrderSyncError, runOpenOrderSync, type OrderRequest, type OrderTransport } from "./open-orders-core";
+import {
+  OPEN_ORDERS_RPC,
+  OpenOrderSyncError,
+  openOrdersRpcErrorCode,
+  runOpenOrderSync,
+  type OrderRequest,
+  type OrderTransport,
+} from "./open-orders-core";
 
 // Central (server/cron) collector for CUKCUK in-progress orders.
 // NOT ACTIVATED: no route or cron calls this yet. Activation needs the DB draft
@@ -46,13 +53,11 @@ function createCukcukOrderTransport(): OrderTransport {
   };
 }
 
+// Service-role client calling the public SECURITY INVOKER wrappers only.
 async function rpc(name: string, args: Record<string, unknown>) {
+  if (!(Object.values(OPEN_ORDERS_RPC) as string[]).includes(name)) throw new Error("open_orders_rpc_missing");
   const { data, error } = await supabaseServer.rpc(name, args);
-  if (error) {
-    const known = ["open_orders_lease_lost", "open_orders_payload_invalid", "open_orders_run_conflict", "open_orders_scope_invalid",
-      "open_orders_business_date_out_of_range", "open_orders_vanished"];
-    throw new Error(known.includes(error.message) ? error.message : "open_orders_persistence_failed");
-  }
+  if (error) throw new Error(openOrdersRpcErrorCode(error));
   return data as Record<string, unknown>;
 }
 

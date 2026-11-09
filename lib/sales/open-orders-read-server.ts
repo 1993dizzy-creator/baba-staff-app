@@ -2,6 +2,8 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase/server";
 import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
 import {
+  OPEN_ORDERS_RPC,
+  openOrdersRpcErrorCode,
   buildOpenOrderKpi,
   classifyOrdersForBusinessDate,
   type CollectedOrder,
@@ -54,11 +56,13 @@ export async function loadOpenOrderKpi(input: {
     if (!isLiveBusinessDay || input.isClosed) {
       return buildOpenOrderKpi({ ...base, enabled: true, isLiveBusinessDay, sync: null, classified: null });
     }
-    const { data, error } = await supabaseServer.rpc("pos_open_orders_read", {
+    // Public SECURITY INVOKER wrapper, executable by service_role only.
+    const { data, error } = await supabaseServer.rpc(OPEN_ORDERS_RPC.read, {
       p_scope: openOrdersScope(),
       p_business_date: input.businessDate,
     });
-    if (error || !data) throw new Error("OPEN_ORDERS_SNAPSHOT_UNAVAILABLE");
+    if (error) throw new Error(openOrdersRpcErrorCode(error));
+    if (!data) throw new Error("OPEN_ORDERS_SNAPSHOT_UNAVAILABLE");
     const payload = data as ReadPayload;
     sync = payload.sync;
     const orders = (payload.orders ?? []).map((order) => ({ ...order, totalAmount: Number(order.totalAmount), raw: {} }));

@@ -473,6 +473,36 @@ export async function collectOpenOrderSnapshot(
   };
 }
 
+/**
+ * The only RPC names the server calls: public SECURITY INVOKER wrappers (service_role
+ * only) over the private SECURITY DEFINER functions (docs/sql/pos-open-orders-v1-draft.sql).
+ */
+export const OPEN_ORDERS_RPC = {
+  claim: "pos_open_orders_claim",
+  commit: "pos_open_orders_commit",
+  fail: "pos_open_orders_fail",
+  read: "pos_open_orders_read",
+} as const;
+
+/** Error messages raised by the internal functions; passed through unchanged. */
+export const OPEN_ORDERS_DB_ERRORS = [
+  "open_orders_lease_lost",
+  "open_orders_payload_invalid",
+  "open_orders_run_conflict",
+  "open_orders_scope_invalid",
+  "open_orders_business_date_out_of_range",
+  "open_orders_vanished",
+] as const;
+
+/** Maps a Supabase RPC error to a safe code (no SQL detail leaves the server). */
+export function openOrdersRpcErrorCode(error: { message?: string; code?: string }) {
+  const message = error.message ?? "";
+  if ((OPEN_ORDERS_DB_ERRORS as readonly string[]).includes(message)) return message;
+  if (error.code === "42501") return "open_orders_permission_denied";
+  if (error.code === "PGRST202" || error.code === "42883") return "open_orders_rpc_missing";
+  return "open_orders_persistence_failed";
+}
+
 export type OpenOrderRpc = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /**
@@ -486,13 +516,13 @@ export async function runOpenOrderSync(
 ): Promise<Record<string, unknown>> {
   const runId = deps.uuid();
   const ownerToken = deps.uuid();
-  const claim = await deps.rpc("pos_open_orders_claim", {
+  const claim = await deps.rpc(OPEN_ORDERS_RPC.claim, {
     p_run_id: runId, p_owner_token: ownerToken, p_scope: input.scope, p_branch_id: input.branchId, p_business_date: input.businessDate,
   });
   if (claim.status !== "collecting") return claim;
   try {
     // The previous snapshot of this date decides which orders must still be accounted for.
-    const previous = await deps.rpc("pos_open_orders_read", { p_scope: input.scope, p_business_date: input.businessDate });
+    const previous = await deps.rpc(OPEN_ORDERS_RPC.read, { p_scope: input.scope, p_business_date: input.businessDate });
     const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as { orderId: string; statusClass: OrderStatusClass }[]) : [];
     await deps.transport.login();
     const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, { ...input, previousUnfinishedIds: unfinishedOrderIds(previousOrders) });
@@ -502,7 +532,7 @@ export async function runOpenOrderSync(
       orderDate: order.orderDate, businessDate: order.businessDate, totalAmount: order.totalAmount,
       tableName: order.tableName, lines: order.lines,
     }));
-    return await deps.rpc("pos_open_orders_commit", {
+    return await deps.rpc(OPEN_ORDERS_RPC.commit, {
       p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
     });
   } catch (error) {
@@ -511,7 +541,7 @@ export async function runOpenOrderSync(
       ? error.code
       : error instanceof Error && /^open_orders_[a-z_]{1,40}$/.test(error.message) ? error.message : "collection_failed";
     try {
-      await deps.rpc("pos_open_orders_fail", { p_run_id: runId, p_owner_token: ownerToken, p_code: code });
+      await deps.rpc(OPEN_ORDERS_RPC.fail, { p_run_id: runId, p_owner_token: ownerToken, p_code: code });
     } catch {
       /* The lease expires on its own; the last good snapshot stays marked by its time. */
     }
