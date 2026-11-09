@@ -68,10 +68,6 @@ const text = {
     receivedIncome: "실제 유입",
     investment: "투자금 입·출금",
     otherAdjustment: "기타 자금조정",
-    historicalCash: "과거 자금 · 분류 대기",
-    cashVerified: "시재 검산 완료",
-    economicPending: "회계 분류 대기",
-    economicVerified: "회계 분류 완료",
     deficitToSurplus: "적자 → 흑자",
     surplusToDeficit: "흑자 → 적자",
     reconciliationWarning: "확인 필요 차이",
@@ -148,10 +144,6 @@ const text = {
     receivedIncome: "Tiền thực thu",
     investment: "Tiền đầu tư vào·ra",
     otherAdjustment: "Điều chỉnh vốn khác",
-    historicalCash: "Dòng tiền lịch sử · chờ phân loại",
-    cashVerified: "Đã đối chiếu quỹ",
-    economicPending: "Chờ phân loại kế toán",
-    economicVerified: "Đã phân loại kế toán",
     deficitToSurplus: "Lỗ → lãi",
     surplusToDeficit: "Lãi → lỗ",
     reconciliationWarning: "Chênh lệch cần kiểm tra",
@@ -447,14 +439,12 @@ function DashboardReport({ detailEmoji, copy, lang, fundsMode, report, month, sa
     <section className={styles.reportCard}>
       <div className={styles.sectionHeader}><h2 className={styles.sectionTitle}><span className={styles.titleEmoji} aria-hidden="true">💵</span>{copy.cashFlow}</h2></div>
       <div className={styles.cashFlow}>
-        {report.cashImport?.cashReconciled && <p>{copy.cashVerified} · {report.cashImport.economicClosed ? copy.economicVerified : `${copy.economicPending} ${report.cashImport.economicPending}`}</p>}
         <div className={styles.cashBalance}><span>{copy.openingBalance}</span><strong>{money(report.cashFlow.openingBalance)}</strong></div>
         <div className={styles.cashArrow}>↓</div>
         <CashLine sign="+" label={copy.receivedIncome} amount={report.cashFlow.receivedIncome} positive />
         <CashLine sign="−" label={copy.cashExpense} amount={report.cashFlow.actualCashOutflow} />
         <CashLine sign={report.cashFlow.investmentCashFlow < 0 ? "−" : "+"} label={copy.investment} amount={Math.abs(report.cashFlow.investmentCashFlow)} positive={report.cashFlow.investmentCashFlow >= 0} />
         <CashLine sign={report.cashFlow.otherFundAdjustment < 0 ? "−" : "+"} label={copy.otherAdjustment} amount={Math.abs(report.cashFlow.otherFundAdjustment)} positive={report.cashFlow.otherFundAdjustment >= 0} />
-        {report.cashFlow.unclassifiedCashMovement !== 0 && <CashLine sign={report.cashFlow.unclassifiedCashMovement < 0 ? "−" : "+"} label={copy.historicalCash} amount={Math.abs(report.cashFlow.unclassifiedCashMovement)} positive={report.cashFlow.unclassifiedCashMovement >= 0} />}
         {Math.abs(report.cashFlow.reconciliationDifference) >= 0.5 ? <CashLine sign={report.cashFlow.reconciliationDifference < 0 ? "−" : "+"} label={copy.reconciliationWarning} amount={Math.abs(report.cashFlow.reconciliationDifference)} positive={false} /> : <CashLine sign="" label={copy.cashFlowMatched} amount={0} positive />}
         <div className={styles.cashArrow}>↓</div>
         <div className={styles.cashBalance}><span>{fundsMode === "live" ? copy.balance : copy.monthEndBalance}</span><strong>{money(report.cashFlow.closingBalance)}</strong></div>

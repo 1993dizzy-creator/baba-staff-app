@@ -111,7 +111,6 @@ const TYPE_LABELS: Record<string, [string, string]> = {
   owner_settlement_payment: ["오너 정산", "Quyết toán chủ"],
   investment: ["투자", "Góp vốn"],
   prepaid_expense_payment: ["선급 비용 지급", "Trả trước chi phí"],
-  historical_cash_event: ["과거 자금 · 분류 대기", "Dòng tiền lịch sử · chờ phân loại"],
 };
 
 export function fundAccountLogTypeLabel(type: string, lang: "ko" | "vi") {

@@ -2,10 +2,8 @@ export function computeReceivedIncome(
   recognizedIncome: number,
   cardGrossSales: number,
   actualCardDeposits: number,
-  nonCashImportedIncome = 0,
 ) {
-  // Its real receipt is already included in historical_cash_event movements.
-  return recognizedIncome - cardGrossSales + actualCardDeposits - nonCashImportedIncome;
+  return recognizedIncome - cardGrossSales + actualCardDeposits;
 }
 
 // paidExpense is recognition-month based. Add only prepaid payments with a

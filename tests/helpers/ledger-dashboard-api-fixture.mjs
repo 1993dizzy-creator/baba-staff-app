@@ -1,7 +1,7 @@
 ﻿import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-const ts = createRequire(process.env.JULY_QA_PACKAGE_JSON || import.meta.url)('typescript');
+import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const compile = path => ts.transpileModule(readFileSync(path, 'utf8'), {
@@ -14,7 +14,7 @@ const cardCode = compile('lib/ledger/card-settlement-data.ts');
 function queryKind(table, columns, filters) {
   const is = (key, value) => filters.some(([op, name, expected]) => op === 'eq' && name === key && expected === value);
   if (table === 'ledger_transactions') {
-    if (columns.startsWith('type,amount,economic_effect_sign,category_id')) return is('type', 'expense_recognition') ? 'recognition' : 'profit';
+    if (columns === 'type,amount,economic_effect_sign,category_id') return is('type', 'expense_recognition') ? 'recognition' : 'profit';
     if (columns.startsWith('id,amount,economic_effect_sign')) return 'paidRoots';
     if (columns.startsWith('correction_of_id,amount')) return 'paidCorrections';
   }
@@ -27,7 +27,7 @@ function queryKind(table, columns, filters) {
 
 // Read-only Supabase double. The default cap, inclusive ranges, filters and
 // multi-column ordering are enforced; shuffled input cannot accidentally pass.
-export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false, businessDate = '2026-10-19', movementRelationShape = 'object', cashImportStatus = {rows:0,cashReconciled:false,economicClosed:false,economicPending:0}, cashImportError = null } = {}) {
+export function dashboardApi(tables, { failKind, source = readFileSync('app/api/admin/ledger/route.ts','utf8'), denied = false, businessDate = '2026-10-19', movementRelationShape = 'object' } = {}) {
   const routeCode = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const spies = { inventoryDisplay:0, inventoryIssues:0, entries:0, reserveEntries:0 };
   const entriesModule = require('../../lib/ledger/entries.ts');
@@ -82,7 +82,7 @@ export function dashboardApi(tables, { failKind, source = readFileSync('app/api/
       }
       return query;
     },
-    rpc(name) { if(name!=='ledger_cash_import_status_v1')throw Error('Write RPC forbidden in this read-only test');calls.push({table:'rpc:'+name,columns:'',kind:'cashImportStatus',filters:[],orders:[],from:0,to:0,rpc:name,readOnly:true});return {data:cashImportStatus,error:cashImportError}; },
+    rpc() { throw Error('RPC forbidden in this read-only test'); },
   };
   const cardModule = { exports: {} };
   const cardFunctions = require('../../lib/ledger/card-settlements.ts');

@@ -36,7 +36,6 @@ export type DashboardCashReport = {
   otherFundAdjustment: number;
   operatingIncomeMovement: number;
   actualCashOutflowMovement?: number;
-  unclassifiedCashMovement?: number;
 };
 
 const FALLBACK = {
@@ -185,15 +184,12 @@ export function computeDashboardFundFlows(
   let investmentCashFlow = 0;
   let otherFundAdjustment = 0;
   let operatingIncomeMovement = 0;
-  let unclassifiedCashMovement = 0;
   for (const transaction of transactions) {
     if (transaction.business_date < start || transaction.business_date >= end ||
       (transaction.status != null && transaction.status !== "confirmed")) continue;
     const net = businessFundMovementNet(transaction, businessFundAccountIds);
     if (net === 0 || outflowTransactions.has(transaction)) continue;
-    if (transaction.type === "historical_cash_event") {
-      unclassifiedCashMovement += net;
-    } else if (isInvestmentCashMovement(transaction)) {
+    if (isInvestmentCashMovement(transaction)) {
       investmentCashFlow += net;
     } else if (["sales", "income", "card_settlement_deposit"].includes(transaction.type)) {
       operatingIncomeMovement += net;
@@ -206,7 +202,6 @@ export function computeDashboardFundFlows(
     investmentCashFlow: roundLedgerMoney(investmentCashFlow),
     otherFundAdjustment: roundLedgerMoney(otherFundAdjustment),
     operatingIncomeMovement: roundLedgerMoney(operatingIncomeMovement),
-    ...(unclassifiedCashMovement ? { unclassifiedCashMovement: roundLedgerMoney(unclassifiedCashMovement) } : {}),
   };
 }
 
