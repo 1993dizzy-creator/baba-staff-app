@@ -16,11 +16,8 @@ const twoColumnRow = (leftLabel: string, rightLabel: string) =>
     `<div style=\\{styles\\.fieldRow2\\}>\\s*<Field label=\\{text\\.${leftLabel}\\}>[\\s\\S]*?<\\/Field>\\s*<Field label=\\{text\\.${rightLabel}\\}>[\\s\\S]*?<\\/Field>\\s*<\\/div>`
   );
 
-test("list page: fieldRow2 is defined once as the shared 2-column grid (minmax(0,1fr) x2)", () => {
-  assert.match(
-    listPage,
-    /fieldRow2: \{\s*\n\s*display: "grid",\s*\n\s*gridTemplateColumns: "minmax\(0, 1fr\) minmax\(0, 1fr\)",\s*\n\s*gap: 7,\s*\n\s*minWidth: 0,\s*\n\s*\},/
-  );
+test("list page: basic fields wrap to one column when space is narrow", () => {
+  assert.ok(listPage.includes('gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 155px), 1fr))"'));
 });
 
 test("create page: fieldRow2 matches the same grid principle as the list page", () => {
@@ -102,31 +99,25 @@ for (const [name, page] of [
   });
 }
 
-test("list page: the level calculation basis section only renders when levelDraft.included is true", () => {
-  assert.match(
-    listPage,
-    /\{levelDraft\.included \? \(\s*\n\s*<>\s*\n\s*<strong style=\{styles\.levelEditorTitle\}>\{text\.levelCalculationBasis\}<\/strong>/
-  );
-  // the hire_date/override toggle and the base-date field/notice must be inside that
-  // same conditional block, and the block must close before levelStateChanged.
-  const includedBranchStart = listPage.indexOf("{levelDraft.included ? (");
-  const levelStateChangedIndex = listPage.indexOf("{levelStateChanged ? <>", includedBranchStart);
-  const includedBranch = listPage.slice(includedBranchStart, levelStateChangedIndex);
-  // Month bases are the policy; an existing legacy date basis stays selectable.
-  assert.match(includedBranch, /text\.levelHireMonthMode/);
-  assert.match(includedBranch, /text\.levelOverrideMonthMode/);
-  assert.match(includedBranch, /text\.levelLegacyDateMode/);
-  assert.match(includedBranch, /text\.levelCalculationStartDate/);
-  assert.match(includedBranch, /text\.levelSalaryRaise/);
+test("level modal offers month bases while legacy basis stays read-only", () => {
+  const modal = listPage.slice(listPage.indexOf("function LevelSettingsModal("), listPage.indexOf("function LevelSummary("));
+  assert.match(modal, /const baseModeOptions = \["hire_month", "override_month"\] as const/);
+  assert.match(modal, /text\.levelLegacyReadOnly/);
+  assert.doesNotMatch(modal, /text\.levelLegacyDateMode|type="date"/);
+  assert.match(modal, /text\.levelHireMonthMode/);
+  assert.match(modal, /text\.levelOverrideMonthMode/);
+  assert.match(modal, /text\.levelSalaryRaise/);
+  assert.match(modal, /effectiveMonth: levelDraftChanged[\s\S]*: "next"/);
+  assert.match(modal, /<Field label=\{text\.levelEffectiveMonth\}>/);
 });
 
-test("list page: the 적용/미적용 toggle itself and the month-effective selector stay outside the included-only block (always available)", () => {
-  const sectionStart = listPage.indexOf("<strong style={styles.levelEditorTitle}>{text.longTermLevel}</strong>");
-  const includedBranchStart = listPage.indexOf("{levelDraft.included ? (", sectionStart);
-  const beforeConditional = listPage.slice(sectionStart, includedBranchStart);
-  assert.match(beforeConditional, /text\.levelEnabled/);
-  assert.match(beforeConditional, /text\.levelDisabled/);
-  assert.match(listPage, /\{levelStateChanged \? <>\s*\n\s*<Field label=\{text\.levelEffectiveMonth\}>/);
+test("modal state is local until apply; detail cancel and saving preserve the boundary", () => {
+  assert.match(listPage, /const \[levelDraft, setLevelDraft\] = useState<LevelPolicyDraft>\(\(\) => \(\{ \.\.\.initial/);
+  assert.match(listPage, /if \(valid\) onApply\(levelDraft\)/);
+  assert.match(listPage, /onApply=\{value => \{ setLevelDraft\(value\)/);
+  assert.match(listPage, /if \(isSaving \|\| savePending\.current\) return/);
+  assert.match(listPage, /<fieldset disabled=\{isSaving\}/);
+  assert.match(listPage, /role="switch" aria-checked=\{checked\}/);
 });
 
 test("list page: toggling included back to true does not reset baseDateMode/baseDateOverride draft state (no reset side effect on the included radio)", () => {

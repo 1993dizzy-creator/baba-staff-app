@@ -176,7 +176,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.doesNotMatch(page, /changeReason|levelChangeReason|rehireReason/);
   assert.match(page, /levelPolicyHelp/);
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
-  assert.match(page, /levelStateChanged/);
+  assert.match(page, /levelDraftChanged/);
   assert.match(route, /comparisonBaseDateMode/);
   assert.match(nameWithLevel, /levelInfo\?\.eligible === true && levelInfo\.level !== null/);
   assert.match(nameWithLevel, /PROGRAM_DISABLED/);
@@ -192,10 +192,12 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /text\.directBaseShort/);
   assert.match(page, /text\.nextLevelShort/);
   assert.match(page, /text\.highestLevel/);
-  // The card summary stays compact; level figures live in the level editor (LevelDetails).
+  // Current details stay compact; salary comparisons live in the settings modal.
   const summaryBody = page.slice(page.indexOf("function LevelSummary("), page.indexOf("function LevelDetails("));
   assert.doesNotMatch(summaryBody, /cumulativeRaiseAmount/);
-  assert.match(page, /function LevelDetails\([\s\S]*levelInfo\.cumulativeRaiseAmount/);
+  const detailsBody = page.slice(page.indexOf("function LevelDetails("), page.indexOf("function Field("));
+  assert.match(detailsBody, /levelInfo\.nextLevelDate/);
+  assert.doesNotMatch(detailsBody, /cumulativeRaiseAmount/);
 });
 
 test("level policy mutations use server-owned stable audit reason codes", () => {

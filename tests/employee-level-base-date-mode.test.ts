@@ -93,13 +93,14 @@ test("admin UI restores independent bilingual basis controls and reset-on-cancel
     assert.match(read("lib/text/admin-users.ts"), new RegExp(copy));
   }
   assert.match(page, /baseDateMode: EmployeeLevelBaseMode/);
-  assert.match(page, /levelLegacyDateMode/);
+  assert.match(page, /levelLegacyReadOnly/);
+  assert.doesNotMatch(page, /text\.levelLegacyDateMode/);
   assert.match(page, /levelHireMonthMode/);
   assert.match(page, /levelOverrideMonthMode/);
   assert.match(page, /levelDraft\.baseDateMode === "hire_date"/);
   assert.match(page, /levelDraft\.baseDateOverride/);
   assert.match(page, /setLevelDraft\(initialLevelPolicyDraft\(user\)\)/);
-  assert.match(page, /levelStateChanged \? <>/);
+  assert.match(page, /<Field label=\{text\.levelEffectiveMonth\}>/);
   assert.match(page, /minWidth: 0/);
 });
 

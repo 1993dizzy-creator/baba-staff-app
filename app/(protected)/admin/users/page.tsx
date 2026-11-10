@@ -26,6 +26,7 @@ import {
   type EmployeeLevelBaseMode,
   type EmployeeLevelInfo,
 } from "@/lib/employee-level/types";
+import { calculateEmployeeLevel } from "@/lib/employee-level/calculate";
 import { hireMonthBase } from "@/lib/employee-level/month";
 
 type UserRow = {
@@ -349,13 +350,18 @@ function UserCard({
   const roleValue = isRoleOption(draft.role) ? draft.role : "staff";
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
   const hasLevelEditor = !user.is_system_account;
-  const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
-  const levelStateChanged = levelDraftChanged(user, levelDraft, draft.hire_date);
-  // Month modes are the policy; an existing legacy date basis stays selectable so that
-  // other edits never reset it.
-  const legacyMode = comparedBase.mode === "hire_date" || comparedBase.mode === "override" ? comparedBase.mode : null;
-  const baseModeOptions: EmployeeLevelBaseMode[] = legacyMode ? [legacyMode, "hire_month", "override_month"] : ["hire_month", "override_month"];
-  const draftHireMonth = hireMonthBase(draft.hire_date);
+  const currentBase = policyBaseForMonth(user, "current");
+  const [levelModalOpen, setLevelModalOpen] = useState(false);
+  const savePending = useRef(false);
+  const levelButtonRef = useRef<HTMLButtonElement>(null);
+
+  function cancelEdit() {
+    if (isSaving || savePending.current) return;
+    setDraft(user);
+    setLevelDraft(initialLevelPolicyDraft(user));
+    setLevelModalOpen(false);
+    setIsEditing(false);
+  }
 
   function update<K extends keyof UserRow>(key: K, value: UserRow[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -380,7 +386,10 @@ function UserCard({
             <button
               type="button"
               style={styles.inlineEditButton}
+              disabled={isSaving}
               onClick={() => {
+                if (isSaving || savePending.current) return;
+                if (isEditing) { cancelEdit(); return; }
                 if (!isEditing) {
                   setDraft(user);
                   setLevelDraft(initialLevelPolicyDraft(user));
@@ -397,9 +406,11 @@ function UserCard({
       {hasLevelEditor ? <LevelSummary user={user} text={text} /> : null}
 
       {isEditing ? (
-        <div style={styles.formGrid}>
+        <fieldset disabled={isSaving} style={styles.formGrid}>
           {!isMasterUser ? (
             <>
+          <section style={styles.detailSection}>
+          <strong>{text.basicInfo}</strong>
           <div style={styles.fieldRow2}>
             <Field label={text.name}>
               <input
@@ -496,30 +507,10 @@ function UserCard({
               {text.terminationDeactivationNotice}
             </span>
           ) : null}
-          <div style={styles.fieldRow2}>
-            <label style={styles.checkRow}>
-              <input
-                type="checkbox"
-                style={styles.checkboxFixed}
-                checked={draft.attendance_tracking_enabled !== false}
-                onChange={(event) =>
-                  update("attendance_tracking_enabled", event.target.checked)
-                }
-              />
-              {text.attendanceTracking}
-            </label>
-            <label style={styles.checkRow}>
-              <input
-                type="checkbox"
-                style={styles.checkboxFixed}
-                checked={draft.app_login_enabled !== false}
-                onChange={(event) => update("app_login_enabled", event.target.checked)}
-              />
-              {text.appLoginEnabled}
-            </label>
-          </div>
-          <span style={styles.fieldNotice}>{text.attendanceTrackingHelp}</span>
+          </section>
           {draft.attendance_tracking_enabled !== false ? (
+            <section style={styles.detailSection}>
+            <strong>{text.workInfo}</strong>
             <div style={styles.fieldRow2}>
               <Field label={text.workStartTime}>
                 <input
@@ -538,92 +529,37 @@ function UserCard({
                 />
               </Field>
             </div>
+            </section>
           ) : null}
-          <label style={styles.checkRow}>
-            <input
-              type="checkbox"
-              checked={draft.termination_date ? false : draft.is_active !== false}
-              onChange={(event) => update("is_active", event.target.checked)}
-              disabled={Boolean(draft.termination_date)}
-            />
-            {text.activeStatus}
-          </label>
             </>
           ) : null}
-          {isAdminGroupUser && !user.is_system_account ? (
-            <label style={styles.payrollOverrideField}>
-              <span style={styles.checkRow}>
-                <input
-                  type="checkbox"
-                  checked={draft.payroll_eligible_override === true}
-                  onChange={(event) =>
-                    update(
-                      "payroll_eligible_override",
-                      event.target.checked ? true : null
-                    )
-                  }
-                />
-                {text.payrollEligibleOverride}
-              </span>
-              <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
-            </label>
-          ) : null}
-          {hasLevelEditor ? <section style={styles.levelEditor}>
-            <strong style={styles.levelEditorTitle}>{text.longTermLevel}</strong>
-            {user.termination_date ? (
-              <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
-            ) : (
-              <>
-                <div style={styles.segmented}>
-                  {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
-                    <input type="radio" name={`level-${user.id}`} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled }))} />
-                    {enabled ? text.levelEnabled : text.levelDisabled}
-                  </label>)}
-                </div>
-                <span style={styles.fieldNotice}>{text.levelPolicyHelp}</span>
-                <LevelDetails levelInfo={user.levelInfo} text={text} />
-                {levelDraft.included ? (
-                  <>
-                    <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
-                    <div style={styles.segmented}>
-                      {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
-                        <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
-                        {mode === "hire_month" ? text.levelHireMonthMode : mode === "override_month" ? text.levelOverrideMonthMode : text.levelLegacyDateMode}
-                      </label>)}
-                    </div>
-                    {levelDraft.baseDateMode === "hire_month" ? <>
-                      <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"} → {text.levelBaseMonth}: {draftHireMonth ?? "-"}</span>
-                      <span style={styles.fieldNotice}>{text.levelHireMonthRule}</span>
-                    </> : levelDraft.baseDateMode === "override_month" ? (
-                      <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>
-                    ) : levelDraft.baseDateMode === "hire_date"
-                      ? <span style={styles.fieldNotice}>{text.levelHireDateMode}: {draft.hire_date ?? "-"}</span>
-                      : <Field label={text.levelCalculationStartDate}><input type="date" required value={levelDraft.baseDateOverride} onChange={(event) => setLevelDraft((current) => ({ ...current, baseDateOverride: event.target.value }))} style={styles.input} /></Field>}
-                    <strong style={styles.levelEditorTitle}>{text.levelSalaryRaise}</strong>
-                    <div style={styles.segmented}>
-                      {[true, false].map((applied) => <label key={String(applied)} style={levelDraft.salaryRaiseEnabled === applied ? styles.segmentActive : styles.segment}>
-                        <input type="radio" name={`level-raise-${user.id}`} checked={levelDraft.salaryRaiseEnabled === applied} onChange={() => setLevelDraft((current) => ({ ...current, salaryRaiseEnabled: applied }))} />
-                        {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
-                      </label>)}
-                    </div>
-                    {levelDraft.salaryRaiseEnabled === false ? <span style={styles.fieldNotice}>{text.levelRaiseNotAppliedNotice}</span> : levelDraft.salaryRaiseEnabled === null ? <span style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</span> : null}
-                    <span style={styles.fieldNotice}>{text.levelHourlyRaiseNotice}</span>
-                  </>
-                ) : null}
-                {levelStateChanged ? <>
-                  <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
-                </> : null}
-              </>
-            )}
+          {hasLevelEditor ? <section style={styles.detailSection}>
+            <strong>{text.longTermLevel}</strong>
+            <LevelDetails levelInfo={user.levelInfo} text={text} />
+            <span style={styles.fieldNotice}>{isEmployeeLevelMonthBaseMode(currentBase.mode) ? text.levelBaseMonth : text.levelLegacyReadOnly}: {isEmployeeLevelMonthBaseMode(currentBase.mode) ? currentBase.baseDate?.slice(0, 7) ?? "-" : currentBase.baseDate ?? "-"}</span>
+            <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button>
+            {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
+            {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
           </section> : null}
+          <section style={styles.detailSection}>
+            <strong>{text.usageSettings}</strong>
+            {!isMasterUser ? <>
+              <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
+              <Toggle label={text.appLoginEnabled} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
+              <Toggle label={text.activeStatus} checked={!draft.termination_date && draft.is_active !== false} disabled={Boolean(draft.termination_date)} onChange={value => update("is_active", value)} />
+              <span style={styles.fieldNotice}>{text.attendanceTrackingHelp}</span>
+            </> : null}
+            {isAdminGroupUser && !user.is_system_account ? <>
+              <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
+              <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
+            </> : null}
+          </section>
           <div style={styles.actionRow}>
             <button
               type="button"
               style={styles.secondaryButton}
               onClick={() => {
-                setDraft(user);
-                setLevelDraft(initialLevelPolicyDraft(user));
-                setIsEditing(false);
+                cancelEdit();
               }}
               disabled={isSaving}
             >
@@ -633,7 +569,11 @@ function UserCard({
               type="button"
               style={styles.primaryButton}
               onClick={async () => {
-                if (await onSave(user, draft, levelDraft)) setIsEditing(false);
+                if (savePending.current || isSaving || levelModalOpen) return;
+                savePending.current = true;
+                try {
+                  if (await onSave(user, draft, levelDraft)) setIsEditing(false);
+                } finally { savePending.current = false; }
               }}
               disabled={isSaving}
             >
@@ -652,10 +592,107 @@ function UserCard({
               </div> : null}
             </div>
           ) : null}
-        </div>
+        </fieldset>
       ) : null}
+      {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); levelButtonRef.current?.focus(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); levelButtonRef.current?.focus(); }} /> : null}
     </article>
   );
+}
+
+function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
+  return <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} style={{ ...(checked ? styles.segmentActive : styles.segment), ...styles.toggle }}><span>{label}</span><strong>{checked ? "ON" : "OFF"}</strong></button>;
+}
+
+function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
+  user: UserRow; draft: UserRow; initial: LevelPolicyDraft; text: AdminUsersPageText;
+  onCancel: () => void; onApply: (value: LevelPolicyDraft) => void;
+}) {
+  const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => ({ ...initial,
+    effectiveMonth: levelDraftChanged(user, initial, draft.hire_date) ? initial.effectiveMonth : "next",
+  }));
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
+  const baseModeOptions = ["hire_month", "override_month"] as const;
+  const draftHireMonth = hireMonthBase(draft.hire_date);
+  const effectiveFrom = levelEffectiveFrom(levelDraft.effectiveMonth);
+  const before = calculateEmployeeLevel({ role: user.role, hireDate: user.hire_date, terminationDate: user.termination_date,
+    levelProgramEnabled: policyEnabledForMonth(user, levelDraft.effectiveMonth), levelBaseMode: comparedBase.mode,
+    levelBaseDateOverride: comparedBase.mode === "hire_date" ? null : comparedBase.baseDate,
+    levelHireDateBase: comparedBase.baseDate, salaryRaiseEnabled: comparedBase.salaryRaiseEnabled, asOfDate: effectiveFrom });
+  const after = calculateEmployeeLevel({ role: draft.role, hireDate: draft.hire_date, terminationDate: draft.termination_date,
+    levelProgramEnabled: levelDraft.included, levelBaseMode: levelDraft.baseDateMode,
+    levelBaseDateOverride: levelDraft.baseDateMode === "override_month" ? `${levelDraft.baseMonth}-01`
+      : levelDraft.baseDateMode === "hire_month" ? (draftHireMonth ? `${draftHireMonth}-01` : null)
+      : levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : null,
+    levelHireDateBase: comparedBase.baseDate, salaryRaiseEnabled: levelDraft.salaryRaiseEnabled, asOfDate: effectiveFrom });
+  const raise = (info: EmployeeLevelInfo) => info.salaryRaiseEnabled === false ? 0 : info.cumulativeRaiseAmount;
+  const valid = (!levelDraft.included || levelDraft.salaryRaiseEnabled !== null)
+    && (levelDraft.baseDateMode !== "override_month" || (/^\d{4}-(0[1-9]|1[0-2])$/.test(levelDraft.baseMonth)
+      && Boolean(draft.hire_date) && levelDraft.baseMonth >= draft.hire_date!.slice(0, 7)
+      && (!draft.termination_date || levelDraft.baseMonth <= draft.termination_date.slice(0, 7))));
+  return <dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
+    <form onSubmit={event => { event.preventDefault(); if (valid) onApply(levelDraft); }}>
+<section style={styles.levelEditor}>
+            <strong style={styles.levelEditorTitle}>{text.longTermLevel}</strong>
+            {user.termination_date ? (
+              <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
+            ) : (
+              <>
+                <div style={styles.segmented}>
+                  {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
+                    <input type="radio" name={`level-${user.id}`} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled }))} />
+                    {enabled ? text.levelEnabled : text.levelDisabled}
+                  </label>)}
+                </div>
+                <span style={styles.fieldNotice}>{text.levelPolicyHelp}</span>
+
+                {levelDraft.included ? (
+                  <>
+                    <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
+                    <div style={styles.segmented}>
+                      {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
+                        <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
+                        {mode === "hire_month" ? text.levelHireMonthMode : text.levelOverrideMonthMode}
+                      </label>)}
+                    </div>
+                    {!isEmployeeLevelMonthBaseMode(levelDraft.baseDateMode) ? <span style={styles.readonlyDate}>{text.levelLegacyReadOnly}: {levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : comparedBase.baseDate ?? "-"}</span> : levelDraft.baseDateMode === "hire_month" ? <>
+                      <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"} → {text.levelBaseMonth}: {draftHireMonth ?? "-"}</span>
+                      <span style={styles.fieldNotice}>{text.levelHireMonthRule}</span>
+                    </> : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>}
+                    <strong style={styles.levelEditorTitle}>{text.levelSalaryRaise}</strong>
+                    <div style={styles.segmented}>
+                      {[true, false].map((applied) => <label key={String(applied)} style={levelDraft.salaryRaiseEnabled === applied ? styles.segmentActive : styles.segment}>
+                        <input type="radio" name={`level-raise-${user.id}`} checked={levelDraft.salaryRaiseEnabled === applied} onChange={() => setLevelDraft((current) => ({ ...current, salaryRaiseEnabled: applied }))} />
+                        {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
+                      </label>)}
+                    </div>
+                    {levelDraft.salaryRaiseEnabled === false ? <span style={styles.fieldNotice}>{text.levelRaiseNotAppliedNotice}</span> : levelDraft.salaryRaiseEnabled === null ? <span style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</span> : null}
+                    <span style={styles.fieldNotice}>{text.levelHourlyRaiseNotice}</span>
+                  </>
+                ) : null}
+                <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
+              </>
+            )}
+</section>
+
+      <p style={styles.fieldNotice}>{text.levelEffectiveHelp} · {effectiveFrom}</p>
+      <div style={styles.detailSection} aria-live="polite">
+        <strong>{text.levelPreview} · {effectiveFrom}</strong>
+        <span>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</span>
+        <span>{text.levelBaseMonth}: {before.baseDate ?? "-"} → {after.baseDate ?? "-"}</span>
+        <span>{text.nextLevel}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</span>
+        <span>{text.levelRaisePreview}: {raise(before).toLocaleString("vi-VN")}₫ → {raise(after).toLocaleString("vi-VN")}₫ (Δ {(raise(after) - raise(before)).toLocaleString("vi-VN")}₫)</span>
+        <span style={styles.fieldNotice}>{text.levelPreviewHelp}</span>
+      </div>
+      <p style={styles.fieldNotice}>{text.levelApplyHelp}</p>
+      <div style={styles.actionRow}><button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button><button type="submit" disabled={!valid} style={styles.primaryButton}>{text.levelApply}</button></div>
+    </form>
+  </dialog>;
 }
 
 function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText }) {
@@ -683,14 +720,13 @@ function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText 
   );
 }
 
-/** Level figures shown inside the level editor (the card summary stays compact). */
+/** Current policy stays compact; comparisons belong in the settings modal. */
 function LevelDetails({ levelInfo, text }: { levelInfo: EmployeeLevelInfo; text: AdminUsersPageText }) {
   if (!levelInfo.eligible) return null;
   return (
     <div style={styles.levelSummary}>
-      <span>{text.currentLevel} {levelInfo.displayLabel}{levelInfo.baseMonth ? ` · ${text.baseMonthShort} ${levelInfo.baseMonth}` : ""}</span>
-      <span>{text.cumulativeRaise} {levelInfo.cumulativeRaiseAmount.toLocaleString("vi-VN")}₫ · {text.nextLevel} {levelInfo.nextLevelDate ?? text.highestLevel}</span>
-      {levelInfo.salaryRaiseEnabled === false ? <span>{text.levelRaiseAppliedAmount}: 0₫ ({text.levelSalaryRaiseNotApplied})</span> : null}
+      <span>{text.currentLevel} {levelInfo.displayLabel}</span>
+      <span>{text.nextLevel} {levelInfo.nextLevelDate ?? text.highestLevel}</span>
     </div>
   );
 }
@@ -850,6 +886,8 @@ export default function AdminUsersPage() {
       if (original.role === "owner") {
         updates.payroll_eligible_override = draft.payroll_eligible_override;
       }
+      if (levelDraftChanged(original, levelDraft, draft.hire_date) && levelDraft.effectiveMonth === "current"
+        && !window.confirm(text.levelCurrentMonthWarning)) return false;
       const res = await attendanceFetch("/api/admin/users", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1163,7 +1201,14 @@ const styles = {
     fontWeight: 800,
     cursor: "pointer",
   },
+  dialog: { width: "min(520px, calc(100% - 24px))", maxHeight: "85dvh", overflowY: "auto", padding: 12, border: "1px solid #ddd6fe", borderRadius: 12, boxSizing: "border-box", fontSize: 12 },
+  detailSection: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
+  toggle: { width: "100%", justifyContent: "space-between", textAlign: "left" },
   formGrid: {
+    padding: 0,
+    margin: 0,
+    border: 0,
+    minWidth: 0,
     display: "grid",
     gridTemplateColumns: "1fr",
     gap: 5,
@@ -1173,7 +1218,7 @@ const styles = {
   },
   fieldRow2: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 155px), 1fr))",
     gap: 7,
     minWidth: 0,
   },
