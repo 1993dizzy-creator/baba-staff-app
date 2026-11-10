@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { calculateCombinedSalary, type CompensationContract } from "@/lib/payroll/compensation";
+import type { buildEmployeeLevelHistory } from "@/lib/employee-level/history";
 import { usePathname, useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
@@ -55,6 +58,8 @@ type UserRow = {
   levelInfo: EmployeeLevelInfo;
   levelProgramPolicy?: {
     currentEnabled: boolean;
+    currentVersionId?: number | null;
+    currentRevision?: number | null;
     nextEnabled: boolean;
     currentBaseDateMode: EmployeeLevelBaseMode;
     nextBaseDateMode: EmployeeLevelBaseMode;
@@ -79,6 +84,7 @@ type LevelPolicyDraft = {
   /** null = not chosen yet (required when the level is turned ON). */
   salaryRaiseEnabled: boolean | null;
   effectiveMonth: "current" | "next";
+  applied?: boolean;
 };
 
 function currentPolicyEnabled(user: UserRow) {
@@ -122,9 +128,6 @@ function draftFromBase(included: boolean, base: ReturnType<typeof policyBaseForM
 }
 
 function initialLevelPolicyDraft(user: UserRow): LevelPolicyDraft {
-  if (user.levelProgramPolicy?.hasScheduledChange) {
-    return draftFromBase(user.levelProgramPolicy.nextEnabled, policyBaseForMonth(user, "next"), "next");
-  }
   return draftFromBase(currentPolicyEnabled(user), policyBaseForMonth(user, "current"), "current");
 }
 
@@ -137,7 +140,7 @@ function levelDraftChanged(user: UserRow, draft: LevelPolicyDraft, hireDate: str
     || (draft.baseDateMode === "override" && draft.baseDateOverride !== base.baseDate)
     || (draft.baseDateMode === "override_month" && `${draft.baseMonth}-01` !== base.baseDate)
     // hire_month: a hire-date edit that moves the base month needs a new policy version.
-    || (draft.baseDateMode === "hire_month" && base.mode === "hire_month" && hireMonth !== null && `${hireMonth}-01` !== base.baseDate)
+    || (draft.baseDateMode === "hire_month" && base.mode === "hire_month" && hireDate !== user.hire_date && hireMonth !== null && `${hireMonth}-01` !== base.baseDate)
     || (draft.salaryRaiseEnabled !== null && draft.salaryRaiseEnabled !== base.salaryRaiseEnabled);
 }
 
@@ -339,7 +342,6 @@ function UserCard({
   const [rehireOpen, setRehireOpen] = useState(false);
   const [rehireDate, setRehireDate] = useState("");
   const [rehireLevelEnabled, setRehireLevelEnabled] = useState(true);
-  const [rehireSalaryRaise, setRehireSalaryRaise] = useState<boolean | null>(null);
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => initialLevelPolicyDraft(user));
 
   const displayName = user.name || user.full_name || user.username;
@@ -586,8 +588,7 @@ function UserCard({
                 <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
                 <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
                 <div style={styles.segmented}>{[true,false].map(enabled=><label key={String(enabled)} style={rehireLevelEnabled===enabled?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-level-${user.id}`} checked={rehireLevelEnabled===enabled} onChange={()=>setRehireLevelEnabled(enabled)}/>{enabled?text.levelEnabled:text.levelDisabled}</label>)}</div>
-                {rehireLevelEnabled?<div style={styles.segmented}>{[true,false].map(applied=><label key={String(applied)} style={rehireSalaryRaise===applied?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-raise-${user.id}`} checked={rehireSalaryRaise===applied} onChange={()=>setRehireSalaryRaise(applied)}/>{applied?text.levelSalaryRaiseApplied:text.levelSalaryRaiseNotApplied}</label>)}</div>:null}
-                <button type="button" disabled={!rehireDate||isSaving||(rehireLevelEnabled&&rehireSalaryRaise===null)} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled?rehireSalaryRaise:null)}>{text.rehire}</button>
+                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled?true:null)}>{text.rehire}</button>
               </div> : null}
             </div>
           ) : null}
@@ -606,6 +607,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   user: UserRow; draft: UserRow; initial: LevelPolicyDraft; text: AdminUsersPageText;
   onCancel: () => void; onApply: (value: LevelPolicyDraft) => void;
 }) {
+  const { lang } = useLanguage();
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => {
     const isLegacy = !isEmployeeLevelMonthBaseMode(initial.baseDateMode);
     const candidate = employeeLevelMonthCandidate({ mode: initial.baseDateMode,
@@ -616,39 +618,71 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
     };
   });
   const dialogRef = useRef<HTMLDialogElement>(null);
+  type HistoryResponse = { ok: boolean; history?: ReturnType<typeof buildEmployeeLevelHistory>;
+    adminChanges?: { id: number; action: string; createdAt: string }[];
+    contracts?: (CompensationContract & { effectiveFrom: string; effectiveTo: string | null })[] };
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [historyError, setHistoryError] = useState(false);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    attendanceFetch(`/api/admin/users/${encodeURIComponent(String(user.id))}/level-history`, { cache: "no-store", signal: controller.signal })
+      .then(async response => { const data = await response.json(); if (!response.ok || !data.ok) throw new Error("LEVEL_HISTORY_READ_FAILED"); return data as HistoryResponse; })
+      .then(data => { if (!controller.signal.aborted) { setHistory(data); setHistoryError(false); } })
+      .catch(() => { if (!controller.signal.aborted) setHistoryError(true); });
+    return () => controller.abort();
+  }, [user.id, historyAttempt]);
   useEffect(() => {
     const dialog = dialogRef.current;
-    dialog?.showModal();
-    return () => dialog?.close();
+    const viewport = window.visualViewport;
+    const resize = () => {
+      dialog?.style.setProperty("--level-vw", (viewport?.width ?? window.innerWidth) + "px");
+      dialog?.style.setProperty("--level-vh", (viewport?.height ?? window.innerHeight) + "px");
+      dialog?.style.setProperty("--level-vx", (viewport?.offsetLeft ?? 0) + "px");
+      dialog?.style.setProperty("--level-vy", (viewport?.offsetTop ?? 0) + "px");
+    };
+    resize(); dialog?.showModal();
+    viewport?.addEventListener("resize", resize); viewport?.addEventListener("scroll", resize);
+    window.addEventListener("resize", resize);
+    return () => { viewport?.removeEventListener("resize", resize); viewport?.removeEventListener("scroll", resize); window.removeEventListener("resize", resize); dialog?.close(); };
   }, []);
-  const comparedBase = policyBaseForMonth(user, levelDraft.effectiveMonth);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const comparedBase = policyBaseForMonth(user, "current");
   const baseModeOptions = ["hire_month", "override_month"] as const;
   const draftHireMonth = hireMonthBase(draft.hire_date);
-  const effectiveFrom = levelEffectiveFrom(levelDraft.effectiveMonth);
-  const policyStart = levelDraft.effectiveMonth === "next"
-    ? user.levelProgramPolicy?.nextPolicyEffectiveFrom : user.levelProgramPolicy?.currentEffectiveFrom;
-  const transitionConflict = !isEmployeeLevelMonthBaseMode(comparedBase.mode) && policyStart === effectiveFrom;
+  const hasChanges = levelDraftChanged(user, { ...levelDraft, effectiveMonth: "current" }, draft.hire_date);
+  const effectiveFrom = hasChanges ? levelEffectiveFrom("next") : today;
+  const reserved = history?.history?.policies.filter(p => p.effectiveFrom > today).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  const scheduledDate = reserved?.effectiveFrom ?? (user.levelProgramPolicy?.hasScheduledChange ? user.levelProgramPolicy.nextEffectiveFrom : null);
+  const transitionConflict = hasChanges && Boolean(scheduledDate);
+  const dateLabel = (date: string) => new Intl.DateTimeFormat(lang === "vi" ? "vi-VN" : "ko-KR", { timeZone: "UTC", year: "numeric", month: "long", day: "numeric" }).format(new Date(date + "T00:00:00Z"));
   const before = calculateEmployeeLevel({ role: user.role, hireDate: user.hire_date, terminationDate: user.termination_date,
-    levelProgramEnabled: policyEnabledForMonth(user, levelDraft.effectiveMonth), levelBaseMode: comparedBase.mode,
+    levelProgramEnabled: currentPolicyEnabled(user), levelBaseMode: comparedBase.mode,
     levelBaseDateOverride: comparedBase.mode === "hire_date" ? null : comparedBase.baseDate,
     levelHireDateBase: comparedBase.baseDate, salaryRaiseEnabled: comparedBase.salaryRaiseEnabled, asOfDate: effectiveFrom });
   const after = calculateEmployeeLevel({ role: draft.role, hireDate: draft.hire_date, terminationDate: draft.termination_date,
     levelProgramEnabled: levelDraft.included, levelBaseMode: levelDraft.baseDateMode,
     levelBaseDateOverride: levelDraft.baseDateMode === "override_month" ? `${levelDraft.baseMonth}-01`
-      : (draftHireMonth ? `${draftHireMonth}-01` : null),
-    salaryRaiseEnabled: levelDraft.salaryRaiseEnabled, asOfDate: effectiveFrom });
+      : (!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate : draftHireMonth ? `${draftHireMonth}-01` : null),
+    salaryRaiseEnabled: hasChanges && levelDraft.included ? true : levelDraft.salaryRaiseEnabled, asOfDate: effectiveFrom });
   const raise = (info: EmployeeLevelInfo) => info.salaryRaiseEnabled === false ? 0 : info.cumulativeRaiseAmount;
-  const valid = !transitionConflict && Boolean(draft.hire_date) && (!levelDraft.included || levelDraft.salaryRaiseEnabled !== null)
+  const valid = !transitionConflict && Boolean(draft.hire_date)
     && (levelDraft.baseDateMode !== "override_month" || (/^\d{4}-(0[1-9]|1[0-2])$/.test(levelDraft.baseMonth)
       && Boolean(draft.hire_date) && levelDraft.baseMonth >= draft.hire_date!.slice(0, 7)
       && (!draft.termination_date || levelDraft.baseMonth <= draft.termination_date.slice(0, 7))));
-  const raiseDelta = raise(after) - raise(before);
+  const contractMatches = history?.contracts?.filter(c => c.effectiveFrom <= effectiveFrom && (!c.effectiveTo || c.effectiveTo > effectiveFrom)) ?? [];
+  const contract = contractMatches.length === 1 ? contractMatches[0] : null;
+  const compensationBefore = contract ? calculateCombinedSalary(contract, before) : null;
+  const compensationAfter = contract ? calculateCombinedSalary(contract, after) : null;
+  const raiseBefore = contractMatches.length > 1 ? null : compensationBefore ? compensationBefore.levelRaiseAmount : raise(before);
+  const raiseAfter = contractMatches.length > 1 ? null : compensationAfter ? compensationAfter.levelRaiseAmount : raise(after);
+  const raiseDelta = raiseBefore === null || raiseAfter === null ? null : raiseAfter - raiseBefore;
   const nextDateChanged = before.nextLevelDate !== after.nextLevelDate;
-  const showComparison = nextDateChanged || raiseDelta !== 0;
+  const showComparison = nextDateChanged || (raiseDelta !== null && raiseDelta !== 0);
   const amount = (value: number) => value.toLocaleString("vi-VN") + "₫";
 
-  return <dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
-    <form style={styles.modalForm} onSubmit={event => { event.preventDefault(); if (valid) onApply(levelDraft); }}>
+  return createPortal(<dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
+    <form style={styles.modalForm} onSubmit={event => { event.preventDefault(); if (valid) onApply({ ...levelDraft, effectiveMonth: hasChanges ? "next" : "current", applied: hasChanges, salaryRaiseEnabled: hasChanges && levelDraft.included ? true : levelDraft.salaryRaiseEnabled }); }}>
       <header style={styles.modalHeader}>
         <div style={{ minWidth: 0 }}>
           <strong style={styles.modalTitle}>{text.longTermLevel}</strong>
@@ -661,7 +695,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
           <legend style={styles.modalLabel}>{text.levelParticipation}</legend>
           <div style={styles.segmented}>
             {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-" + user.id} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled }))} />
+              <input type="radio" name={"level-" + user.id} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled, salaryRaiseEnabled: enabled ? true : current.salaryRaiseEnabled }))} />
               {enabled ? text.levelEnabled : text.levelDisabled}
             </label>)}
           </div>
@@ -670,33 +704,16 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
           <legend style={styles.modalLabel}>{text.levelBasisShort}</legend>
           <div style={styles.segmented}>
             {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-base-" + user.id} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft(current => ({ ...current, baseDateMode: mode, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
+              <input type="radio" name={"level-base-" + user.id} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft(current => ({ ...current, baseDateMode: mode, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
               {mode === "hire_month" ? text.levelAutoShort : text.levelDirectShort}
             </label>)}
           </div>
           {levelDraft.baseDateMode === "hire_month"
-            ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {draftHireMonth ?? "-"}</p>
-            : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>}
+            ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>
+            : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled }))} style={styles.input} /></Field>}
         </fieldset>
-        <fieldset style={styles.modalField} disabled={!levelDraft.included || Boolean(user.termination_date)}>
-          <legend style={styles.modalLabel}>{text.levelRaiseShort}</legend>
-          <div style={styles.segmented}>
-            {[true, false].map((applied) => <label key={String(applied)} style={levelDraft.salaryRaiseEnabled === applied ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-raise-" + user.id} checked={levelDraft.salaryRaiseEnabled === applied} onChange={() => setLevelDraft(current => ({ ...current, salaryRaiseEnabled: applied }))} />
-              {applied ? text.levelSalaryRaiseApplied : text.levelNotAppliedShort}
-            </label>)}
-          </div>
-          {levelDraft.included && levelDraft.salaryRaiseEnabled === null ? <p role="alert" style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</p> : null}
-        </fieldset>
-        <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
-          <legend style={styles.modalLabel}>{text.levelEffectiveMonth}</legend>
-          <div style={styles.segmented}>
-            {(["current", "next"] as const).map(month => <label key={month} style={levelDraft.effectiveMonth === month ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-effective-" + user.id} checked={levelDraft.effectiveMonth === month} onChange={() => setLevelDraft(current => ({ ...current, effectiveMonth: month }))} />
-              {month === "current" ? text.levelThisMonth : text.levelNextMonth}
-            </label>)}
-          </div>
-        </fieldset>
+        <p style={styles.modalMuted}>{text.levelAutomaticRaise}</p>
+        {scheduledDate ? <p role="status" style={styles.modalMuted}>{text.levelScheduledPolicy}: {dateLabel(scheduledDate)}</p> : null}
         {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
         {user.termination_date ? <p role="alert" style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</p> : null}
         <details style={styles.modalHelp}>
@@ -708,25 +725,42 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
           <p>{text.levelApplyHelp}</p>
         </details>
         <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
-          <strong>{text.levelChangeSummary} <span style={styles.modalMuted}>· {effectiveFrom}</span></strong>
+          <strong>{hasChanges ? text.levelChangeSummary : text.levelCurrentPolicy}</strong>
+          <span style={styles.modalMuted}>{hasChanges ? text.levelStartsAt + ": " + dateLabel(effectiveFrom) : text.levelCurrentlyActive + (user.levelProgramPolicy?.currentEffectiveFrom ? " · " + dateLabel(user.levelProgramPolicy.currentEffectiveFrom) : "")}</span>
           <dl style={styles.modalSummaryGrid}>
             <dt>{text.levelAfter}</dt><dd style={styles.modalValue}>{after.displayLabel ?? text.levelDisabled}</dd>
             <dt>{text.nextLevelShort}</dt><dd style={styles.modalValue}>{after.nextLevelDate ?? (after.eligible ? text.highestLevel : "-")}</dd>
-            <dt>{text.levelRaiseDelta}</dt><dd style={styles.modalValue}>{raiseDelta > 0 ? "+" : ""}{amount(raiseDelta)}</dd>
+            <dt>{contract?.payType === "hourly" ? text.levelHourlyDelta : contract ? text.levelRaiseDelta : text.levelRaisePreview}</dt><dd style={styles.modalValue}>{raiseDelta === null ? text.levelContractReview : (raiseDelta > 0 ? "+" : "") + amount(raiseDelta)}</dd>
           </dl>
           {showComparison ? <details>
             <summary style={styles.modalMuted}>{text.levelCompareDetails}</summary>
             {nextDateChanged ? <p style={styles.modalHint}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
-            {raiseDelta !== 0 ? <p style={styles.modalHint}>{text.levelRaisePreview}: {amount(raise(before))} → {amount(raise(after))}</p> : null}
+            {raiseDelta !== null && raiseDelta !== 0 && raiseBefore !== null && raiseAfter !== null ? <p style={styles.modalHint}>{contract?.payType === "hourly" ? text.levelHourlyDelta : text.levelRaisePreview}: {amount(raiseBefore)} → {amount(raiseAfter)}</p> : null}
           </details> : null}
         </section>
+        <details style={styles.modalHelp}>
+          <summary>{text.levelHistory}</summary>
+          <p>{text.levelHistoryHelp}</p>
+          {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p>{text.loading}</p> : <>
+            <p>{text.currentLevel} {history.history.current?.displayLabel ?? text.levelDisabled} · {text.levelBaseMonth} {history.history.current?.baseDate?.slice(0, 7) ?? "-"}</p>
+            <p>{text.levelHistoryCoverage}: {history.history.coverageFrom ?? "-"}</p>
+            <strong>{text.levelPastPromotions}</strong>
+            {history.history.promotions.length ? <ul>{history.history.promotions.map(event => <li key={event.date}>{dateLabel(event.date)} · Lv.{event.level}</li>)}</ul> : <p>{text.levelHistoryEmpty}</p>}
+            <p>{text.nextLevelShort}: {history.history.next ? dateLabel(history.history.next.date) + " · Lv." + history.history.next.level : "-"}</p>
+            <strong>{text.levelFuturePromotions}</strong>
+            <ul>{history.history.future.map(event => <li key={event.date}>{dateLabel(event.date)} · Lv.{event.level}</li>)}</ul>
+            <strong>{text.levelAdminHistory}</strong>
+            <ul>{history.history.policies.map(policy => <li key={policy.id}>{dateLabel(policy.effectiveFrom)} · {text.levelBaseMonth} {policy.baseMonth ?? "-"} · {policy.enabled ? text.levelEnabled : text.levelDisabled}</li>)}</ul>
+            <ul>{history.adminChanges?.map(event => <li key={event.id}>{dateLabel(event.createdAt.slice(0, 10))} · {text.levelPolicyRecorded}</li>)}</ul>
+          </>}
+        </details>
       </div>
       <footer style={styles.modalFooter}>
         <button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button>
         <button type="submit" disabled={!valid || Boolean(user.termination_date)} style={styles.primaryButton}>{text.levelApply}</button>
       </footer>
     </form>
-  </dialog>;
+  </dialog>, document.body);
 }
 
 function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText }) {
@@ -869,8 +903,7 @@ export default function AdminUsersPage() {
   );
 
   async function saveUser(original: UserRow, draft: UserRow, requestedLevelDraft: LevelPolicyDraft) {
-    // A scheduled next-month version is a display/edit baseline, not an implicit
-    // request to copy that policy into the current month on a basic-info save.
+    // Basic saves always preserve the current policy, including any future reservation.
     const levelDraft = levelDraftChanged(original, requestedLevelDraft, draft.hire_date)
       ? requestedLevelDraft
       : draftFromBase(currentPolicyEnabled(original), policyBaseForMonth(original, "current"), "current");
@@ -879,7 +912,7 @@ export default function AdminUsersPage() {
 
     try {
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-      if (levelDraft.included && levelDraft.salaryRaiseEnabled === null) throw new Error(text.levelSalaryRaiseChoose);
+      if (levelDraftChanged(original, requestedLevelDraft, draft.hire_date) && !requestedLevelDraft.applied) throw new Error(text.levelHireDateReview);
       if (levelDraft.baseDateMode === "hire_month" || levelDraft.baseDateMode === "override_month") {
         // Month rules (the server re-validates): hire date needed; a direct base month is
         // "YYYY-MM", not before the actual hire month and not after the termination month.
@@ -944,6 +977,9 @@ export default function AdminUsersPage() {
           levelBaseDateOverride: levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : null,
           levelBaseMonth: levelDraft.baseDateMode === "override_month" ? levelDraft.baseMonth : null,
           levelSalaryRaiseEnabled: levelDraft.salaryRaiseEnabled,
+          levelPolicyEdit: levelDraft.applied === true,
+          levelExpectedVersionId: original.levelProgramPolicy?.currentVersionId ?? null,
+          levelExpectedRevision: original.levelProgramPolicy?.currentRevision ?? null,
           levelEffectiveFrom: levelDraftChanged(original, levelDraft, draft.hire_date) ? levelEffectiveFrom(levelDraft.effectiveMonth) : null,
         }),
       });
@@ -1239,8 +1275,13 @@ const styles = {
     fontWeight: 800,
     cursor: "pointer",
   },
-  dialog: { width: "min(520px, calc(100% - 24px))", maxHeight: "90dvh", overflow: "hidden", padding: 0, border: "1px solid #d1d5db", borderRadius: 12, boxSizing: "border-box", fontSize: 12, color: "#1f2937" },
-  modalForm: { display: "flex", flexDirection: "column", maxHeight: "min(90dvh, 760px)", minHeight: 0 },
+  dialog: { position: "fixed", margin: 0, right: "auto", bottom: "auto",
+    left: "calc(var(--level-vx, 0px) + var(--level-vw, 100vw) / 2 + (env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)) / 2)",
+    top: "calc(var(--level-vy, 0px) + var(--level-vh, 100dvh) / 2 + (env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) / 2)",
+    transform: "translate(-50%, -50%)", width: "min(520px, calc(var(--level-vw, 100vw) - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right))))",
+    maxWidth: "none", maxHeight: "calc(var(--level-vh, 100dvh) - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)))",
+    overflow: "hidden", padding: 0, border: "1px solid #d1d5db", borderRadius: 12, boxSizing: "border-box", fontSize: 12, color: "#1f2937" },
+  modalForm: { display: "flex", flexDirection: "column", maxHeight: "min(760px, calc(var(--level-vh, 100dvh) - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - 2px))", minHeight: 0 },
   modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
   modalTitle: { display: "block", fontSize: 15, marginBottom: 3 },
   modalClose: { display: "grid", placeItems: "center", flexShrink: 0, width: 36, height: 36, border: 0, borderRadius: 8, background: "#f3f4f6", color: "#374151", fontSize: 24, cursor: "pointer" },

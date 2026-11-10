@@ -173,8 +173,9 @@ export function buildPayrollOverviewEmployee(input: {
   const taxableOtherAdditionAmount = items.filter((entry) => entry.direction === "addition" && !knownCategories.has(entry.category) && entry.taxTreatment === "taxable_compensation").reduce((total, entry) => total + entry.amount, 0);
   const otherDeductionAmount = items.filter((entry) => entry.direction === "deduction" && !knownCategories.has(entry.category)).reduce((total, entry) => total + entry.amount, 0);
   const unearnedCompensationAmount=items.reduce((total,entry)=>{const amount=Number(entry.sourceSnapshot.unearnedCompensationAmount??0);return total+(Number.isSafeInteger(amount)&&amount>0?amount:0)},0);
-  const blockingCount = employee.reviews.filter((review) => review.reviewLevel === "blocking").length;
-  const warningCodes = [...new Set(employee.reviews.map((review) => review.warningCode))];
+  const extraCompensationReview = compensation?.reviewCode && !employee.reviews.some(review => review.warningCode === compensation.reviewCode) ? 1 : 0;
+  const blockingCount = employee.reviews.filter((review) => review.reviewLevel === "blocking").length + extraCompensationReview;
+  const warningCodes = [...new Set([...employee.reviews.map((review) => review.warningCode), ...(compensation?.reviewCode ? [compensation.reviewCode] : [])])];
   const automaticPreInsuranceAmount=items.filter(entry=>entry.category!=="insurance_employee_deduction").reduce((total,entry)=>total+(entry.direction==="addition"?entry.amount:-entry.amount),0);
   const employeeInsuranceDeductionAmount=employee.insuranceSnapshot.employeeDeductionAmount;
   const companyPaidInsuranceTaxableAmount=employee.insuranceSnapshot.companyPaidInsuranceTaxableAmount;
@@ -197,7 +198,7 @@ export function buildPayrollOverviewEmployee(input: {
     position: user.position,
     role: user.role,
     levelInfo,
-    calculationStatus: unavailable ? "unavailable" : requiresReview ? "requires_review" : "calculable",
+    calculationStatus: compensation?.reviewCode && !period.future ? "requires_review" : unavailable ? "unavailable" : requiresReview ? "requires_review" : "calculable",
     recognizedWorkdays: employee.recognizedWorkdays,
     recognizedMinutes: employee.recognizedMinutes,
     insuranceEnrolled: employee.insuranceSnapshot.isEnrolled,
@@ -214,7 +215,7 @@ export function buildPayrollOverviewEmployee(input: {
       accruedRaiseAmount: compensation?.levelRaiseAmount ?? null,
       status: levelStatus,
       // Absent for every legacy case (keeps calculation hashes); explains a 0₫ raise.
-      // Hourly pay never receives the level raise; the UI reads that from contract.payType.
+      // Hourly compensation is expressed per hour; historical raise-exclusion flags remain honored.
       ...(levelInfo.eligible && compensation?.levelRaiseExcluded
         ? { raiseExcluded: compensation.levelRaiseExcluded }
         : {}),
@@ -254,7 +255,7 @@ export function buildPayrollOverviewEmployee(input: {
       earlyLeaveMinutes: employee.earlyLeaveMinutes,
     },
     partTimeExtraWork: employee.partTimeExtraWork,
-    reviewCount: employee.reviews.length,
+    reviewCount: employee.reviews.length + extraCompensationReview,
     blockingCount,
     warningCodes: [...new Set([...warningCodes, ...tax.warningCodes])],
     attendanceStanding: null,

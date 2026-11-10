@@ -51,6 +51,8 @@ function withLevelPolicyState(
     ...withEmployeeLevelInfo(currentUser, today),
     levelProgramPolicy: {
       currentEnabled,
+      currentVersionId: currentVersion?.id ?? null,
+      currentRevision: currentVersion?.revision ?? null,
       nextEnabled,
       currentBaseDateMode: currentVersion?.baseDateMode ?? fallbackMode(currentUser),
       nextBaseDateMode: nextVersion?.baseDateMode ?? fallbackMode(nextUser),
@@ -348,11 +350,8 @@ export async function PATCH(req: Request) {
       if (body.confirmPreviousPayrollCompleted !== true || !isDateKey(rehireDate) || typeof rehireLevelEnabled !== "boolean") {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng xác nhận và nhập ngày làm lại hợp lệ." : "확인 후 올바른 복귀일을 입력해주세요." }, { status: 400 });
       }
-      // Rehire with the level ON needs an explicit raise decision (no silent raise).
-      const rehireSalaryRaise = body.levelSalaryRaiseEnabled;
-      if (rehireLevelEnabled && typeof rehireSalaryRaise !== "boolean") {
-        return policyResponse("SALARY_RAISE_DECISION_REQUIRED", lang);
-      }
+      // New rehire policies automatically pay regular level raises when enabled.
+      const rehireSalaryRaise = rehireLevelEnabled ? true : null;
       const { data: target } = await supabaseServer.from("users").select(USER_SELECT).eq("id", id).maybeSingle();
       if (!target || target.is_system_account || target.is_active !== false || !target.termination_date) {
         return NextResponse.json({ ok: false, error: lang === "vi" ? "Không thể xử lý làm lại cho tài khoản này." : "이 계정은 복귀 처리할 수 없습니다." }, { status: 409 });
@@ -547,23 +546,19 @@ export async function PATCH(req: Request) {
       levelProgramEnabled = body.levelProgramEnabled;
     }
     const requestedEffectiveFrom = normalizeText(body.levelEffectiveFrom);
-    const currentMonth = `${today.slice(0, 7)}-01`;
     const nextMonth = nextMonthStart(today);
     if (requestedEffectiveFrom) {
-      if (!/^\d{4}-\d{2}-01$/.test(requestedEffectiveFrom)
-        || (requestedEffectiveFrom !== currentMonth && requestedEffectiveFrom !== nextMonth)) {
+      if (requestedEffectiveFrom !== nextMonth) {
         return NextResponse.json({
           ok: false,
           code: "INVALID_LEVEL_EFFECTIVE_MONTH",
           error: lang === "vi"
-            ? "Chỉ có thể chọn tháng này hoặc tháng sau."
-            : "적용 월은 이번 달 또는 다음 달만 선택할 수 있습니다.",
+            ? "Thay đổi mới bắt đầu từ ngày 1 tháng sau."
+            : "새 정책은 다음 달 1일부터 적용됩니다.",
         }, { status: 400 });
       }
     }
-    const comparisonVersion = requestedEffectiveFrom
-      ? (await loadEmployeeLevelProgramVersions([Number(id)], requestedEffectiveFrom)).get(Number(id))
-      : currentVersion;
+    const comparisonVersion = currentVersion;
     const comparisonEnabled = comparisonVersion?.enabled
       ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
     // Legacy modes are internal compatibility for unchanged profile saves only.
@@ -590,46 +585,37 @@ export async function PATCH(req: Request) {
       ? comparisonVersion?.baseDate ?? target.level_base_date_override
       : null;
     const comparisonSalaryRaiseEnabled = comparisonVersion?.salaryRaiseEnabled !== false;
-    // v10 overwrites an existing version starting on the same month. A legacy
-    // conversion must instead append a version, preserving its previous contents.
-    if (requestedEffectiveFrom && comparisonVersion?.effectiveFrom === requestedEffectiveFrom
-      && !isEmployeeLevelMonthBaseMode(comparisonBaseDateMode)
-      && isEmployeeLevelMonthBaseMode(requestedBaseDateMode)) {
-      return NextResponse.json({ ok: false, code: "LEVEL_MONTH_TRANSITION_CONFLICT",
-        error: lang === "vi" ? "Đã có chính sách bắt đầu trong tháng này. Chọn tháng khác hoặc yêu cầu chủ xem xét lịch chuyển đổi."
-          : "해당 월에 시작하는 정책이 이미 있습니다. 다른 적용월을 선택하거나 Owner에게 전환 일정 검토를 요청해주세요.",
-      }, { status: 409 });
-    }
-    let salaryRaiseEnabled = comparisonSalaryRaiseEnabled;
-    // null/absent keeps the decision in force; turning the level ON (new or from OFF)
-    // requires an explicit choice so no part-timer gets an unintended raise.
-    const salaryRaiseChoice = body.levelSalaryRaiseEnabled;
-    if (salaryRaiseChoice !== undefined && salaryRaiseChoice !== null && typeof salaryRaiseChoice !== "boolean") {
-      return policyResponse("INVALID_SALARY_RAISE_SETTING", lang);
-    }
-    if (!comparisonEnabled && levelProgramEnabled && typeof salaryRaiseChoice !== "boolean") {
-      return policyResponse("SALARY_RAISE_DECISION_REQUIRED", lang);
-    }
-    if (typeof salaryRaiseChoice === "boolean") salaryRaiseEnabled = salaryRaiseChoice;
     const baseUsesOverride = requestedBaseDateMode === "override" || requestedBaseDateMode === "override_month";
     // hire_month: the month stored on the version vs the month the (edited) hire date gives.
-    const hireMonthChanged = requestedBaseDateMode === "hire_month" && comparisonBaseDateMode === "hire_month"
+    const hireMonthChanged = resultingHireDate !== target.hire_date && requestedBaseDateMode === "hire_month" && comparisonBaseDateMode === "hire_month"
       && Boolean(comparisonVersion?.baseDate)
       && comparisonVersion?.baseDate !== `${hireMonthBase(resultingHireDate)}-01`;
-    const levelPolicyChanged = comparisonEnabled !== levelProgramEnabled
+    const settingsChanged = comparisonEnabled !== levelProgramEnabled
       || comparisonBaseDateMode !== requestedBaseDateMode
       || (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride)
-      || hireMonthChanged
-      || comparisonSalaryRaiseEnabled !== salaryRaiseEnabled;
+      || hireMonthChanged;
+    if (hireMonthChanged && body.levelPolicyEdit !== true) {
+      return NextResponse.json({ ok: false, code: "LEVEL_BASE_MONTH_REVIEW_REQUIRED", error: lang === "vi" ? "Vui lòng kiểm tra tháng mốc trong thiết lập cấp trước khi lưu ngày vào làm." : "입사일 변경으로 기준월이 달라집니다. 레벨 설정에서 확인 후 편집에 반영해주세요." }, { status: 400 });
+    }
+    const salaryRaiseEnabled = levelProgramEnabled && (settingsChanged || body.levelPolicyEdit === true)
+      ? true : comparisonSalaryRaiseEnabled;
+    const levelPolicyChanged = settingsChanged || comparisonSalaryRaiseEnabled !== salaryRaiseEnabled;
     if (levelPolicyChanged && !isEmployeeLevelMonthBaseMode(requestedBaseDateMode)) {
       return NextResponse.json({ ok: false, code: "LEVEL_MONTH_BASE_REQUIRED",
         error: lang === "vi" ? "Thay đổi cấp cần dùng tháng mốc tự động hoặc tháng mốc chỉ định."
           : "레벨 설정을 변경하려면 입사월 자동 또는 직접 기준월을 선택해주세요.",
       }, { status: 400 });
     }
-    const levelEffectiveFrom = levelPolicyChanged ? requestedEffectiveFrom : "";
-    if (levelPolicyChanged && !levelEffectiveFrom) {
-      return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng." : "적용 월을 선택해주세요." }, { status: 400 });
+    const levelEffectiveFrom = levelPolicyChanged ? nextMonth : "";
+    if (levelPolicyChanged) {
+      const scheduled = (await loadEmployeeLevelProgramVersions([Number(id)], nextMonth)).get(Number(id));
+      if (scheduled && scheduled.effectiveFrom > today) return NextResponse.json({ ok: false, code: "LEVEL_POLICY_SCHEDULED_CHANGE_EXISTS",
+        error: lang === "vi" ? "Đã có thay đổi cấp được lên lịch. Không ghi đè lịch hiện có." : "이미 예약된 레벨 변경이 있습니다. 기존 예약을 덮어쓸 수 없습니다." }, { status: 409 });
+    }
+    const expectedVersionId = body.levelExpectedVersionId === undefined ? currentVersion?.id ?? null : body.levelExpectedVersionId;
+    const expectedRevision = body.levelExpectedRevision === undefined ? currentVersion?.revision ?? null : body.levelExpectedRevision;
+    if ([expectedVersionId, expectedRevision].some(value => value !== null && (!Number.isSafeInteger(value) || Number(value) < 1))) {
+      return NextResponse.json({ ok: false, error: "INVALID_LEVEL_EXPECTED_VERSION" }, { status: 400 });
     }
     const automaticChangeReason = comparisonEnabled !== levelProgramEnabled
       ? levelProgramEnabled ? "admin_level_enabled" : "admin_level_disabled"
@@ -667,7 +653,7 @@ export async function PATCH(req: Request) {
     }
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_update_profile_and_level_v10",
+      "employee_update_profile_and_level_v11",
       {
         p_user_id: id,
         p_updates: { ...update, position: derivedPosition },
@@ -676,6 +662,8 @@ export async function PATCH(req: Request) {
         p_base_date_mode: requestedBaseDateMode,
         p_base_date_override: requestedBaseDateOverride,
         p_salary_raise_enabled: salaryRaiseEnabled,
+        p_expected_version_id: expectedVersionId,
+        p_expected_revision: expectedRevision,
         p_change_reason: levelPolicyChanged ? automaticChangeReason : null,
         p_actor_id: auth.actor.id,
         p_actor_username: auth.actor.username,
@@ -683,6 +671,10 @@ export async function PATCH(req: Request) {
     );
 
     if (error) {
+      if (/LEVEL_POLICY_STALE|LEVEL_POLICY_SCHEDULED_CHANGE_EXISTS/.test(error.message ?? "")) {
+        return NextResponse.json({ ok: false, code: error.message.includes("LEVEL_POLICY_STALE") ? "LEVEL_POLICY_STALE" : "LEVEL_POLICY_SCHEDULED_CHANGE_EXISTS",
+          error: lang === "vi" ? "Chính sách đã thay đổi hoặc có lịch mới. Tải lại thông tin nhân viên trước khi lưu." : "레벨 정책이 변경되었거나 예약이 추가되었습니다. 직원 정보를 새로 불러온 뒤 저장해주세요." }, { status: 409 });
+      }
       if (error.message?.includes("ATTENDANCE_OPEN_RECORD_EXISTS")) {
         return NextResponse.json(
           {

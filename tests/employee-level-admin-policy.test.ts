@@ -11,7 +11,7 @@ test("admin users API exposes calculated level info through the shared calculato
   assert.match(route, /requireRole\(\["owner", "master"\]\)/);
   assert.match(route, /level_base_date_override/);
   assert.match(route, /withEmployeeLevelInfo/);
-  assert.match(route, /employee_update_profile_and_level_v10/);
+  assert.match(route, /employee_update_profile_and_level_v11/);
   assert.match(route, /loadEmployeeLevelProgramVersions/);
   assert.match(route, /validateEmployeeLevelConfiguration/);
   for (const code of [
@@ -70,7 +70,7 @@ test("level audit is exactly conditional on a real allowed base-date change", ()
 test("all employee roles store effective-dated level policy atomically", () => {
   const route = read("app/api/admin/users/route.ts");
   const sql = read("supabase/migrations/202608040001_restore_employee_level_base_date_modes.sql");
-  assert.match(route, /employee_update_profile_and_level_v10/);
+  assert.match(route, /employee_update_profile_and_level_v11/);
   assert.match(route, /p_level_program_enabled: levelProgramEnabled/);
   assert.match(sql, /employee_update_profile_and_level_v6/);
   assert.match(sql, /employee_level_program_versions/);
@@ -218,7 +218,8 @@ test("level policy mutations use server-owned stable audit reason codes", () => 
   assert.doesNotMatch(page, /levelStateChanged && !levelDraft/);
   assert.match(page, /disabled=\{isSaving\}/);
   // Rehire with the level ON also needs an explicit raise decision.
-  assert.match(page, /disabled=\{!rehireDate\|\|isSaving\|\|\(rehireLevelEnabled&&rehireSalaryRaise===null\)\}/);
+  assert.match(page, /disabled=\{!rehireDate\|\|isSaving\}/);
+  assert.doesNotMatch(page, /rehireSalaryRaise/);
   assert.doesNotMatch(createPage, /level_change_reason|levelChangeReason/);
   assert.doesNotMatch(text, /levelChangeReason/);
 });

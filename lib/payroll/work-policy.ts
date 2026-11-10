@@ -7,10 +7,10 @@ export function calculatePayrollRates(contract: PayrollContract, salaryBase = co
     ? (contract.standardWorkdays ? salaryBase / contract.standardWorkdays : 0)
     : contract.payType === "daily"
       ? contract.baseSalary
-      : (contract.baseSalary / 60) * contract.standardMinutesPerDay;
+      : (salaryBase / 60) * contract.standardMinutesPerDay;
   return {
     dayRate,
-    minuteRate: contract.payType === "hourly" ? contract.baseSalary / 60 : dayRate / contract.standardMinutesPerDay,
+    minuteRate: contract.payType === "hourly" ? salaryBase / 60 : dayRate / contract.standardMinutesPerDay,
   };
 }
 

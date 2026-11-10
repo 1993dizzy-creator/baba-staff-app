@@ -132,7 +132,7 @@ test("13: legacy employees keep byte-identical level info, compensation and hash
       assert.deepStrictEqual(after, before);
       assert.equal(stablePayrollSourceHash(after), stablePayrollSourceHash(before));
       for (const contract of contracts) {
-        assert.deepStrictEqual(calculateCombinedSalary(contract as never, after), oldComp.calculateCombinedSalary(contract, before));
+        if (contract.payType !== "hourly") assert.deepStrictEqual(calculateCombinedSalary(contract as never, after), oldComp.calculateCombinedSalary(contract, before));
       }
       compared++;
     }
@@ -213,7 +213,7 @@ test("legacy 1/4/6: stored base = current hire date, override and month modes â€
       assert.equal(stablePayrollSourceHash(after), stablePayrollSourceHash(before));
       for (const contract of [
         { payType: "monthly", calculationBasis: "minute", baseSalary: 8_500_000, fixedRaiseAmount: 500_000 },
-        { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0 },
+        { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0, standardMinutesPerDay: 420, standardWorkdays: 26 },
         { payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: 2_000_000, fixedRaiseAmount: 0 },
       ]) assert.deepStrictEqual(calculateCombinedSalary(contract as never, after), calculateCombinedSalary(contract as never, before));
       compared++;
@@ -250,12 +250,12 @@ test("legacy 8: historical source stays hire_date while admin UI requests month 
   assert.doesNotMatch(page, /text\.hireDateBase|text\.directBaseShort/);
 });
 
-test("11: level OFF and hourly part-timers keep their pay; a monthly part-timer can keep the level without the raise", () => {
-  const hourly = { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0 } as never;
+test("11: hourly level raises apply; OFF and historical salary exclusion keep their pay", () => {
+  const hourly = { payType: "hourly", calculationBasis: "minute", baseSalary: 35_000, fixedRaiseAmount: 0, standardMinutesPerDay: 420, standardWorkdays: 26 } as never;
   for (const raise of [true, false]) {
     const on = level({ hireDate: "2026-08-16", mode: "hire_month", asOf: "2027-06-01", raise });
     assert.ok(on.eligible && (on.earnedRaiseCount ?? 0) > 0);
-    assert.deepEqual(calculateCombinedSalary(hourly, on), { contractSalary: 35_000, fixedRaiseAmount: 0, levelRaiseAmount: 0, combinedSalary: 35_000, additionalRaiseCount: 0 });
+    assert.equal(calculateCombinedSalary(hourly, on).combinedSalary, raise ? Math.round(35000 + (on.earnedRaiseCount ?? 0) * 500000 / 182) : 35000);
   }
   const off = calculateEmployeeLevel({ role: "staff", levelProgramEnabled: false, hireDate: "2026-09-17", levelBaseDateOverride: null, asOfDate: "2027-06-01" });
   assert.equal(calculateCombinedSalary(hourly, off).combinedSalary, 35_000);

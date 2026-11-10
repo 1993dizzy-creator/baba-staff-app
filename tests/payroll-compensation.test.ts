@@ -15,4 +15,4 @@ test("combined salary uses employee-management earned raises without an included
 test("zero earned raises keeps only contract and fixed compensation",()=>assert.equal(calculateCombinedSalary(contract,level(0)).combinedSalary,8_500_000));
 test("missing employee level base date blocks level and combined salary",()=>assert.equal(calculateCombinedSalary(contract,level(0,"MISSING_BASE_DATE")).combinedSalary,null));
 test("ineligible roles receive no level raise",()=>assert.equal(calculateCombinedSalary(contract,level(0,"ROLE_NOT_ELIGIBLE")).levelRaiseAmount,0));
-test("non-monthly contracts do not receive monthly fixed or level raises",()=>assert.deepEqual(calculateCombinedSalary({...contract,payType:"hourly"},level(2)),{contractSalary:8_000_000,fixedRaiseAmount:0,levelRaiseAmount:0,combinedSalary:8_000_000,additionalRaiseCount:0}));
+test("daily contracts do not receive monthly fixed or level raises",()=>assert.deepEqual(calculateCombinedSalary({...contract,payType:"daily"},level(2)),{contractSalary:8_000_000,fixedRaiseAmount:0,levelRaiseAmount:0,combinedSalary:8_000_000,additionalRaiseCount:0}));

@@ -107,14 +107,15 @@ test("level modal initializes legacy employees with a month candidate and offers
   assert.doesNotMatch(modal, /text\.levelLegacyDateMode|type="date"/);
   assert.match(modal, /text\.levelAutoShort/);
   assert.match(modal, /text\.levelDirectShort/);
-  assert.match(modal, /text\.levelRaiseShort/);
+  assert.doesNotMatch(modal, /text\.levelRaiseShort/);
+  assert.match(modal, /text\.levelHistory/);
   assert.match(modal, /effectiveMonth: isLegacy \? "next"/);
-  assert.match(modal, /<legend style=\{styles\.modalLabel\}>\{text\.levelEffectiveMonth\}/);
+  assert.doesNotMatch(modal, /text\.levelEffectiveMonth/);
 });
 
 test("modal state is local until apply; detail cancel and saving preserve the boundary", () => {
   assert.match(listPage, /const \[levelDraft, setLevelDraft\] = useState<LevelPolicyDraft>\(\(\) => \{/);
-  assert.match(listPage, /if \(valid\) onApply\(levelDraft\)/);
+  assert.match(listPage, /if \(valid\) onApply\(\{ \.\.\.levelDraft, effectiveMonth: hasChanges \? "next" : "current", applied: hasChanges/);
   assert.match(listPage, /onApply=\{value => \{ setLevelDraft\(value\)/);
   assert.match(listPage, /if \(isSaving \|\| savePending\.current\) return/);
   assert.match(listPage, /<fieldset disabled=\{isSaving\}/);
@@ -122,13 +123,13 @@ test("modal state is local until apply; detail cancel and saving preserve the bo
   assert.match(listPage, /<header style=\{styles\.modalHeader\}>/);
   assert.match(listPage, /<div style=\{styles\.modalBody\}>/);
   assert.match(listPage, /<footer style=\{styles\.modalFooter\}>/);
-  assert.match(listPage, /const showComparison = nextDateChanged \|\| raiseDelta !== 0/);
+  assert.match(listPage, /const showComparison = nextDateChanged \|\| \(raiseDelta !== null && raiseDelta !== 0\)/);
 });
 
 test("list page: toggling included back to true does not reset baseDateMode/baseDateOverride draft state (no reset side effect on the included radio)", () => {
   assert.match(
     listPage,
-    /onChange=\{\(\) => setLevelDraft\(\(current\) => \(\{ \.\.\.current, included: enabled \}\)\)\}/
+    /onChange=\{\(\) => setLevelDraft\(\(current\) => \(\{ \.\.\.current, included: enabled, salaryRaiseEnabled: enabled \? true : current\.salaryRaiseEnabled \}\)\)\}/
   );
 });
 
@@ -143,7 +144,8 @@ test("create page: new employees get month bases only (auto hire month / direct 
   assert.match(enabledBlock, /text\.levelHireMonthMode/);
   assert.match(enabledBlock, /text\.levelOverrideMonthMode/);
   assert.match(enabledBlock, /type="month"/);
-  assert.match(enabledBlock, /text\.levelSalaryRaise/);
+  assert.doesNotMatch(enabledBlock, /text\.levelSalaryRaise/);
+  assert.match(createPage, /text\.levelAutomaticRaise/);
   assert.match(createPage, /level_base_mode: "hire_month"/);
   assert.match(createPage, /text\.levelEnabled/);
   assert.match(createPage, /text\.levelDisabled/);

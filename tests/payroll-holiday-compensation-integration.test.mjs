@@ -67,8 +67,8 @@ for (const [id,name,expected] of [[4,"Quân",519231],[5,"Điệp",384615],[6,"Li
 test("APP holiday-off employees receive no worked-holiday premium",()=>{
   for(const id of [3,19]){const employee=calculatePayrollBatch(actualInput()).find(row=>row.userId===id);assert.equal(sum(employee,"base_work"),0);assert.equal(sum(employee,"holiday_work_premium"),0);}
 });
-test("daily and hourly contracts retain ordinary rate policy without monthly raises",()=>{
-  for(const [payType,baseSalary,expected] of [["daily",500000,500000],["hourly",35000,315000]]){const {employee}=synthetic({contract:{payType,baseSalary,fixedRaiseAmount:4_000_000}});assert.equal(sum(employee,"base_work"),expected);assert.equal(sum(employee,"holiday_work_premium"),expected);}
+test("daily policy stays unchanged; hourly holiday uses adjusted level rate",()=>{
+  for(const [payType,baseSalary,expected] of [["daily",500000,500000],["hourly",35000,372690]]){const {employee}=synthetic({contract:{payType,baseSalary,fixedRaiseAmount:4_000_000}});assert.equal(sum(employee,"base_work"),expected);assert.equal(sum(employee,"holiday_work_premium"),expected);}
 });
 test("fixed monthly receives the compensated monthly amount once without premium",()=>{
   const {employee}=synthetic({contract:{calculationBasis:"fixed_monthly"}});assert.equal(sum(employee,"base_work"),13_500_000);assert.equal(sum(employee,"holiday_work_premium"),0);

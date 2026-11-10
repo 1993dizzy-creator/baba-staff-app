@@ -36,8 +36,6 @@ type FormState = {
   level_program_enabled: boolean;
   level_base_mode: "hire_month" | "override_month";
   level_base_month: string;
-  /** null until chosen: required when the level is ON (no implicit raise). */
-  level_salary_raise_enabled: boolean | null;
   attendance_tracking_enabled: boolean;
   app_login_enabled: boolean;
 };
@@ -62,7 +60,6 @@ const initialForm: FormState = {
   level_program_enabled: true,
   level_base_mode: "hire_month",
   level_base_month: "",
-  level_salary_raise_enabled: null,
   attendance_tracking_enabled: true,
   app_login_enabled: true,
 };
@@ -443,18 +440,7 @@ export default function AdminUserCreatePage() {
                 {form.level_base_mode === "hire_month"
                   ? <span style={styles.helpText}>{text.levelBaseMonth}: {hireMonthBase(form.hire_date) ?? "-"} · {text.levelHireMonthRule}</span>
                   : <input type="month" aria-label={text.levelBaseMonth} min={form.hire_date ? form.hire_date.slice(0, 7) : undefined} value={form.level_base_month} onChange={(event) => update("level_base_month", event.target.value)} />}
-                <strong style={styles.fieldLabel}>{text.levelSalaryRaise}</strong>
-                <div style={styles.segmented}>
-                  {[true, false].map((applied) => (
-                    <label key={String(applied)} style={form.level_salary_raise_enabled === applied ? styles.segmentActive : styles.segment}>
-                      <input type="radio" name="level-salary-raise" checked={form.level_salary_raise_enabled === applied} onChange={() => update("level_salary_raise_enabled", applied)} />
-                      {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
-                    </label>
-                  ))}
-                </div>
-                {form.level_salary_raise_enabled === false
-                  ? <span style={styles.helpText}>{text.levelRaiseNotAppliedNotice}</span>
-                  : form.level_salary_raise_enabled === null ? <span style={styles.shortShiftNotice}>{text.levelSalaryRaiseChoose}</span> : null}
+                <span style={styles.helpText}>{text.levelAutomaticRaise}</span>
               </> : null}
               {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
             </div>

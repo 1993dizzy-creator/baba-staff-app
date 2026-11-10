@@ -81,13 +81,14 @@ export function CompensationCard({
   const [modal, setModal] = useState<"incentive" | "penalty" | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const combined = employee.amounts.combinedSalary;
+  const hourlyContractReview = employee.contract?.payType === "hourly" && combined === null && employee.levelInfo.reason !== "MISSING_BASE_DATE";
   const headerAmount = getPayrollHeaderAmount(employee, future);
   const header = future
     ? "—"
     : !employee.contract
       ? t.contractUnset
       : combined === null
-        ? t.levelBaseRequired
+        ? (hourlyContractReview ? t.hourlyContractHoursRequired : t.levelBaseRequired)
         : formatPayrollHeaderAmount(headerAmount ?? combined);
   const calculatedNetAmount = getPayrollCalculatedNetAmount(employee, future);
   const applicabilityBadges = getPayrollApplicabilityBadges({ employee, month, monthClosed, attendanceBonusEligible, mealAllowanceEligible, lang });
@@ -194,8 +195,8 @@ export function CompensationCard({
             </>
           ) : combined === null ? (
             <>
-              <p>{t.levelBaseRequired}</p>
-              <Link href="/admin/users">{t.employeeSettingsLink}</Link>
+              <p>{hourlyContractReview ? t.hourlyContractHoursRequired : t.levelBaseRequired}</p>
+              <Link href={hourlyContractReview ? "/admin/payroll/settings" : "/admin/users"}>{hourlyContractReview ? t.payrollSettingsLink : t.employeeSettingsLink}</Link>
             </>
           ) : (
             <>
@@ -203,10 +204,10 @@ export function CompensationCard({
                 <Row label={t.contractSalary} value={formatContractRate(employee.amounts.contractSalary, employee.contract.payType, lang)} />
                 <Row label={t.fixedRaise} value={formatContractRate(employee.amounts.fixedRaiseAmount, employee.contract.payType, lang, "+")} />
                 <Row label={t.levelRaise} value={formatContractRate(employee.amounts.levelRaiseAmount, employee.contract.payType, lang, "+")} />
-                {employee.levelInfo.eligible && employee.levelApplication.raiseExcluded === "salary_raise_disabled"
+                {employee.levelInfo.eligible && (employee.levelApplication.raiseExcluded === "salary_raise_disabled" || employee.levelInfo.salaryRaiseEnabled === false)
                   ? <p>{t.levelRaiseNotApplied}</p>
-                  : employee.levelInfo.eligible && employee.contract.payType !== "monthly" && employee.levelInfo.earnedRaiseCount > 0
-                    ? <p>{t.hourlyLevelRaiseNotApplied}</p>
+                  : employee.levelInfo.eligible && employee.contract.payType === "daily" && employee.levelInfo.earnedRaiseCount > 0
+                    ? <p>{t.dailyLevelRaiseNotApplied}</p>
                     : null}
                 <CombinedSalarySummary
                   label={t.combinedSalary}

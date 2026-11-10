@@ -77,7 +77,7 @@ test("legacy repair uses the current effective policy instead of any historical 
 
 test("v6 changes participation and basis independently without empty periods", () => {
   // 202608060001 Migration부터 API는 v6의 로직을 그대로 계승한 v9를 호출한다.
-  assert.match(route, /employee_update_profile_and_level_v10/);
+  assert.match(route, /employee_update_profile_and_level_v11/);
   assert.match(route, /comparisonEnabled !== levelProgramEnabled/);
   assert.match(route, /comparisonBaseDateMode !== requestedBaseDateMode/);
   assert.match(route, /p_base_date_mode: requestedBaseDateMode/);
@@ -101,7 +101,8 @@ test("admin UI restores independent bilingual basis controls and reset-on-cancel
   assert.match(page, /levelDraft\.baseDateMode === "hire_date"/);
   assert.match(page, /levelDraft\.baseDateOverride/);
   assert.match(page, /setLevelDraft\(initialLevelPolicyDraft\(user\)\)/);
-  assert.match(page, /text\.levelEffectiveMonth/);
+  assert.doesNotMatch(page, /text\.levelEffectiveMonth/);
+  assert.match(page, /text\.levelStartsAt/);
   assert.match(page, /minWidth: 0/);
 });
 

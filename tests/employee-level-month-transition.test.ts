@@ -38,12 +38,12 @@ test("legacy override preserves its month; missing bases remain invalid rather t
   assert.deepEqual(employeeLevelMonthCandidate({ mode: "hire_date", baseDate: "2025-11-02", hireDate: "2025-12-16" }), { mode: "hire_month", baseMonth: "2026-01" });
 });
 
-test("API forbids legacy mutations and same-month legacy overwrites before calling v10", () => {
+test("API forbids legacy mutations and same-month legacy overwrites before calling v11", () => {
   const source = readFileSync("app/api/admin/users/route.ts", "utf8");
-  const rpc = source.indexOf('"employee_update_profile_and_level_v10"');
-  for (const code of ["LEVEL_MONTH_BASE_REQUIRED", "LEVEL_MONTH_TRANSITION_CONFLICT"]) {
+  const rpc = source.indexOf('"employee_update_profile_and_level_v11"');
+  for (const code of ["LEVEL_MONTH_BASE_REQUIRED", "LEVEL_POLICY_SCHEDULED_CHANGE_EXISTS"]) {
     assert.ok(source.indexOf(code) > 0 && source.indexOf(code) < rpc);
   }
-  assert.match(source, /comparisonVersion\?\.effectiveFrom === requestedEffectiveFrom/);
+  assert.match(source, /scheduled && scheduled\.effectiveFrom > today/);
   assert.match(source, /levelPolicyChanged && !isEmployeeLevelMonthBaseMode\(requestedBaseDateMode\)/);
 });
