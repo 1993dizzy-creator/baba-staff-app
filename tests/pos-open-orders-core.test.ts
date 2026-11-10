@@ -346,7 +346,7 @@ test("Status 6 parent and option relationships survive; diagnostics never promot
   assert.deepEqual(kpi.paid, paid);
 });
 
-test("daily panel renders header estimates and menu review warnings in KO/VI; disabled remains hidden", () => {
+test("daily notice keeps menu warnings in KO/VI without duplicating KPI amounts; disabled read is explicit", () => {
   const compiled = ts.transpileModule(readFileSync("components/sales/OpenOrdersPanel.tsx", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
@@ -361,9 +361,9 @@ test("daily panel renders header estimates and menu review warnings in KO/VI; di
     const html = render(data);
     assert.ok(html.includes(text.openOrdersDetailWarning));
     assert.ok(html.includes(text.openOrdersIncomplete));
-    assert.match(html, /200\.000/);
+    assert.doesNotMatch(html, /200\.000/);
     assert.doesNotMatch(html, /300\.000/);
-    assert.equal(render({ ...data, status: "not_enabled" }), "");
+    assert.ok(render({ ...data, status: "not_enabled" }).includes(salesText[lang].daily.openOrdersNotEnabled));
     const normal = kpiFor([collected(1, { totalAmount: 50000, lines: normalizeOrderLines([line(1)]) })]);
     assert.ok(!render(normal).includes(text.openOrdersDetailWarning));
   }
@@ -616,8 +616,9 @@ test("browsers never reach CUKCUK: read paths import no CUKCUK transport or logi
   assert.ok(loader.indexOf("if (!openOrdersReadEnabled())") < loader.indexOf("supabaseServer"));
   assert.ok(loader.indexOf("if (!openOrdersReadEnabled())") < loader.indexOf("resolveConfiguredBusinessDate("));
   assert.match(reader, /POS_OPEN_ORDERS_READ_ENABLED\?\.trim\(\) === "true"/);
-  // The panel renders nothing until enabled, so the 2nd-phase KPI cards are unchanged.
-  assert.match(panel, /if \(!data \|\| data\.status === "not_enabled"\) return null;/);
+  // Disabled reads are explicitly unavailable, never an inferred zero in current KPIs.
+  assert.match(panel, /data\?\.status === "not_enabled" \? text\.openOrdersNotEnabled/);
+  assert.match(panel, /if \(!active \|\| data\?\.status === "closed"\) return null;/);
   assert.match(page, /import type \{ OpenOrderKpi \}/);
   assert.match(panel, /import type \{ OpenOrderKpi \}/);
   const sync = read("lib/pos/cukcuk/open-orders-sync-server.ts");
