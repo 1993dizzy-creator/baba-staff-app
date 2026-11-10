@@ -28,7 +28,7 @@ import {
   type EmployeeLevelBaseMode,
   type EmployeeLevelInfo,
 } from "@/lib/employee-level/types";
-import { calculateEmployeeLevel } from "@/lib/employee-level/calculate";
+import { addCalendarMonthsClamped, calculateEmployeeLevel } from "@/lib/employee-level/calculate";
 import { hireMonthBase } from "@/lib/employee-level/month";
 import { employeeLevelMonthCandidate } from "@/lib/employee-level/month-transition";
 
@@ -731,6 +731,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             <li>{text.levelHelpPromotion}</li>
             <li>{text.levelHelpSalary}</li>
             <li>{text.levelHelpEffective}</li>
+            <li>{text.levelHelpTwoYears}</li>
           </ul>
         </details>
         <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
@@ -752,7 +753,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
           <summary>{text.levelHistory}<span style={{ ...styles.modalMuted, display: "block", marginTop: 4 }}>{historySummary}</span></summary>
           <p>{text.levelHistoryHelp}</p>
           {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status">{text.loading}</p> :
-            <LevelHistoryView history={history.history} adminChanges={history.adminChanges ?? []} text={text} />}
+            <LevelHistoryView history={history.history} adminChanges={history.adminChanges ?? []} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
 
         </details>
       </div>
@@ -765,13 +766,22 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   </dialog>, document.body);
 }
 
-function LevelHistoryView({ history, adminChanges, text }: {
+function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate, pending, text }: {
   history: ReturnType<typeof buildEmployeeLevelHistory>;
+  currentInfo: EmployeeLevelInfo; terminationDate: string | null; pending: boolean;
   adminChanges: { id: number; action: string; createdAt: string }[];
   text: AdminUsersPageText;
 }) {
   const past = [...history.promotions].sort((a, b) => b.date.localeCompare(a.date));
-  const later = history.future.filter(event => !history.next || event.date !== history.next.date || event.versionId !== history.next.versionId);
+  // Presentation only: a standard month schedule, never a reconstruction of actual history.
+  const base = currentInfo.baseDate ? currentInfo.baseDate.slice(0, 7) + "-01" : null;
+  const milestones = base ? Array.from({ length: 9 }, (_, index) => ({ month: index * 3, date: addCalendarMonthsClamped(base, index * 3)! })) : [];
+  const beforeBase = Boolean(base && history.asOfDate < base);
+  const terminated = Boolean(terminationDate && terminationDate < history.asOfDate);
+  const active = currentInfo.eligible && !beforeBase && !terminated;
+  const periodStart = currentInfo.level !== null && currentInfo.baseDate ? addCalendarMonthsClamped(currentInfo.baseDate, currentInfo.level * 3) : null;
+  const periodLimit = currentInfo.nextLevelDate ?? (!currentInfo.negotiationEligible ? currentInfo.negotiationEligibleAt : null);
+  const periodEnd = periodLimit ? new Date(new Date(periodLimit + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10) : null;
   // Group only for display. No policy/audit linkage is inferred and every raw record remains visible.
   const auditsByDate = new Map<string, typeof adminChanges>();
   for (const event of [...adminChanges].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)) {
@@ -789,17 +799,31 @@ function LevelHistoryView({ history, adminChanges, text }: {
   const promotionRows = (events: typeof past) => <ul style={styles.levelHistoryList}>{events.map(event =>
     <li key={event.date + ":" + event.versionId} style={styles.levelHistoryRow}><time dateTime={event.date}>{dateLabel(event.date)}</time><strong>Lv.{event.level}</strong></li>)}</ul>;
   return <div style={styles.levelHistorySections}>
-    <section aria-label={text.levelPastPromotions}>
-      <strong>{text.levelPastPromotions}</strong>
+    <section aria-label={text.levelTimeline} style={styles.levelTimelinePanel}>
+      <div style={styles.levelTimelineCurrent}>
+        <strong>{terminated ? text.levelAtTermination : text.currentLevel} {currentInfo.displayLabel ?? (currentInfo.reason === "PROGRAM_DISABLED" ? text.levelDisabled : text.levelUnset)}</strong>
+        {terminated ? <span>{text.terminatedLevelReadOnly}</span> : beforeBase ? <span>{text.levelBeforeBaseDate}</span>
+          : active && periodStart ? <span>{text.levelPeriod} {dateLabel(periodStart)} ~ {periodEnd ? dateLabel(periodEnd) : text.levelContinues}</span> : null}
+        {active && currentInfo.nextLevelDate ? <span>{text.nextLevelShort} Lv.{Math.min(7, (currentInfo.level ?? 0) + 1)} · {dateLabel(currentInfo.nextLevelDate)}</span>
+          : active && currentInfo.negotiationEligible ? <span>{text.levelNegotiation}</span>
+          : active && currentInfo.negotiationEligibleAt ? <span>{text.levelNegotiation} · {dateLabel(currentInfo.negotiationEligibleAt)}</span> : null}
+        <span style={styles.modalMuted}>{text.levelTimelineStandard}{pending ? " · " + text.levelTimelineSaved : ""}</span>
+      </div>
+      {milestones.length ? <div role="region" aria-label={text.levelTimelineSchedule} tabIndex={0} style={styles.levelTimelineScroll}>
+        <ol style={styles.levelHistoryList}>{milestones.map((event, index) => {
+          const isCurrent = active && index < 8 && currentInfo.level === index;
+          return <li key={event.month} aria-current={isCurrent ? "step" : undefined} style={{ ...styles.levelTimelineRow, ...(isCurrent ? { fontWeight: 800, color: "#111827" } : {}) }}>
+            <div><time dateTime={event.date}>{dateLabel(event.date)}</time><span style={{ ...styles.modalMuted, display: "block" }}>{text.levelMonthOffset.replace("{count}", String(event.month))}</span></div>
+            <div style={{ textAlign: "right" }}><span>{index === 8 ? text.levelNegotiation : "Lv." + index}</span><span style={{ ...styles.modalMuted, display: "block" }}>{isCurrent ? text.currentLevel : event.date > history.asOfDate ? text.levelScheduleFuture : text.levelSchedulePast}</span></div>
+          </li>;
+        })}</ol>
+      </div> : <p>{text.levelBaseRequired}</p>}
+    </section>
+    <details>
+      <summary>{text.levelActualHistory} · {past.length}</summary>
       {past.length ? promotionRows(past.slice(0, 3)) : <p>{text.levelHistoryEmpty}</p>}
       {past.length > 3 ? <details><summary>{countLabel(text.levelMorePast, past.length - 3)}</summary>{promotionRows(past.slice(3))}</details> : null}
-    </section>
-    <section aria-label={text.nextLevelShort}>
-      <strong>{text.nextLevelShort}</strong>
-      {history.next ? <div style={styles.levelHistoryNext}><time dateTime={history.next.date}>{dateLabel(history.next.date)}</time><strong>Lv.{history.next.level}</strong></div> : <p>{text.levelNoNext}</p>}
-      {history.next ? <p style={styles.modalHint}>{text.levelFutureEstimate}</p> : null}
-      {later.length ? <details><summary>{countLabel(text.levelMoreFuture, later.length)}</summary>{promotionRows(later)}</details> : null}
-    </section>
+    </details>
     <details>
       <summary>{text.levelAdminHistory}</summary>
       <p style={styles.modalHint}>{text.levelHistoryCoverage}: {history.coverageFrom ? dateLabel(history.coverageFrom) : "-"}</p>
@@ -1344,6 +1368,10 @@ const styles = {
   modalClose: { display: "grid", placeItems: "center", flexShrink: 0, width: 36, height: 36, border: 0, borderRadius: 8, background: "#f3f4f6", color: "#374151", fontSize: 24, cursor: "pointer" },
   modalBody: { display: "grid", gap: 14, overflowY: "auto", overscrollBehavior: "contain", minHeight: 0, padding: 14 },
   levelHelpRules: { margin: "8px 0", paddingLeft: 18, display: "grid", gap: 6, lineHeight: 1.6 },
+  levelTimelinePanel: { display: "flex", flexDirection: "column", maxHeight: "min(420px, calc(var(--level-vh, 100dvh) * 0.55))", minHeight: 0 },
+  levelTimelineCurrent: { display: "grid", gap: 5, paddingBottom: 10, flexShrink: 0 },
+  levelTimelineScroll: { overflowY: "auto", minHeight: 0, overscrollBehavior: "contain" },
+  levelTimelineRow: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12, padding: "7px 0", alignItems: "baseline", fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
   levelHistorySections: { display: "grid", gap: 14 },
   levelHistoryList: { listStyle: "none", margin: "6px 0", padding: 0, display: "grid", gap: 6 },
   levelHistoryRow: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, fontVariantNumeric: "tabular-nums" },
