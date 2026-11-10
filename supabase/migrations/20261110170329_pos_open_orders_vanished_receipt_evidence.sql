@@ -3,6 +3,9 @@
 -- No receipt/ledger/inventory DML. Existing lease and vanished guards remain in the
 -- original snapshot function, now callable only by the migration owner.
 
+-- DDL wait budget for this migration transaction only (receipt proof uses 10s at runtime).
+set local lock_timeout = '5s';
+
 alter table pos_open_orders_private.orders drop constraint orders_status_class_check;
 alter table pos_open_orders_private.orders add constraint orders_status_class_check
   check (status_class in ('open', 'paid_candidate', 'canceled', 'unknown'));
@@ -80,6 +83,10 @@ begin
 
   for v_order in select value from jsonb_array_elements(p_orders) loop
     if v_order->>'closureReceiptId' is not null then
+      -- A repeatable/serializable snapshot can predate the writer we wait for below.
+      if current_setting('transaction_isolation') <> 'read committed' then
+        raise exception 'open_orders_vanished' using errcode = '55000', detail = 'receipt_evidence_requires_read_committed';
+      end if;
       if coalesce(v_order->>'closureReceiptId', '') !~ '^[1-9][0-9]{0,17}$' then
         raise exception 'open_orders_payload_invalid' using errcode = '22023';
       end if;
