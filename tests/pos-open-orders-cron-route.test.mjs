@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import nodeCrypto from 'node:crypto';
 import ts from 'typescript';
+import { addStoreDays } from '../lib/store-settings/business-time-core.ts';
+import { fetchAllExactPages } from '../lib/sales/daily-sales-summary.ts';
 
 const core = await import('../lib/pos/cukcuk/open-orders-core.ts');
 const policy = await import('../lib/pos/cukcuk/open-orders-cron-policy.ts');
@@ -34,15 +36,16 @@ const vn = (local) => new Date(`${local.length === 16 ? local + ':00' : local}+0
 // Store-settings RPC stand-in: cutoff 03:00, the business date the real RPC would return.
 const storeBusinessDate = (now) => { const t = new Date(now.getTime() + 7 * 3600_000 - 3 * 3600_000); return t.toISOString().slice(0, 10); };
 
-function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', rpcError = {}, login, cukcuk, adapterError } = {}) {
+function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', rpcError = {}, login, cukcuk, adapterError,
+  previous = [], receipts = [] } = {}) {
   const calls = [];
   const meta = {};
   const rpc = async (name, args) => {
     calls.push(`rpc:${name}`);
     if (rpcError[name]) return { data: null, error: rpcError[name] };
     if (name === 'pos_open_orders_claim') { meta.claimArgs = args; return { data: { status: claim }, error: null }; }
-    if (name === 'pos_open_orders_read') return { data: { sync: null, orders: [] }, error: null };
-    if (name === 'pos_open_orders_commit') return { data: { status: 'committed', runId: args.p_run_id, orders: args.p_orders.length, lines: args.p_orders.reduce((s, o) => s + (o.lines?.length ?? 0), 0) }, error: null };
+    if (name === 'pos_open_orders_read') return { data: { recoveryContractVersion: 2, sync: null, orders: previous }, error: null };
+    if (name === 'pos_open_orders_commit') { meta.orders = args.p_orders; return { data: { status: 'committed', runId: args.p_run_id, orders: args.p_orders.length, lines: args.p_orders.reduce((s, o) => s + (o.lines?.length ?? 0), 0) }, error: null }; }
     if (name === 'pos_open_orders_fail') { meta.failCode = args.p_code; return { data: { status: 'failed', code: args.p_code }, error: null }; }
     throw Error('unexpected rpc ' + name);
   };
@@ -52,13 +55,23 @@ function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', 
     '@/lib/pos/cukcuk/open-orders-scope': { openOrdersBranchId: () => 'b1', openOrdersScope: () => SCOPE },
     '@/lib/pos/cukcuk/sales-receipt-sync': { CUKCUK_BASE_URL: 'https://cukcuk.invalid',
       buildCukcukHeaders: (token, company) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, CompanyCode: company }) },
-    '@/lib/supabase/server': { supabaseServer: { rpc } },
+    '@/lib/supabase/server': { supabaseServer: { rpc, from(table) {
+      assert.equal(table, 'pos_sales_receipts'); calls.push('receipt_evidence');
+      const query = { select(fields) { assert.equal(fields, 'id,business_date,payment_status,is_canceled,order_id:raw_json->>OrderId'); return query; },
+        eq(field, value) { assert.deepEqual([field,value], ['source','cukcuk']); return query; },
+        in(field, values) { assert.deepEqual([field,values], ['business_date',['2026-11-09','2026-11-10']]); return query; },
+        order() { return query; }, abortSignal() { return query; },
+        range: async (from,to) => ({ data: receipts.slice(from,to+1), count: receipts.length, error: null }) };
+      return query;
+    } } },
     '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async (now) => {
       calls.push('business_date_rpc');
       if (adapterError) throw adapterError;
       return { databaseBusinessDate: storeBusinessDate(now), snapshot: { cutoff: '03:00' } };
     } },
     './open-orders-core': core,
+    '@/lib/store-settings/business-time-core': { addStoreDays },
+    '@/lib/sales/daily-sales-summary': { fetchAllExactPages },
   });
   const route = load('app/api/cron/pos-open-orders-sync/route.ts', {
     '@/lib/pos/cukcuk/sales-sync-cron-shared': cronShared,
@@ -92,6 +105,19 @@ function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', 
   return { calls, meta, run, route };
 }
 const cukcukCalls = (calls) => calls.filter((c) => c === 'login' || c.startsWith('cukcuk:'));
+
+test('real server adapter lazily reads existing receipt evidence without an extra CUKCUK request', async () => {
+  const header = { Id: ORDER_ID, No: '1.18', Status: 3, Date: '2026-11-09T20:00:00+07:00', TotalAmount: 2410000 };
+  const previous = core.mergeOrderDetail(core.normalizeOrderSummary(header), { Data: { ...header, OrderDetails: [] } }, '03:00');
+  const h = harness({ previous: [previous], receipts: [{ id: 18, business_date: '2026-11-09', payment_status: 3, is_canceled: false, order_id: ORDER_ID }],
+    cukcuk: url => ({ status: 200, json: url.includes('paging') ? { Success: true, Total: 0, Data: [] }
+      : { Success: true, Data: { Status: 4 } } }) });
+  const result = await h.run();
+  assert.equal(result.body.outcome, 'committed');
+  assert.deepEqual(cukcukCalls(h.calls), ['login','cukcuk:/api/v1/orders/paging','cukcuk:/api/v1/orders/{id}']);
+  assert.equal(h.calls.filter(call => call === 'receipt_evidence').length, 1);
+  assert.deepEqual([h.meta.orders[0].orderId,h.meta.orders[0].status,h.meta.orders[0].closureReceiptId], [ORDER_ID,3,18]);
+});
 
 test('existing Cron logs only allowlisted failure diagnostics and makes no extra CUKCUK call', async () => {
   const h = harness({ cukcuk: () => ({ status: 200, json: { Success: true, Total: 1, Data: [{

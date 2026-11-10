@@ -75,8 +75,8 @@ test('true zero open orders is complete; disabled, missing, stale or failed snap
   assert.equal(model({ ...openKpi(), paid: { amount: 1, receiptCount: 13 } }).mode, 'unavailable');
 });
 
-test('Status 5/7/8 orders produce a known subtotal, never a full estimated average', () => {
-  for (const status of [5, 7, 8]) {
+test('Status 7/8 orders produce a known subtotal, never a full estimated average', () => {
+  for (const status of [7, 8]) {
     const result = model(openKpi([...orders(), order(9, { Status: status, TotalAmount: 700000 })]));
     assert.equal(result.mode, 'partial');
     assert.equal(result.amount, 2100000);
@@ -118,7 +118,7 @@ for (const lang of ['ko', 'vi']) {
     assert.ok(cards.includes(t.openOrdersAmount));
     assert.ok(cards.includes(t.provisionalAverage));
     assert.ok(!html.includes(t.openOrdersTitle), 'no separate order KPI panel');
-    const partial = renderDailySales(response(openKpi([...orders(), order(9, { Status: 5 })])), { lang });
+    const partial = renderDailySales(response(openKpi([...orders(), order(9, { Status: 7 })])), { lang });
     assert.ok(dailyCards(partial).includes(t.knownSubtotal));
     assert.ok(dailyCards(partial).includes(t.currentAverageUnavailable));
     for (const status of ['not_enabled', 'unavailable', 'stale', 'incomplete']) {

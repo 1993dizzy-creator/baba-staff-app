@@ -5,6 +5,8 @@ import { openOrdersBranchId, openOrdersScope } from "@/lib/pos/cukcuk/open-order
 import { buildCukcukHeaders, CUKCUK_BASE_URL } from "@/lib/pos/cukcuk/sales-receipt-sync";
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
+import { addStoreDays } from "@/lib/store-settings/business-time-core";
+import { fetchAllExactPages } from "@/lib/sales/daily-sales-summary";
 import {
   OPEN_ORDERS_REQUEST_TIMEOUT_MS,
   OPEN_ORDERS_RPC,
@@ -13,6 +15,7 @@ import {
   runOpenOrderSync,
   type OrderRequest,
   type OrderTransport,
+  type ReceiptLink,
 } from "./open-orders-core";
 
 // Central (server/cron) collector for CUKCUK in-progress orders.
@@ -81,6 +84,18 @@ async function rpc(name: string, args: Record<string, unknown>) {
   return data as Record<string, unknown>;
 }
 
+/** Existing POS receipts only; never calls CUKCUK and never reads customer/raw JSON. */
+async function loadReceiptEvidence(businessDate: string): Promise<ReceiptLink[]> {
+  type Row = { id: number; business_date: string; payment_status: number | null; is_canceled: boolean | null; order_id: string | null };
+  const { data, error } = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
+    .select("id,business_date,payment_status,is_canceled,order_id:raw_json->>OrderId", { count: "exact" })
+    .eq("source", "cukcuk").in("business_date", [businessDate, addStoreDays(businessDate, 1)])
+    .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(OPEN_ORDERS_REQUEST_TIMEOUT_MS)).range(from, to));
+  if (error || !data) throw new Error("receipt_evidence_unavailable");
+  return data.map((row) => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
+    isCanceled: row.is_canceled, businessDate: row.business_date }));
+}
+
 /** One central run for the current configured business date. */
 export async function runCentralOpenOrderSync(now = new Date()) {
   if (!openOrdersSyncEnabled()) return { status: "not_enabled" };
@@ -90,7 +105,7 @@ export async function runCentralOpenOrderSync(now = new Date()) {
   // Business day D starts at D cutoff (Asia/Ho_Chi_Minh, +07:00, no DST).
   const windowFrom = new Date(`${businessDate}T${cutoff}:00+07:00`).toISOString();
   return runOpenOrderSync(
-    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID,
+    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID, loadReceiptEvidence,
       onDiagnostic: (diagnostic) => console.error("[OPEN_ORDERS_SYNC_DIAGNOSTIC]", diagnostic) },
     { scope: openOrdersScope(), branchId: openOrdersBranchId(), businessDate, windowFrom, cutoff }
   );
