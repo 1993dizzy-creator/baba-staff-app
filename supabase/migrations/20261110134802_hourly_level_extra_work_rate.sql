@@ -306,7 +306,13 @@ begin
   elsif v_pay_type = 'monthly' then
     select * into v_user from public.users where id = p_user_id;
     v_enabled := v_user.level_program_enabled;
-    v_base_date := coalesce(v_user.level_base_date_override, v_user.hire_date);
+    -- Match resolveLevelBase for mirrors only when no dated version is available.
+    v_base_date := case
+      when v_user.level_base_mode = 'hire_month' then coalesce(v_user.level_base_date_override,
+        (date_trunc('month', v_user.hire_date)::date
+          + case when extract(day from v_user.hire_date) > 15 then interval '1 month' else interval '0 month' end)::date)
+      when v_user.level_base_mode = 'override_month' then v_user.level_base_date_override
+      else coalesce(v_user.level_base_date_override, v_user.hire_date) end;
     -- The engine seeds users from the month-start version, then overrides
     -- it with the day's highest revision. Preserve that fallback in gaps.
     select * into v_level from public.employee_level_program_versions
@@ -321,8 +327,15 @@ begin
     end if;
     if found then
       v_enabled := coalesce(v_level.enabled, false);
-      v_base_date := case when v_level.base_date_mode = 'override'
-        then coalesce(v_level.base_date, v_user.hire_date) else v_user.hire_date end;
+      -- Stored hire_date and month bases are independent of the current hire date.
+      -- The four cases mirror levelUserFieldsFromVersion + resolveLevelBase.
+      v_base_date := case
+        when v_level.base_date_mode in ('hire_date', 'override') then coalesce(v_level.base_date, v_user.hire_date)
+        when v_level.base_date_mode = 'hire_month' then coalesce(v_level.base_date,
+          (date_trunc('month', v_user.hire_date)::date
+            + case when extract(day from v_user.hire_date) > 15 then interval '1 month' else interval '0 month' end)::date)
+        when v_level.base_date_mode = 'override_month' then v_level.base_date
+        else v_user.hire_date end;
     end if;
     if not v_user.is_system_account and v_enabled is distinct from false
        and (v_user.role in ('manager', 'leader', 'staff')
@@ -331,7 +344,7 @@ begin
         raise exception 'PAYROLL_EXTRA_WORK_INVALID_RATE_SOURCE' using errcode = '22023';
       end if;
       v_calculation_date := least(p_business_date, coalesce(v_user.termination_date, p_business_date));
-      if v_calculation_date >= v_base_date then
+      if v_calculation_date >= v_base_date and coalesce(v_level.salary_raise_enabled, true) then
         v_completed_months := (extract(year from v_calculation_date)::integer - extract(year from v_base_date)::integer) * 12
           + extract(month from v_calculation_date)::integer - extract(month from v_base_date)::integer;
         -- PostgreSQL month addition clamps anniversaries just like addCalendarMonthsClamped.
