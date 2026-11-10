@@ -286,6 +286,20 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 - TypeScript(`--noEmit --incremental false`), 변경 파일 ESLint, diff 검사 PASS. `db advisors --type all --fail-on error`는 기존 로컬 스택(127.0.0.1:54322)을 읽었으며 ERROR 0, 기존 매핑/영수증 테이블의 중복 인덱스 WARN 3이었다. 새 Migration은 이 로컬 스택에도 적용하지 않았으므로 해당 Advisors 결과를 새 함수 검증으로 간주하지 않는다. 새 함수·권한·원자성 검증 근거는 격리 PGlite 테스트다.
 - 이전 PASS는 원본 SQL 구현·변경 없는 영역의 근거로만 재사용하며 이번 복구 성공을 대체하지 않는다. 운영 복구 여부는 실제 소실 OrderId와 유효 영수증 증거, Migration 계약 버전, 첫 정상 Cron·감사 증거 및 KPI 대조를 추가 확인해야 한다. 증거가 없으면 여전히 차단하는 것이 정상이다.
 
+### 2026-11-11 최종 안전성 2건 보완 (운영 미적용 파일 직접 수정)
+
+- 이번 기능 수정은 기존 정식 Migration 파일의 7줄 추가뿐이다. 새 Migration이나 앱·Cron·환경변수 변경은 없다. LF/CRLF 차이는 오류로 취급하지 않으며 정식 저장소 파일은 LF를 유지한다.
+- `closureReceiptId` 복구 분기에서만 `transaction_isolation = 'read committed'`를 요구한다. REPEATABLE READ/SERIALIZABLE은 영수증 확정·snapshot commit·commit 감사 변경 전에 `open_orders_vanished`(SQLSTATE 55000), 고정 DETAIL `receipt_evidence_requires_read_committed`로 거부한다. 증거 없는 일반 수집은 두 격리 수준에서도 허용한다.
+- 기존 오류 매핑을 그대로 사용한다. 서버 DB 오류 변환은 `open_orders_vanished`, Cron HTTP 500/failed, 일간 KPI는 incomplete 보호다. 새 오류 코드나 자격 증명/환경변수 원문 노출을 추가하지 않았다.
+- Migration 첫 DDL 전에 `SET LOCAL lock_timeout = '5s'`를 추가했다. 기존 Supabase CLI의 파일별 트랜잭션 적용 경로를 유지한다. 이 값은 Migration 트랜잭션에만 적용되고, 기존 영수증 증거 SHARE 잠금의 런타임 10초 한도는 그대로다.
+- 수정 전 PostgreSQL 17.6 독립 연결에서 취소된 영수증을 REPEATABLE READ의 오래된 snapshot으로 확정하는 오류를 재현했다(RED). 수정 후 거부·전체 롤백을 확인했다(GREEN). SERIALIZABLE 거부, READ COMMITTED 정상 복구, 일반 수집 허용도 각각 확인했다.
+- 새 native 검증 `tests/pos-open-orders-safety-native.mjs --port=55439`: 8/8 PASS. 별도 폐기 가능한 PostgreSQL 17.6(기존 로컬 스택/운영과 분리), 독립 backend 연결 및 실제 relation lock을 사용했다. 원장 sentinel은 모두 불변이다.
+- 정식 파일을 바이트 그대로 복사해 Supabase CLI 3.1.0 `migration up`의 명시적 loopback DB URL로 실행했다. 첫 ALTER TABLE 잠금 대기는 4,985ms, 컬럼·read 함수·함수 rename 이후 테스트용 event trigger의 실제 DDL 잠금 대기는 4,983ms에 timeout됐다. 두 경우 기존 컬럼·함수 정의/이름·권한·snapshot·commit 감사가 모두 원복됐다. POS 영수증 쓰기는 각각 3ms로 완료됐다.
+- Migration 대상 객체의 event-trigger 관측에서 `lock_timeout=5s`를 확인했다. CLI 초기화용 migration-history DDL은 측정 대상에서 분리했다. 같은 native 연결의 설정은 적용 전/트랜잭션 중/COMMIT 후 `0/5s/0`으로 복원됐다. public RPC·권한·read 계약 버전 2도 통과했다.
+- 기존 Migration PGlite 회귀 8/8 PASS. 이전 native 14 PASS 중 변경 없는 READ COMMITTED 동시 쓰기·영수증 10초 잠금·상태/권한·구/신 앱 계약 범위는 재사용한다. 이전 REPEATABLE READ 실패는 재사용하지 않고 새 검증으로 대체했다. TypeScript·변경 파일 ESLint·diff 검사 PASS.
+- 정식 LF 파일 SHA-256: `b88c2977c73177f7b86e5d07b309d20f1b496a75766ae3322b47f9296d4667e9`. 실제 검증 파일·Worktree·커밋 blob의 바이트 일치를 제출 시 확인한다.
+- RED 및 GREEN 측정 결과·CLI 로그는 `.local/open-orders-safety-fix/`에 보존한다. 코드 병합과 운영 적용은 별개다. 로컬 기술 검증 GO이며, 실제 운영 Migration 적용은 대상 preflight·영수증 증거 확인과 사용자의 별도 승인 후에만 진행한다.
+
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.
   - `claim`: advisory lock과 scope별 활성 run 1개 제한으로 단일 실행을 보장한다. lease는 3분이다.
