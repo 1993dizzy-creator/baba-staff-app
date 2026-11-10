@@ -1,8 +1,11 @@
 ﻿# 직원 레벨 2026-10 소급 정정 — 실행 준비 기록
 
-운영 미실행. 이번 작업은 읽기 전용 확인과 격리 DB 검증까지만 수행했다. Migration이 아니라 Owner 별도 승인 후 한 번 실행할 SQL 초안이다.
+운영 미실행. 정식 실행 파일은 `supabase/migrations/20261110091705_employee_level_october_2026_correction.sql`이다. Supabase CLI 3.1.0의 `migration new employee_level_october_2026_correction`으로 생성했다. Owner의 운영 적용 승인은 별도이며, 정식 파일은 외부 파일 참조·수동 치환·actor 세션 설정 없이 단독 실행한다.
 
-## 파일과 변경 범위
+## 정식 Migration과 변경 범위
+
+- `supabase/migrations/20261110091705_employee_level_october_2026_correction.sql`: 최종 실행 파일. BEGIN/COMMIT 안에 모든 검증과 정정·사후 검증을 포함한다.
+- 아래 `docs/sql` 파일은 최초 초안과 별도 읽기 전용 검사 자료로 보존한다. 정식 운영 적용의 제출물은 위 Migration이다.
 
 - `sql/employee-level-october-correction-preflight.sql`: 읽기 전용 사전 검사 및 버전/사용자 미러 출력.
 - `sql/employee-level-october-correction-execute-draft.sql`: 단일 트랜잭션 실행 초안.
@@ -14,7 +17,7 @@
 
 ## 운영 실행 전 필수 조건
 
-1. Owner가 이 11명에 대한 소급 정정과 actor ID를 별도로 승인해야 한다. 초안의 주석 위치에 승인된 owner/master ID를 `SET LOCAL baba.level_correction_actor_id = '<ID>';`로 지정한다. 비활성·시스템 계정이나 미지정 actor는 거부한다.
+1. Owner가 이 11명의 운영 소급 정정을 별도로 승인해야 한다. 정식 Migration은 지문으로 고정된 신규 월 정책 11개의 공통 생성자 ID를 조회하고, 모두 같은 ID/username인지 및 해당 계정이 활성 owner/master·비시스템 계정인지 검증한다. 외부 actor 설정이나 파일 수정은 하지 않는다. 감사 actor의 출처는 `pinned_month_policy_cohort_creator`이며, Migration 실행의 `current_user`·`session_user`도 감사 스냅샷에 따로 보존한다. 원래 생성자와 실제 DB 실행자를 혼동하지 않는다.
 2. 사전 SQL과 실제 실행 파일을 각각 **동일 파일 전체를 한 연결에서** 실행한다. SQL 실행기는 오류 즉시 중단해야 한다. 오류가 나면 해당 연결에서 ROLLBACK 후 원인을 확인한다. 일부 문장만 실행하거나 실패 후 COMMIT하지 않는다.
 3. 기존 22개 정책 버전 전체 행 지문, 현재 재직·레벨 미러 지문이 준비 시점과 같아야 한다. 버전 ID/직원 ID/기간/기준월/모드/ON/급여 반영/revision, 종료·시스템·비활성 여부와 추가 정책 충돌도 검사한다. 현재 원본 자료는 `.local/level-october-readonly-source.json`에만 보관했다.
 4. 대상 직원의 **모든** 지급 행이 22건이고, 그중 paid 22건이며 아래 식의 지문이 `6a3013ee9ab4288f07fcb3d361d889bc`여야 한다. paid 행으로 먼저 필터링하지 않는다. 2026-11-10 읽기 전용 조회 원본에서도 이 세 조건이 일치했다.
@@ -41,3 +44,13 @@ SERIALIZABLE 트랜잭션, 고정 작업 advisory lock, 사용자/버전/감사 
 - 별도 Supabase PostgreSQL 17.6 컨테이너: 정상 정정, 재실행, 지문·건수·버전·미러·부분 상태·actor 오류 및 감사 실패 롤백 **8/8 PASS**. 운영 연결이나 운영 자격 증명 없이 합성 fixture로 실행했다.
 - 합성 fixture 테스트는 기대 지문만 fixture 지문으로 치환한다. 배포할 SQL 파일의 운영 지문은 고정되어 있다. 실제 읽기 전용 버전 원본 22개도 PostgreSQL 타입 기반 전체 행 지문을 재현했다.
 - 실제 운영 SQL 실행·운영 잠금/트리거·급여 재계산은 미검증이다. 운영 승인 후 사전 검사 → 전체 실행 → 사후 검증 순서를 지킨다. 별도 Migration·Push·배포는 하지 않는다.
+
+## 정식 Migration 최종 파일 검증
+
+- 파일: `C:\workspace\baba-staff-app\supabase\migrations\20261110091705_employee_level_october_2026_correction.sql`
+- SHA-256: `5098fdd430d9045f0f6efd38d8aa496d3bbe34fa932b3bf74ab81ec7623e7e6c`
+- 별도 PostgreSQL 17.6 컨테이너에서 최종 파일을 **바이트 그대로, 지문 치환 0건**으로 실행해 **11/11 PASS**를 확인했다. 앞선 합성 fixture PASS는 변경 없는 보호 계약의 증거로 재사용했다.
+- 과거 읽기 전용으로 확보한 정책/재직 미러·지급 JSON을 격리 fixture에 재구성했다. Migration에 고정한 원본 지문을 그대로 만족하도록 타입 기반으로 적재했고 운영 연결이나 운영 자격 증명은 사용하지 않았다. 지급 행은 전체 JSONB 이미지와 동일한 지문을 재현했으며 운영 지급 테이블의 모든 타입·트리거를 복제한 것은 아니다.
+- 확인 범위: 외부 actor 설정 없는 단독 실행, 임의 actor 세션 설정 무시, 같은 파일 재실행 차단, actor 역할/username/활성 상태 거부, 지급/버전 불일치 거부, 기존 버전 갱신 후·두 버전 갱신 후·감사 추가 중·COMMIT 직전 사후 검증 실패의 전체 롤백. 지급 22건 전체 행, 근태 및 계약/장부 fixture 행 불변을 대조했다.
+- 최종 파일은 모든 사후 검증을 COMMIT 전에 실행한다. 이전 초안의 외부 actor 설정 요구를 제거하고 감사에 실행 맥락을 추가했으며 날짜/미러 사후 비교를 NULL-safe로 보강했다.
+- 실제 운영 트리거/잠금/CLI 적용 이력 기록은 미검증이다. 운영 DB 실행·Push·배포·기존 Migration 이력 변경은 하지 않았다. 로컬 테스트 컨테이너는 종료한다.
