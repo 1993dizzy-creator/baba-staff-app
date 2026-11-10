@@ -678,7 +678,16 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   const raiseAfter = contractMatches.length > 1 ? null : compensationAfter ? compensationAfter.levelRaiseAmount : raise(after);
   const raiseDelta = raiseBefore === null || raiseAfter === null ? null : raiseAfter - raiseBefore;
   const nextDateChanged = before.nextLevelDate !== after.nextLevelDate;
-  const showComparison = nextDateChanged || (raiseDelta !== null && raiseDelta !== 0);
+  const levelChanged = before.level !== after.level || before.eligible !== after.eligible;
+  const showComparison = hasChanges && (levelChanged || (raiseDelta !== null && raiseDelta !== 0));
+  const displayInfo = hasChanges ? after : before;
+  const compactDate = (date: string) => date.replaceAll("-", ".");
+  const nextLabel = displayInfo.nextLevelDate ? compactDate(displayInfo.nextLevelDate) + " · Lv." + Math.min(7, (displayInfo.level ?? 0) + 1)
+    : displayInfo.eligible ? text.highestLevel : "-";
+  const historySummary = historyError ? text.levelHistoryError : !history?.history ? text.loading
+    : history.history.promotions.length === 0 && !history.history.next ? text.levelHistoryEmpty
+    : text.levelPastCount.replace("{count}", String(history.history.promotions.length)) + " · " + text.levelNextPromotion + " "
+      + (history.history.next ? compactDate(history.history.next.date) : text.levelNoNextShort);
   const amount = (value: number) => value.toLocaleString("vi-VN") + "₫";
 
   return createPortal(<dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
@@ -712,7 +721,6 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>
             : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled }))} style={styles.input} /></Field>}
         </fieldset>
-        <p style={styles.modalMuted}>{text.levelAutomaticRaise}</p>
         {scheduledDate ? <p role="status" style={styles.modalMuted}>{text.levelScheduledPolicy}: {dateLabel(scheduledDate)}</p> : null}
         {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
         {user.termination_date ? <p role="alert" style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</p> : null}
@@ -724,30 +732,31 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             <li>{text.levelHelpSalary}</li>
             <li>{text.levelHelpEffective}</li>
           </ul>
-          <p>{text.levelApplyHelp}</p>
         </details>
         <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
-          <strong>{hasChanges ? text.levelChangeSummary : text.levelCurrentPolicy}</strong>
-          <span style={styles.modalMuted}>{hasChanges ? text.levelStartsAt + ": " + dateLabel(effectiveFrom) : text.levelCurrentlyActive + (user.levelProgramPolicy?.currentEffectiveFrom ? " · " + dateLabel(user.levelProgramPolicy.currentEffectiveFrom) : "")}</span>
+          <strong>{hasChanges ? text.levelPreviewTitle : text.levelCurrentPolicy}</strong>
+          {hasChanges ? <span style={styles.modalMuted}>{text.levelStartsAt}: {dateLabel(effectiveFrom)}</span> : null}
           <dl style={styles.modalSummaryGrid}>
-            <dt>{text.levelAfter}</dt><dd style={styles.modalValue}>{after.displayLabel ?? text.levelDisabled}</dd>
-            <dt>{text.nextLevelShort}</dt><dd style={styles.modalValue}>{after.nextLevelDate ?? (after.eligible ? text.highestLevel : "-")}</dd>
-            <dt>{contract?.payType === "hourly" ? text.levelHourlyDelta : contract ? text.levelRaiseDelta : text.levelRaisePreview}</dt><dd style={styles.modalValue}>{raiseDelta === null ? text.levelContractReview : (raiseDelta > 0 ? "+" : "") + amount(raiseDelta)}</dd>
+            <dt>{hasChanges ? text.levelAfter : text.currentLevel}</dt><dd style={styles.modalValue}>{displayInfo.displayLabel ?? text.levelDisabled}</dd>
+            <dt>{text.levelNextPromotion}</dt><dd style={styles.modalValue}>{nextLabel}</dd>
+            {hasChanges && (raiseDelta === null || raiseDelta !== 0) ? <><dt>{contract?.payType === "hourly" ? text.levelHourlyDelta : contract ? text.levelRaiseDelta : text.levelRaisePreview}</dt><dd style={styles.modalValue}>{raiseDelta === null ? text.levelContractReview : (raiseDelta > 0 ? "+" : "") + amount(raiseDelta)}</dd></> : null}
           </dl>
           {showComparison ? <details>
             <summary style={styles.modalMuted}>{text.levelCompareDetails}</summary>
+            {levelChanged ? <p style={styles.modalHint}>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</p> : null}
             {nextDateChanged ? <p style={styles.modalHint}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
             {raiseDelta !== null && raiseDelta !== 0 && raiseBefore !== null && raiseAfter !== null ? <p style={styles.modalHint}>{contract?.payType === "hourly" ? text.levelHourlyDelta : text.levelRaisePreview}: {amount(raiseBefore)} → {amount(raiseAfter)}</p> : null}
           </details> : null}
         </section>
         <details style={styles.modalHelp}>
-          <summary>{text.levelHistory}</summary>
+          <summary>{text.levelHistory}<span style={{ ...styles.modalMuted, display: "block", marginTop: 4 }}>{historySummary}</span></summary>
           <p>{text.levelHistoryHelp}</p>
           {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status">{text.loading}</p> :
             <LevelHistoryView history={history.history} adminChanges={history.adminChanges ?? []} text={text} />}
 
         </details>
       </div>
+      {hasChanges ? <p style={{ ...styles.modalHint, margin: 0, padding: "6px 14px", flexShrink: 0 }}>{text.levelApplyHelp}</p> : null}
       <footer style={styles.modalFooter}>
         <button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button>
         <button type="submit" disabled={!valid || Boolean(user.termination_date)} style={styles.primaryButton}>{text.levelApply}</button>
@@ -780,7 +789,6 @@ function LevelHistoryView({ history, adminChanges, text }: {
   const promotionRows = (events: typeof past) => <ul style={styles.levelHistoryList}>{events.map(event =>
     <li key={event.date + ":" + event.versionId} style={styles.levelHistoryRow}><time dateTime={event.date}>{dateLabel(event.date)}</time><strong>Lv.{event.level}</strong></li>)}</ul>;
   return <div style={styles.levelHistorySections}>
-    <p style={styles.modalHint}>{text.currentLevel} {history.current?.displayLabel ?? text.levelDisabled} · {text.levelBaseMonth} {history.current?.baseDate?.slice(0, 7) ?? "-"}</p>
     <section aria-label={text.levelPastPromotions}>
       <strong>{text.levelPastPromotions}</strong>
       {past.length ? promotionRows(past.slice(0, 3)) : <p>{text.levelHistoryEmpty}</p>}

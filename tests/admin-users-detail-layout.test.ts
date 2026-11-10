@@ -123,7 +123,7 @@ test("modal state is local until apply; detail cancel and saving preserve the bo
   assert.match(listPage, /<header style=\{styles\.modalHeader\}>/);
   assert.match(listPage, /<div style=\{styles\.modalBody\}>/);
   assert.match(listPage, /<footer style=\{styles\.modalFooter\}>/);
-  assert.match(listPage, /const showComparison = nextDateChanged \|\| \(raiseDelta !== null && raiseDelta !== 0\)/);
+  assert.match(listPage, /const showComparison = hasChanges && \(levelChanged \|\| \(raiseDelta !== null && raiseDelta !== 0\)\)/);
 });
 
 test("list page: toggling included back to true does not reset baseDateMode/baseDateOverride draft state (no reset side effect on the included radio)", () => {
