@@ -21,13 +21,13 @@ import { attendanceFetch } from "@/lib/auth/client-session";
 import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import {
   isEmployeeLevelAutomaticRole,
-  isEmployeeLevelManualRole,
   isEmployeeLevelMonthBaseMode,
   type EmployeeLevelBaseMode,
   type EmployeeLevelInfo,
 } from "@/lib/employee-level/types";
 import { calculateEmployeeLevel } from "@/lib/employee-level/calculate";
 import { hireMonthBase } from "@/lib/employee-level/month";
+import { employeeLevelMonthCandidate } from "@/lib/employee-level/month-transition";
 
 type UserRow = {
   id: number | string;
@@ -64,6 +64,8 @@ type UserRow = {
     nextSalaryRaiseEnabled?: boolean;
     hasScheduledChange: boolean;
     nextEffectiveFrom: string;
+    currentEffectiveFrom?: string | null;
+    nextPolicyEffectiveFrom?: string | null;
   };
 };
 
@@ -434,9 +436,6 @@ function UserCard({
                 onChange={(event) => {
                   const nextRole = event.target.value;
                   update("role", nextRole);
-                  if (isEmployeeLevelManualRole(nextRole) && !isEmployeeLevelManualRole(draft.role)) {
-                    setLevelDraft((current) => ({ ...current, included: false }));
-                  }
                 }}
                 style={styles.input}
               >
@@ -536,7 +535,7 @@ function UserCard({
           {hasLevelEditor ? <section style={styles.detailSection}>
             <strong>{text.longTermLevel}</strong>
             <LevelDetails levelInfo={user.levelInfo} text={text} />
-            <span style={styles.fieldNotice}>{isEmployeeLevelMonthBaseMode(currentBase.mode) ? text.levelBaseMonth : text.levelLegacyReadOnly}: {isEmployeeLevelMonthBaseMode(currentBase.mode) ? currentBase.baseDate?.slice(0, 7) ?? "-" : currentBase.baseDate ?? "-"}</span>
+            {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
             <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button>
             {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
             {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
@@ -607,9 +606,15 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   user: UserRow; draft: UserRow; initial: LevelPolicyDraft; text: AdminUsersPageText;
   onCancel: () => void; onApply: (value: LevelPolicyDraft) => void;
 }) {
-  const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => ({ ...initial,
-    effectiveMonth: levelDraftChanged(user, initial, draft.hire_date) ? initial.effectiveMonth : "next",
-  }));
+  const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => {
+    const isLegacy = !isEmployeeLevelMonthBaseMode(initial.baseDateMode);
+    const candidate = employeeLevelMonthCandidate({ mode: initial.baseDateMode,
+      baseDate: initial.baseDateMode === "override" ? initial.baseDateOverride : null, hireDate: draft.hire_date });
+    return { ...initial,
+      ...(isLegacy ? { baseDateMode: candidate.mode, baseMonth: candidate.baseMonth, baseDateOverride: "" } : {}),
+      effectiveMonth: isLegacy ? "next" : levelDraftChanged(user, initial, draft.hire_date) ? initial.effectiveMonth : "next",
+    };
+  });
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -620,6 +625,9 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   const baseModeOptions = ["hire_month", "override_month"] as const;
   const draftHireMonth = hireMonthBase(draft.hire_date);
   const effectiveFrom = levelEffectiveFrom(levelDraft.effectiveMonth);
+  const policyStart = levelDraft.effectiveMonth === "next"
+    ? user.levelProgramPolicy?.nextPolicyEffectiveFrom : user.levelProgramPolicy?.currentEffectiveFrom;
+  const transitionConflict = !isEmployeeLevelMonthBaseMode(comparedBase.mode) && policyStart === effectiveFrom;
   const before = calculateEmployeeLevel({ role: user.role, hireDate: user.hire_date, terminationDate: user.termination_date,
     levelProgramEnabled: policyEnabledForMonth(user, levelDraft.effectiveMonth), levelBaseMode: comparedBase.mode,
     levelBaseDateOverride: comparedBase.mode === "hire_date" ? null : comparedBase.baseDate,
@@ -627,11 +635,10 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   const after = calculateEmployeeLevel({ role: draft.role, hireDate: draft.hire_date, terminationDate: draft.termination_date,
     levelProgramEnabled: levelDraft.included, levelBaseMode: levelDraft.baseDateMode,
     levelBaseDateOverride: levelDraft.baseDateMode === "override_month" ? `${levelDraft.baseMonth}-01`
-      : levelDraft.baseDateMode === "hire_month" ? (draftHireMonth ? `${draftHireMonth}-01` : null)
-      : levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : null,
-    levelHireDateBase: comparedBase.baseDate, salaryRaiseEnabled: levelDraft.salaryRaiseEnabled, asOfDate: effectiveFrom });
+      : (draftHireMonth ? `${draftHireMonth}-01` : null),
+    salaryRaiseEnabled: levelDraft.salaryRaiseEnabled, asOfDate: effectiveFrom });
   const raise = (info: EmployeeLevelInfo) => info.salaryRaiseEnabled === false ? 0 : info.cumulativeRaiseAmount;
-  const valid = (!levelDraft.included || levelDraft.salaryRaiseEnabled !== null)
+  const valid = !transitionConflict && Boolean(draft.hire_date) && (!levelDraft.included || levelDraft.salaryRaiseEnabled !== null)
     && (levelDraft.baseDateMode !== "override_month" || (/^\d{4}-(0[1-9]|1[0-2])$/.test(levelDraft.baseMonth)
       && Boolean(draft.hire_date) && levelDraft.baseMonth >= draft.hire_date!.slice(0, 7)
       && (!draft.termination_date || levelDraft.baseMonth <= draft.termination_date.slice(0, 7))));
@@ -660,7 +667,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
                         {mode === "hire_month" ? text.levelHireMonthMode : text.levelOverrideMonthMode}
                       </label>)}
                     </div>
-                    {!isEmployeeLevelMonthBaseMode(levelDraft.baseDateMode) ? <span style={styles.readonlyDate}>{text.levelLegacyReadOnly}: {levelDraft.baseDateMode === "override" ? levelDraft.baseDateOverride : comparedBase.baseDate ?? "-"}</span> : levelDraft.baseDateMode === "hire_month" ? <>
+                    {levelDraft.baseDateMode === "hire_month" ? <>
                       <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"} → {text.levelBaseMonth}: {draftHireMonth ?? "-"}</span>
                       <span style={styles.fieldNotice}>{text.levelHireMonthRule}</span>
                     </> : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>}
@@ -681,10 +688,11 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
 </section>
 
       <p style={styles.fieldNotice}>{text.levelEffectiveHelp} · {effectiveFrom}</p>
+      {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
       <div style={styles.detailSection} aria-live="polite">
         <strong>{text.levelPreview} · {effectiveFrom}</strong>
         <span>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</span>
-        <span>{text.levelBaseMonth}: {before.baseDate ?? "-"} → {after.baseDate ?? "-"}</span>
+        <span>{text.levelBaseMonth}: {before.baseDate?.slice(0, 7) ?? "-"} → {after.baseMonth ?? "-"}</span>
         <span>{text.nextLevel}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</span>
         <span>{text.levelRaisePreview}: {raise(before).toLocaleString("vi-VN")}₫ → {raise(after).toLocaleString("vi-VN")}₫ (Δ {(raise(after) - raise(before)).toLocaleString("vi-VN")}₫)</span>
         <span style={styles.fieldNotice}>{text.levelPreviewHelp}</span>
@@ -705,11 +713,10 @@ function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText 
       : info.reason === "INVALID_DATE" ? text.levelInvalidDate : text.levelUnset;
     return <div style={styles.levelSummary}>{label}</div>;
   }
-  const baseLabel = info.baseMonth
-    ? `${info.baseDateSource === "override_month" ? text.levelOverrideMonthMode : text.levelHireMonthMode} ${info.baseMonth}`
-    : info.baseDateSource === "override"
-      ? `${text.directBaseShort} ${info.baseDate}`
-      : text.hireDateBase;
+  if (!isEmployeeLevelMonthBaseMode(info.baseDateSource)) {
+    return <div style={styles.levelSummary}>{text.levelMonthTransitionRequired}</div>;
+  }
+  const baseLabel = `${text.levelBaseMonth} ${info.baseMonth ?? info.baseDate?.slice(0, 7) ?? "-"}`;
   const nextLabel = info.nextLevelDate
     ? `${text.nextLevelShort} Lv.${Math.min(7, (info.level ?? 0) + 1)} ${info.nextLevelDate}`
     : text.highestLevel;
@@ -726,7 +733,7 @@ function LevelDetails({ levelInfo, text }: { levelInfo: EmployeeLevelInfo; text:
   return (
     <div style={styles.levelSummary}>
       <span>{text.currentLevel} {levelInfo.displayLabel}</span>
-      <span>{text.nextLevel} {levelInfo.nextLevelDate ?? text.highestLevel}</span>
+      {isEmployeeLevelMonthBaseMode(levelInfo.baseDateSource) ? <span>{text.nextLevel} {levelInfo.nextLevelDate ?? text.highestLevel}</span> : null}
     </div>
   );
 }
@@ -835,7 +842,12 @@ export default function AdminUsersPage() {
     [users]
   );
 
-  async function saveUser(original: UserRow, draft: UserRow, levelDraft: LevelPolicyDraft) {
+  async function saveUser(original: UserRow, draft: UserRow, requestedLevelDraft: LevelPolicyDraft) {
+    // A scheduled next-month version is a display/edit baseline, not an implicit
+    // request to copy that policy into the current month on a basic-info save.
+    const levelDraft = levelDraftChanged(original, requestedLevelDraft, draft.hire_date)
+      ? requestedLevelDraft
+      : draftFromBase(currentPolicyEnabled(original), policyBaseForMonth(original, "current"), "current");
     setSavingId(original.id);
     setMessage("");
 

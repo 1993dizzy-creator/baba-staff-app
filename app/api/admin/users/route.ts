@@ -63,6 +63,8 @@ function withLevelPolicyState(
         || currentVersion?.baseDate !== nextVersion?.baseDate
         || currentSalaryRaiseEnabled !== nextSalaryRaiseEnabled,
       nextEffectiveFrom: nextMonthStart(today),
+      currentEffectiveFrom: currentVersion?.effectiveFrom ?? null,
+      nextPolicyEffectiveFrom: nextVersion?.effectiveFrom ?? null,
     },
   };
 }
@@ -564,8 +566,7 @@ export async function PATCH(req: Request) {
       : currentVersion;
     const comparisonEnabled = comparisonVersion?.enabled
       ?? isEmployeeLevelEligibleRole(resultingRole, target.level_program_enabled);
-    // Four bases: legacy date modes stay selectable only to keep an existing basis while
-    // toggling other settings; month modes are the current policy.
+    // Legacy modes are internal compatibility for unchanged profile saves only.
     const requestedBaseDateMode = body.levelBaseDateMode;
     if (!isEmployeeLevelBaseMode(requestedBaseDateMode)) {
       return policyResponse("INVALID_BASE_DATE", lang);
@@ -589,6 +590,16 @@ export async function PATCH(req: Request) {
       ? comparisonVersion?.baseDate ?? target.level_base_date_override
       : null;
     const comparisonSalaryRaiseEnabled = comparisonVersion?.salaryRaiseEnabled !== false;
+    // v10 overwrites an existing version starting on the same month. A legacy
+    // conversion must instead append a version, preserving its previous contents.
+    if (requestedEffectiveFrom && comparisonVersion?.effectiveFrom === requestedEffectiveFrom
+      && !isEmployeeLevelMonthBaseMode(comparisonBaseDateMode)
+      && isEmployeeLevelMonthBaseMode(requestedBaseDateMode)) {
+      return NextResponse.json({ ok: false, code: "LEVEL_MONTH_TRANSITION_CONFLICT",
+        error: lang === "vi" ? "Đã có chính sách bắt đầu trong tháng này. Chọn tháng khác hoặc yêu cầu chủ xem xét lịch chuyển đổi."
+          : "해당 월에 시작하는 정책이 이미 있습니다. 다른 적용월을 선택하거나 Owner에게 전환 일정 검토를 요청해주세요.",
+      }, { status: 409 });
+    }
     let salaryRaiseEnabled = comparisonSalaryRaiseEnabled;
     // null/absent keeps the decision in force; turning the level ON (new or from OFF)
     // requires an explicit choice so no part-timer gets an unintended raise.
@@ -610,6 +621,12 @@ export async function PATCH(req: Request) {
       || (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride)
       || hireMonthChanged
       || comparisonSalaryRaiseEnabled !== salaryRaiseEnabled;
+    if (levelPolicyChanged && !isEmployeeLevelMonthBaseMode(requestedBaseDateMode)) {
+      return NextResponse.json({ ok: false, code: "LEVEL_MONTH_BASE_REQUIRED",
+        error: lang === "vi" ? "Thay đổi cấp cần dùng tháng mốc tự động hoặc tháng mốc chỉ định."
+          : "레벨 설정을 변경하려면 입사월 자동 또는 직접 기준월을 선택해주세요.",
+      }, { status: 400 });
+    }
     const levelEffectiveFrom = levelPolicyChanged ? requestedEffectiveFrom : "";
     if (levelPolicyChanged && !levelEffectiveFrom) {
       return NextResponse.json({ ok: false, error: lang === "vi" ? "Vui lòng chọn tháng áp dụng." : "적용 월을 선택해주세요." }, { status: 400 });

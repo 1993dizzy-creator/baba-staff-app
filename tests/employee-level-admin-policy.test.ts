@@ -189,7 +189,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(badge, /flexShrink: 0/);
   assert.match(badge, /negotiationEligible/);
   assert.match(page, /textOverflow: "ellipsis"/);
-  assert.match(page, /text\.directBaseShort/);
+  assert.match(page, /text\.levelBaseMonth/);
   assert.match(page, /text\.nextLevelShort/);
   assert.match(page, /text\.highestLevel/);
   // Current details stay compact; salary comparisons live in the settings modal.

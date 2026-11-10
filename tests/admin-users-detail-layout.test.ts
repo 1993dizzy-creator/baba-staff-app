@@ -99,20 +99,21 @@ for (const [name, page] of [
   });
 }
 
-test("level modal offers month bases while legacy basis stays read-only", () => {
+test("level modal initializes legacy employees with a month candidate and offers month bases only", () => {
   const modal = listPage.slice(listPage.indexOf("function LevelSettingsModal("), listPage.indexOf("function LevelSummary("));
   assert.match(modal, /const baseModeOptions = \["hire_month", "override_month"\] as const/);
-  assert.match(modal, /text\.levelLegacyReadOnly/);
+  assert.match(modal, /employeeLevelMonthCandidate/);
+  assert.doesNotMatch(modal, /text\.levelLegacyReadOnly/);
   assert.doesNotMatch(modal, /text\.levelLegacyDateMode|type="date"/);
   assert.match(modal, /text\.levelHireMonthMode/);
   assert.match(modal, /text\.levelOverrideMonthMode/);
   assert.match(modal, /text\.levelSalaryRaise/);
-  assert.match(modal, /effectiveMonth: levelDraftChanged[\s\S]*: "next"/);
+  assert.match(modal, /effectiveMonth: isLegacy \? "next"/);
   assert.match(modal, /<Field label=\{text\.levelEffectiveMonth\}>/);
 });
 
 test("modal state is local until apply; detail cancel and saving preserve the boundary", () => {
-  assert.match(listPage, /const \[levelDraft, setLevelDraft\] = useState<LevelPolicyDraft>\(\(\) => \(\{ \.\.\.initial/);
+  assert.match(listPage, /const \[levelDraft, setLevelDraft\] = useState<LevelPolicyDraft>\(\(\) => \{/);
   assert.match(listPage, /if \(valid\) onApply\(levelDraft\)/);
   assert.match(listPage, /onApply=\{value => \{ setLevelDraft\(value\)/);
   assert.match(listPage, /if \(isSaving \|\| savePending\.current\) return/);

@@ -241,12 +241,13 @@ test("legacy 2/3: a hire-date edit or a rehire no longer rewrites a hire_date ve
   assert.equal(calculateEmployeeLevel({ role: "staff", hireDate: "2025-12-20", levelBaseDateOverride: null, asOfDate: "2026-09-15" }).level, 2);
 });
 
-test("legacy 8: the admin label stays 'hire date' (never shown as a direct base)", () => {
+test("legacy 8: historical source stays hire_date while admin UI requests month conversion", () => {
   const info = viaVersion(newSel, newCalc, { ...ROW, base_date: "2025-11-02", base_date_mode: "hire_date" }, { hireDate: "2027-01-10" }, "2026-09-15");
   assert.equal(info.baseDateSource, "hire_date");
   assert.equal(info.baseMonth, undefined);
   const page = readFileSync("app/(protected)/admin/users/page.tsx", "utf8");
-  assert.match(page, /info\.baseDateSource === "override"\s*\n?\s*\? `\$\{text\.directBaseShort\}/);
+  assert.match(page, /text\.levelMonthTransitionRequired/);
+  assert.doesNotMatch(page, /text\.hireDateBase|text\.directBaseShort/);
 });
 
 test("11: level OFF and hourly part-timers keep their pay; a monthly part-timer can keep the level without the raise", () => {
