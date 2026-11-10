@@ -132,7 +132,8 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | 유효 결제예정 영수증(payment_status=1) 1건 + 주문 Status=1/3 | 상세가 있으면 주문 헤더 금액을 정확히 한 번 예상액에 포함. 영수증 금액은 더하지 않음 |
 | 결제예정 영수증 1건 + 주문 Status=4/5/7/8 등 | 결제 후보·미확정 상태 보호, 예상액 미포함 |
 | 의미 미확인 영수증 상태(payment_status=2/null 등) 1건 | 기존대로 예상액 미포함 |
-| 취소 영수증만 있음 + POS Status≠1/3 | 제외 |
+| 주문 Status=5 | 취소 완료. 예상액 제외, 재확인 대상 제외(새 Migration 필요) |
+| 취소 영수증만 있음 + POS Status≠1/3 | 제외. 영수증 취소만으로 주문 취소를 추론하지 않음 |
 | 취소 영수증만 있음 + POS Status=1/3 | 불확정(재개 가능성) |
 | 유효 영수증 2건 이상 | 불확정 |
 | 영수증 없음 + Status=1/3 | 상세 확인된 진행·결제 요청 주문(예상액 포함) |
@@ -140,7 +141,7 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | 영수증 없음 + 그 외 Status | 불확정 |
 
 - 불확정 주문은 건수와 금액을 별도로 표시하고 합산하지 않는다.
-- Status 3은 2026-11-10 운영자 확인에 따른 결제 요청 상태이며 결제 완료가 아니다. 기존 스냅샷의 `statusClass=unknown`도 조회 시 원시 헤더 Status로 재분류한다. 저장 데이터 수정이나 Migration은 필요 없다. Status 7/8은 계속 미확정이다.
+- Status 3은 2026-11-10 운영자 확인에 따른 결제 요청 상태이며 결제 완료가 아니다. 기존 스냅샷의 `statusClass=unknown`도 조회 시 원시 헤더 Status로 재분류한다. Status 3만의 재분류에는 Migration이 필요 없다. Status 5는 아래 11/11 보완에 따라 취소 완료이며, Status 7/8은 계속 미확정이다.
 - 마감된 영업일이나 오늘이 아닌 영업일에는 예상액을 계산하지 않는다(`closed`).
 
 ## KPI 계약 (`openOrders` in `/api/admin/sales/today`)
@@ -245,6 +246,45 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 - DB·Migration·장부·재고·급여 및 마감 코드 변경 없음. 운영 복구 완료나 런타임 READ 활성화 확인을 의미하지 않는다.
 
 ## DB 초안 요약
+
+### 2026-11-11 vanished detail Id 누락 복구 (이전 상태 설명보다 우선)
+
+**범위와 확인한 원인**
+
+- 기준 main `0702388ac0b425f7111fe2f0786c4808fd2888b7`, 기존 Worktree의 깨끗한 `47c3c084` 브랜치를 보존하고 `codex/open-orders-vanished-recovery-20261110`에서 작업했다.
+- 운영자가 제공한 11/10 23:47 진단은 `vanished_detail / order_id_missing / orders_invalid_row`, 소실 1건·확인 0건이다. 이전 스냅샷의 미완료 주문 상세에서 유효한 ID를 얻지 못해 전체 실행이 거부되는 경로를 격리 재현했다.
+- CUKCUK가 ID를 생략한 이유, 실제 소실 주문의 OrderId 및 현재 연결 영수증은 이번 작업에서 운영 조회하지 않았다. 공식 Data.Id/Status 5 의미는 사용자가 제공한 확정 정보를 적용했다. 저장소의 공식 상세/목록 문서 URL은 공개 문서 조회 시 404여서 최신 원문을 독립적으로 재확인하지 못했다. 주문 API 실호출은 하지 않았다.
+
+**변경 전후**
+
+- 이전: 사라진 주문 상세 ID가 없으면 결제 영수증이 있어도 전체 실패. Status 5는 unknown이라 앱·DB가 계속 재확인을 요구했다.
+- 이후: ID 누락 또는 Data 부재일 때만 기존 CUKCUK 영수증을 읽어, 정확한 OrderId와 주문 영업일 D/D+1에서 비취소 활성 영수증이 정확히 1건이며 payment_status=3인지 확인한다. 결제예정·취소만 존재·중복·다른 주문/영업일이면 계속 차단한다. 취소 후 단일 정상 결제 재발행은 허용한다.
+- 요청 ID를 Data.Id에 주입하지 않는다. 이전 DB 스냅샷의 ID·Status·금액·메뉴를 보존하고 `closureReceiptId`/`closureConfirmedAt`을 독립 증거로 기록한다. `providerObservedAt`은 이전 공급자 관측 시각이다. 응답에 ID가 없으면서 Status 4가 있더라도 그 값을 새 공급자 사실로 채택하지 않는다.
+- 잘못된 ID·숫자/zero UUID 등 잘못된 ID 형식, 잘못된 날짜·영업일, 잘못된 Data 형식, 공급자 오류는 결제 증거가 있어도 우회하지 않는다. ID/영업일을 메뉴 파싱 전에 검사해 메뉴 누락이 신원 오류를 가리지 않게 했다.
+- 정상 조회는 기존대로다. 영수증 증거 조회는 필요한 실패 경로에서만 D/D+1을 정확한 페이지 수로 읽으며 실행당 재사용한다. 공급자 추가 요청은 없다. 이전 영수증 증거가 사후 취소·결제예정·삭제로 바뀌면 과거 헤더를 새 진행 예상액으로 재사용하지 않고 `closure_evidence_changed`로 보류한다.
+- Status 5는 `canceled`이며 미결제 예상에 포함하지 않는다. 목록에 있는 Status 5는 상세 재호출이 필요 없고, 예전 unknown으로 저장된 raw Status 5도 `unfinishedOrderIds()`에서 제외한다. Status 4의 결제 후보 및 7/8 미확정 보호는 유지한다.
+
+**정식 Migration — 별도 운영 적용 승인 필요**
+
+파일: `supabase/migrations/20261110170329_pos_open_orders_vanished_receipt_evidence.sql` (Supabase CLI `migration new`로 생성, UTC 파일 시각).
+
+- 기존 적용 Migration/초안 파일은 수정하지 않았다. 새 파일은 private orders의 `canceled` 허용값과 raw status=5 일치 제약, 독립 영수증 증거 컬럼 2개를 추가한다. 기존 데이터 일괄 수정은 없다.
+- 기존 snapshot commit 함수를 private `commit_snapshot_v1`로 보존하고 직접 실행 권한을 회수한다. 기존 이름 `commit_v1`의 새 검증 래퍼와 public SECURITY INVOKER 래퍼, read 모델을 갱신한다. public RPC의 인자는 동일하다.
+- DB는 앱의 증거 주장을 신뢰하지 않는다. 같은 scope/영업일의 기존 주문이 실제 있어야 하며 현재 receipts를 다시 검사한다. 앱이 전달한 Status·금액·메뉴를 변조해도 영수증 복구에서는 DB의 이전 주문을 사용한다.
+- 영수증 증거 경로에서만 `pos_sales_receipts`에 SHARE 잠금을 잡아 검증과 커밋 사이의 취소/재발행/중복 삽입을 막는다. 이 짧은 구간 동안 영수증 쓰기가 대기할 수 있다. 잠금 획득 대기는 10초로 제한하고 원래 lock_timeout을 복원한다. 잠금 실패·증거 변경은 `open_orders_vanished`로 실패한다. 영수증 DML은 하지 않는다.
+- 원래 commit의 advisory lock·owner token·lease·소실 주문 포함·트랜잭션 원자성 검증은 그대로 수행한다. 모든 주문/메뉴를 보존하고, 복구 행의 공급자 관측 시각은 변경하지 않는다. 기존 raw Status 5 행은 삭제하지 않고 canceled로 유지하며 재호출하지 않는다.
+- `runs.manifest.receiptClosures`에는 사용한 영수증과 이전 정규화 스냅샷을, `retainedCancellations`에는 원래 Status 5 관측 증거를 남긴다. 공급자 원본 JSON이나 고객 정보는 추가하지 않는다. 기존 보관 기간은 변경하지 않는다.
+- read 응답의 `recoveryContractVersion=2`를 확인한 경우에만 앱이 영수증 복구 메타데이터를 전송한다. Migration 미적용 DB가 추가 JSON 필드를 무시하고 성공 처리하는 일을 막는다. 미적용 상태에서는 기존 차단을 유지한다.
+- 적용 순서: 별도 승인된 Migration 적용·스키마/권한/계약 버전 확인 후 새 앱을 배포한다. 이번 작업은 둘 다 수행하지 않았다. 장부·재고·급여·확정 결제매출·마감 계약·환경변수·Cron 등록은 변경하지 않는다.
+
+**RED/GREEN과 남은 확인**
+
+- 수정 전 새 격리 테스트: 3개 중 2 FAIL(단일 정상 영수증이 있어도 ID 누락으로 실패, Status 5가 unknown), 1 PASS(독립 증거 없으면 차단). 수정 후 같은 3개 GREEN.
+- 원래 DB guard가 raw Status 5/unknown 행 소실을 막는 것도 로컬 실제 SQL로 재현했다. 새 Migration 적용 후 이전 Status 5 행 보존·재조회 생략이 통과했다.
+- 로컬 PGlite에서 정식 Migration과 public 서비스 역할 RPC를 실행해 영수증 재검증, 다음 영업일/재발행, 위조 증거 거부, 헤더 사실 보존, 삭제/삽입 도중 오류의 원자적 롤백, 소유권·lease·재실행, Migration 트랜잭션 롤백, helper 권한을 검증했다. 운영 DB/자격 증명은 사용하지 않았다.
+- 이번 영향 범위 테스트 7개 파일 93/93 PASS. 대상: `pos-open-orders-vanished-recovery`, `pos-open-orders-vanished-db`, `pos-open-orders-core`, `pos-open-orders-recovery`, `sales-daily-kpi`, `pos-open-orders-cron-route`, `sales-daily-payment-total`.
+- TypeScript(`--noEmit --incremental false`), 변경 파일 ESLint, diff 검사 PASS. `db advisors --type all --fail-on error`는 기존 로컬 스택(127.0.0.1:54322)을 읽었으며 ERROR 0, 기존 매핑/영수증 테이블의 중복 인덱스 WARN 3이었다. 새 Migration은 이 로컬 스택에도 적용하지 않았으므로 해당 Advisors 결과를 새 함수 검증으로 간주하지 않는다. 새 함수·권한·원자성 검증 근거는 격리 PGlite 테스트다.
+- 이전 PASS는 원본 SQL 구현·변경 없는 영역의 근거로만 재사용하며 이번 복구 성공을 대체하지 않는다. 운영 복구 여부는 실제 소실 OrderId와 유효 영수증 증거, Migration 계약 버전, 첫 정상 Cron·감사 증거 및 KPI 대조를 추가 확인해야 한다. 증거가 없으면 여전히 차단하는 것이 정상이다.
 
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.

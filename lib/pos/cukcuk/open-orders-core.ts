@@ -6,24 +6,26 @@
 // Contract notes (verify with a read-only probe before activation):
 // - Order Status=1 is in progress; Status=3 requests payment (not yet paid).
 //   Confirmed by the operator's 2026-11-10 Status 1 -> 3 -> 4 observation. Status=4 is
-//   documented only as "looks paid" (docs/cukcuk-api-capability-map.md); every
-//   other value is unknown. Status=1/3 can count toward the open estimate.
+//   documented only as "looks paid" (docs/cukcuk-api-capability-map.md). Status=5
+//   is canceled (official meaning supplied by the operator, 2026-11-11).
+//   Other values stay unknown. Status=1/3 can count toward the open estimate.
 // - Order Status is NOT the receipt payment_status (pos_sales_receipts); the two
 //   are never mixed. Receipts link to orders through receipt raw_json.OrderId.
 // - ErrorType/Code 102 is CUKCUK's concurrent-request rejection (existing sync).
 //   Code 7 and HTTP/Code 401 are treated as credential problems: one re-login,
 //   then the run fails. The exact meaning of 7 is not documented in this repo.
-import { calculateStoreBusinessDate } from "../../store-settings/business-time-core.ts";
+import { addStoreDays, calculateStoreBusinessDate } from "../../store-settings/business-time-core.ts";
 
 export const ORDER_PAGE_LIMIT = 100;
 export const ORDER_STATUS_OPEN = 1;
 export const ORDER_STATUS_PAYMENT_REQUESTED = 3;
 export const ORDER_STATUS_PAID_CANDIDATE = 4;
+export const ORDER_STATUS_CANCELED = 5;
 export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
-export type OrderStatusClass = "open" | "paid_candidate" | "unknown";
+export type OrderStatusClass = "open" | "paid_candidate" | "canceled" | "unknown";
 
 const OPEN_ORDER_ERROR_CODES = [
   "provider_http_failure", "provider_timeout", "provider_token_expired", "provider_error_7",
@@ -36,8 +38,8 @@ export type OpenOrderErrorCode = typeof OPEN_ORDER_ERROR_CODES[number];
 
 const DIAGNOSTIC_STAGES = ["page", "detail", "vanished_detail", "vanished_limit", "run"] as const;
 const DIAGNOSTIC_REASONS = [
-  "row_not_object", "order_id_missing", "order_date_invalid", "total_amount_invalid",
-  "page_data_not_array", "detail_data_missing", "detail_id_mismatch", "vanished_id_mismatch",
+  "row_not_object", "order_id_missing", "order_id_invalid", "order_date_invalid", "total_amount_invalid",
+  "page_data_not_array", "detail_data_missing", "detail_data_invalid", "detail_id_mismatch", "vanished_id_mismatch",
   "vanished_business_date_mismatch", "vanished_limit", "unexpected_error",
 ] as const;
 type OpenOrderDiagnosticContext = {
@@ -121,6 +123,7 @@ export function classifyOrderStatus(status: unknown): OrderStatusClass {
   const value = toFiniteNumber(status);
   if (value === ORDER_STATUS_OPEN || value === ORDER_STATUS_PAYMENT_REQUESTED) return "open";
   if (value === ORDER_STATUS_PAID_CANDIDATE) return "paid_candidate";
+  if (value === ORDER_STATUS_CANCELED) return "canceled";
   return "unknown";
 }
 
@@ -207,10 +210,13 @@ export type OrderSummary = {
 
 export function normalizeOrderSummary(row: unknown): OrderSummary {
   if (!isObject(row)) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "row_not_object" });
-  const orderId = toId(pick(row, ["Id", "ID", "OrderId", "OrderID"]));
+  const rawId = pick(row, ["Id", "ID", "OrderId", "OrderID"]);
+  const orderId = toId(rawId);
   const orderDate = pick(row, ["Date", "OrderDate"]);
   const totalAmount = toFiniteNumber(pick(row, ["TotalAmount", "Amount"]));
-  if (!orderId) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "order_id_missing" });
+  if (!orderId) throw new OpenOrderSyncError("orders_invalid_row", undefined, {
+    reason: rawId === undefined || (typeof rawId === "string" && !rawId.trim()) ? "order_id_missing" : "order_id_invalid",
+  });
   if (typeof orderDate !== "string" || !Number.isFinite(Date.parse(orderDate))) {
     throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "order_date_invalid" });
   }
@@ -346,12 +352,17 @@ export type CollectedOrder = OrderSummary & {
   businessDate: string;
   tableName: string | null;
   lines: OrderLine[] | null;
+  /** Independent DB receipt evidence; status/ID remain last observed provider facts. */
+  closureReceiptId?: number | null;
+  closureConfirmedAt?: string | null;
+  providerObservedAt?: string | null;
 };
 
 /** Applies GET orders/{id}: the detail must be the same order and carry OrderDetails. */
 export function mergeOrderDetail(summary: OrderSummary, detailJson: unknown, cutoff: string): CollectedOrder {
   const data = isObject(detailJson) && isObject(detailJson.Data) ? detailJson.Data : null;
-  if (!data) throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "detail_data_missing" });
+  if (!data) throw new OpenOrderSyncError("order_detail_mismatch", undefined,
+    { reason: isObject(detailJson) && detailJson.Data != null ? "detail_data_invalid" : "detail_data_missing" });
   const detailSummary = normalizeOrderSummary(data);
   if (detailSummary.orderId !== summary.orderId) throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "detail_id_mismatch" });
   const tableName = pick(data, ["TableName"]);
@@ -395,19 +406,38 @@ export function orderDetailReview(order: CollectedOrder & { lines: OrderLine[] }
   };
 }
 
-export type ReceiptLink = { orderId: string; receiptId: number; paymentStatus: number | null; isCanceled: boolean | null };
+export type ReceiptLink = { orderId: string; receiptId: number; paymentStatus: number | null; isCanceled: boolean | null; businessDate?: string };
+
+/** Receipt cancellation alone never proves order cancellation. Same/next business day only. */
+export function singlePaidOrderReceipt(orderId: string, businessDate: string, receipts: ReceiptLink[]) {
+  if (!toId(orderId)) return null;
+  const matches = receipts.filter((receipt) => toId(receipt.orderId) === toId(orderId)
+    && [businessDate, addStoreDays(businessDate, 1)].includes(receipt.businessDate ?? ""));
+  const unique = new Map<number, ReceiptLink>();
+  for (const receipt of matches) {
+    if (!Number.isSafeInteger(receipt.receiptId) || receipt.receiptId <= 0) return null;
+    const prior = unique.get(receipt.receiptId);
+    if (prior && (prior.paymentStatus !== receipt.paymentStatus || prior.isCanceled !== receipt.isCanceled
+      || prior.businessDate !== receipt.businessDate)) return null;
+    unique.set(receipt.receiptId, receipt);
+  }
+  const active = [...unique.values()].filter((receipt) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+  return active.length === 1 && active[0].paymentStatus === 3 ? active[0] : null;
+}
 
 export type UncertainReason =
   | "multiple_receipts"
   | "paid_without_receipt"
   | "unknown_status"
   | "open_without_lines"
+  | "closure_evidence_changed"
   | "open_after_canceled_receipt";
 
 export type ClassifiedOrders = {
   open: (CollectedOrder & { lines: OrderLine[] })[];
   uncertain: { orderId: string; orderNo: string | null; reason: UncertainReason; amount: number }[];
   converted: number;
+  canceled: number;
   receiptPending: number;
   receiptCanceled: number;
   otherBusinessDate: number;
@@ -433,7 +463,7 @@ export function classifyOrdersForBusinessDate(
     receiptSeen.add(receipt.receiptId);
     links.set(orderId, [...(links.get(orderId) ?? []), receipt]);
   }
-  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
+  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, canceled: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
   for (const order of orders) {
     if (order.businessDate !== businessDate) {
       result.otherBusinessDate++;
@@ -451,7 +481,8 @@ export function classifyOrdersForBusinessDate(
       if (statusClass === "open") {
         if (order.lines) result.open.push({ ...order, statusClass, lines: order.lines });
         else uncertain("open_without_lines");
-      } else if (statusClass === "paid_candidate") uncertain("paid_without_receipt");
+      } else if (statusClass === "canceled") result.canceled++;
+      else if (statusClass === "paid_candidate") uncertain("paid_without_receipt");
       else uncertain("unknown_status");
     };
     // A canceled receipt re-issued as a paid one (seen in production: status 4 + 3 on one
@@ -464,20 +495,23 @@ export function classifyOrdersForBusinessDate(
         result.receiptPending++;
         // Payment Status 1 is pending, not paid. Count the linked order's header
         // once (never add the receipt amount). Other receipt statuses stay excluded.
-        if (active[0].paymentStatus === 1) classifyUnpaid();
+        if (order.closureReceiptId) uncertain("closure_evidence_changed");
+        else if (active[0].paymentStatus === 1) classifyUnpaid();
       }
     } else if (linked.length > 0) {
       // Only canceled receipts: an order still open in POS may have been re-opened.
       if (statusClass === "open") uncertain("open_after_canceled_receipt");
       else result.receiptCanceled++;
-    } else classifyUnpaid();
+    } else if (order.closureReceiptId) uncertain("closure_evidence_changed");
+    else classifyUnpaid();
   }
   return result;
 }
 
 /** Orders that were not finished in the previous snapshot (open or unverified status). */
-export function unfinishedOrderIds(previous: { orderId: string; statusClass: OrderStatusClass }[]) {
-  return previous.filter((order) => order.statusClass !== "paid_candidate").map((order) => toId(order.orderId)).filter(Boolean);
+export function unfinishedOrderIds(previous: { orderId: string; statusClass: OrderStatusClass; status?: number | null }[]) {
+  return previous.filter((order) => order.statusClass !== "paid_candidate" && order.statusClass !== "canceled"
+    && order.status !== ORDER_STATUS_CANCELED).map((order) => toId(order.orderId)).filter(Boolean);
 }
 
 export const MAX_VANISHED_CONFIRMATIONS = 20;
@@ -500,7 +534,8 @@ export const MAX_VANISHED_CONFIRMATIONS = 20;
 export async function collectOpenOrderSnapshot(
   transport: OrderTransport,
   input: { branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number;
-    previousUnfinishedIds?: string[]; deadlineAt?: number; now?: () => number }
+    previousUnfinishedIds?: string[]; previousOrders?: CollectedOrder[];
+    loadReceiptEvidence?: () => Promise<ReceiptLink[]>; deadlineAt?: number; now?: () => number }
 ) {
   const windowStart = Date.parse(input.windowFrom);
   if (!Number.isFinite(windowStart)) throw new OpenOrderSyncError("orders_page_bound", "window");
@@ -511,10 +546,10 @@ export async function collectOpenOrderSnapshot(
   const orders: CollectedOrder[] = [];
   let detailCount = 0;
   // Serial detail reads: CUKCUK rejects concurrent requests (102). Unverified statuses
-  // (e.g. 5/7/8) are also read, so their menu lines exist once the mapping is confirmed;
+  // (e.g. 7/8) are also read, so their menu lines exist once the mapping is confirmed;
   // until then they are reported as uncertain and the KPI is marked incomplete.
   for (const summary of selected) {
-    if (summary.statusClass === "paid_candidate") {
+    if (summary.statusClass === "paid_candidate" || summary.statusClass === "canceled") {
       orders.push(summaryOnly(summary, input.cutoff));
       continue;
     }
@@ -530,14 +565,47 @@ export async function collectOpenOrderSnapshot(
   if (vanished.length > MAX_VANISHED_CONFIRMATIONS) throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined,
     { stage: "vanished_limit", reason: "vanished_limit", vanishedCount: vanished.length, confirmedCount: 0 });
   let confirmedCount = 0;
+  let receiptEvidence: Promise<ReceiptLink[]> | undefined;
   for (const orderId of vanished) {
     let confirmed: CollectedOrder;
     try {
       const detail = await callProvider(transport, { kind: "detail", orderId }, state, input.retryDelayMs);
       detailCount++;
       const data = isObject(detail.Data) ? detail.Data : null;
-      confirmed = mergeOrderDetail(normalizeOrderSummary(data), detail, input.cutoff);
+      if (!data) throw new OpenOrderSyncError("order_detail_mismatch", undefined,
+        { reason: detail.Data != null ? "detail_data_invalid" : "detail_data_missing" });
+      const detailSummary = normalizeOrderSummary(data);
+      // Validate identity/date before menu parsing, so absent lines cannot hide a
+      // wrong-order response or a response outside this business day.
+      if (detailSummary.orderId !== orderId) throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "vanished_id_mismatch" });
+      if (calculateStoreBusinessDate(detailSummary.orderDate, input.cutoff) !== input.businessDate) {
+        throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "vanished_business_date_mismatch" });
+      }
+      confirmed = mergeOrderDetail(detailSummary, detail, input.cutoff);
     } catch (error) {
+      // Never repair provider Data.Id. Only missing identity/data may use an independent
+      // paid receipt; wrong identity/date and provider errors remain hard failures.
+      const missingIdentity = error instanceof OpenOrderSyncError
+        && ["order_id_missing", "detail_data_missing"].includes(error.diagnostic?.reason ?? "");
+      const previous = input.previousOrders?.find((order) => toId(order.orderId) === orderId);
+      if (missingIdentity && input.loadReceiptEvidence && previous?.businessDate === input.businessDate
+        && Number.isFinite(Date.parse(previous.orderDate)) && calculateStoreBusinessDate(previous.orderDate, input.cutoff) === input.businessDate
+        && Number.isFinite(previous.totalAmount) && previous.totalAmount >= 0 && (previous.lines === null || Array.isArray(previous.lines))) {
+        try {
+          assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "receipt_evidence");
+          receiptEvidence ??= input.loadReceiptEvidence();
+          const receipt = singlePaidOrderReceipt(orderId, input.businessDate, await receiptEvidence);
+          assertWithinDeadline(state, 0, "receipt_evidence");
+          if (receipt) {
+            orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId });
+            confirmedCount++;
+            continue;
+          }
+        } catch (evidenceError) {
+          if (evidenceError instanceof OpenOrderSyncError && evidenceError.code === "run_deadline_exceeded") throw evidenceError;
+          // An unavailable receipt read is not evidence. Keep the original missing-ID failure.
+        }
+      }
       const context: OpenOrderDiagnosticContext = { ...(error instanceof OpenOrderSyncError ? error.diagnostic : {}),
         stage: "vanished_detail", vanishedCount: vanished.length, confirmedCount,
         ...(error instanceof OpenOrderSyncError ? {} : { reason: "unexpected_error" as const }),
@@ -610,7 +678,8 @@ export type OpenOrderRpc = (name: string, args: Record<string, unknown>) => Prom
  */
 export async function runOpenOrderSync(
   deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string; now?: () => number;
-    onDiagnostic?: (diagnostic: OpenOrderSyncDiagnostic) => void },
+    onDiagnostic?: (diagnostic: OpenOrderSyncDiagnostic) => void;
+    loadReceiptEvidence?: (businessDate: string) => Promise<ReceiptLink[]> },
   input: { scope: string; branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number }
 ): Promise<Record<string, unknown>> {
   const now = deps.now ?? Date.now;
@@ -625,17 +694,22 @@ export async function runOpenOrderSync(
   try {
     // The previous snapshot of this date decides which orders must still be accounted for.
     const previous = await deps.rpc(OPEN_ORDERS_RPC.read, { p_scope: input.scope, p_business_date: input.businessDate });
-    const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as { orderId: string; statusClass: OrderStatusClass }[]) : [];
+    const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as CollectedOrder[]) : [];
     assertWithinDeadline({ relogins: 0, maxRelogins: 0, deadlineAt, now }, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "login");
     await deps.transport.login();
     const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, {
-      ...input, previousUnfinishedIds: unfinishedOrderIds(previousOrders), deadlineAt, now,
+      ...input, previousOrders, previousUnfinishedIds: unfinishedOrderIds(previousOrders), deadlineAt, now,
+      // Old commit RPCs ignore unknown JSON fields: never send receipt fallback to
+      // an unupgraded DB that cannot preserve/validate its independent evidence.
+      loadReceiptEvidence: previous.recoveryContractVersion === 2 && deps.loadReceiptEvidence
+        ? () => deps.loadReceiptEvidence!(input.businessDate) : undefined,
     });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
       orderId: order.orderId, orderNo: order.orderNo, status: order.status, statusClass: order.statusClass,
       orderDate: order.orderDate, businessDate: order.businessDate, totalAmount: order.totalAmount,
       tableName: order.tableName, lines: order.lines,
+      ...(order.closureReceiptId ? { closureReceiptId: order.closureReceiptId } : {}),
     }));
     return await deps.rpc(OPEN_ORDERS_RPC.commit, {
       p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
