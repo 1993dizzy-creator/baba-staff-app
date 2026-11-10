@@ -12,6 +12,7 @@ export type OpenOrdersPanelText = {
   provisionalAverage: string;
   uncertainOrders: string;
   openOrdersIncomplete: string;
+  openOrdersDetailWarning: string;
   openOrdersUnavailable: string;
   openOrdersStale: string;
   openOrdersSyncIncomplete: string;
@@ -87,6 +88,9 @@ export default function OpenOrdersPanel({ data, text }: { data: OpenOrderKpi | u
             ? ` · ${text.uncertainOrders} ${data.uncertain.orderCount}${text.receiptCountSuffix} · ${vnd(data.uncertain.amount)}`
             : ""}
         </p>
+      ) : null}
+      {data.detailWarnings && data.detailWarnings.length > 0 ? (
+        <p role="alert" style={warningText}>{text.openOrdersDetailWarning}</p>
       ) : null}
       <p style={muted}>{text.openOrdersNote}</p>
     </section>

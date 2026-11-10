@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
+import { salesText } from "../lib/text/sales.ts";
+import type { OpenOrdersPanelText } from "../components/sales/OpenOrdersPanel.tsx";
 import {
   OPEN_ORDERS_LEASE_MS,
   OPEN_ORDERS_REQUEST_TIMEOUT_MS,
@@ -107,8 +113,9 @@ test("token expiry and error 7 re-login once per run, then fail; timeout and HTT
   assert.equal(providerFailureCode(200, { Success: true, Code: 200 }), null);
 });
 
-test("order status: only 1 is open; 4 is a paid candidate; anything else is unknown", () => {
-  assert.deepEqual([1, "1", 4, 2, 3, null, "x"].map(classifyOrderStatus), ["open", "open", "paid_candidate", "unknown", "unknown", "unknown", "unknown"]);
+test("order status: 1/3 are open; 4 is a paid candidate; 7/8 and other values remain unknown", () => {
+  assert.deepEqual([1, "1", 3, "3", 4, 2, 7, 8, null, "x"].map(classifyOrderStatus),
+    ["open", "open", "open", "open", "paid_candidate", "unknown", "unknown", "unknown", "unknown", "unknown"]);
 });
 
 const line = (id: number, extra: Record<string, unknown> = {}) => ({ Id: uuid(1000 + id), ItemId: uuid(5000 + id), ItemName: `Item ${id}`, Quantity: 1, Price: 50000, Amount: 50000, ...extra });
@@ -162,11 +169,11 @@ test("00:00-03:00 belongs to the previous business date; 03:00 starts the next o
 
 test("Status 1/3/7/8 get menu details (serial); only the paid candidate 4 is list-only", async () => {
   const rows = [order(1), order(3, { Status: 3 }), order(7, { Status: 7 }), order(8, { Status: 8 }), order(4, { Status: 4 })];
-  const t = transport((r) => (r.kind === "page" ? ok(rows, rows.length) : ok({ ...rows.find((o) => o.Id === r.orderId), OrderDetails: [line(1)] })));
+  const t = transport((r) => (r.kind === "page" ? ok(rows, rows.length) : ok({ ...rows.find((o) => o.Id === r.orderId), OrderDetails: [line(1, { Amount: 100000 })] })));
   const snap = await collectOpenOrderSnapshot(t, { branchId: "b", businessDate: "2026-11-09", windowFrom: "2026-11-08T20:00:00.000Z", cutoff: CUTOFF });
   assert.deepEqual(t.sent.map((r) => r.kind), ["page", "detail", "detail", "detail", "detail"]);
   assert.deepEqual(snap.orders.map((o) => [o.status, o.statusClass, o.lines === null]), [
-    [1, "open", false], [3, "unknown", false], [7, "unknown", false], [8, "unknown", false], [4, "paid_candidate", true],
+    [1, "open", false], [3, "open", false], [7, "unknown", false], [8, "unknown", false], [4, "paid_candidate", true],
   ]);
   assert.equal(snap.manifest.detailCount, 4);
 
@@ -178,8 +185,8 @@ test("Status 1/3/7/8 get menu details (serial); only the paid candidate 4 is lis
     classified, now: new Date("2026-11-09T14:00:00.000Z") });
   assert.equal(kpi.status, "ok");
   assert.equal(kpi.complete, false);
-  assert.equal(kpi.open?.orderCount, 1);
-  assert.deepEqual(kpi.uncertain?.reasons, { unknown_status: 3, paid_without_receipt: 1 });
+  assert.equal(kpi.open?.orderCount, 2);
+  assert.deepEqual(kpi.uncertain?.reasons, { unknown_status: 2, paid_without_receipt: 1 });
   assert.deepEqual(kpi.statusCounts, { "1": 1, "3": 1, "7": 1, "8": 1, "4": 1 });
   // Only confirmed open orders with no uncertainty and no orphan options are complete.
   const only = buildOpenOrderKpi({ ...{ enabled: true, businessDate: "2026-11-09", isLiveBusinessDay: true, isClosed: false, paid: { amount: 0, receiptCount: 0 } },
@@ -257,6 +264,110 @@ test("production pattern: a canceled receipt re-issued as paid on the same Order
 const paid = { amount: 39_647_400, receiptCount: 26 };
 const now = new Date("2026-11-09T14:00:00.000Z");
 const fresh = { businessDate: "2026-11-09", lastSuccessAt: "2026-11-09T13:58:00.000Z", lastAttemptAt: "2026-11-09T13:58:00.000Z", lastErrorCode: null };
+
+const kpiFor = (orders: CollectedOrder[], receipts: Parameters<typeof classifyOrdersForBusinessDate>[1] = []) =>
+  buildOpenOrderKpi({ enabled: true, businessDate: fresh.businessDate, isLiveBusinessDay: true, isClosed: false,
+    paid, sync: fresh, classified: classifyOrdersForBusinessDate(orders, receipts, fresh.businessDate), now });
+
+test("Status 1 -> 3 -> 4 and amount edits replace the estimate; paid receipts always win", async () => {
+  for (const [status, amount] of [[1, 1250000], [3, 1250000], [3, 1350000], [4, 1350000]]) {
+    const row = order(5, { Status: status, TotalAmount: amount });
+    const snapshot = await collectOpenOrderSnapshot(transport((r) => r.kind === "page" ? ok([row], 1)
+      : ok({ ...row, OrderDetails: [line(1, { Amount: amount })] })),
+    { branchId: "b", businessDate: fresh.businessDate, windowFrom: "2026-11-08T20:00:00.000Z", cutoff: CUTOFF });
+    const noReceipt = kpiFor(snapshot.orders);
+    assert.equal(noReceipt.open?.amount, status === 4 ? 0 : amount);
+    assert.equal(noReceipt.open?.orderCount, status === 4 ? 0 : 1);
+    assert.deepEqual(noReceipt.paid, paid);
+    const linked = kpiFor(snapshot.orders, [{ orderId: uuid(5), receiptId: 50, paymentStatus: 3, isCanceled: false }]);
+    assert.equal(linked.open?.amount, 0);
+    assert.deepEqual(linked.provisional, { amount: paid.amount, count: paid.receiptCount,
+      averageAmount: Math.round(paid.amount / paid.receiptCount) });
+  }
+});
+
+test("persisted Status 3 unknown snapshots are reclassified; canceled, duplicate and reissued receipts stay protected", () => {
+  const request = collected(5, { status: 3, statusClass: "unknown" });
+  assert.equal(kpiFor([request]).open?.amount, 500000);
+  assert.equal(request.statusClass, "unknown"); // No stored-data mutation.
+  const canceled = { orderId: uuid(5), receiptId: 50, paymentStatus: 4, isCanceled: true };
+  const paidReceipt = { ...canceled, receiptId: 51, paymentStatus: 3, isCanceled: false };
+  assert.deepEqual(kpiFor([request], [canceled]).uncertain?.reasons, { open_after_canceled_receipt: 1 });
+  const reissued = classifyOrdersForBusinessDate([request], [canceled, paidReceipt, paidReceipt], fresh.businessDate);
+  assert.deepEqual([reissued.open.length, reissued.converted, reissued.uncertain.length], [0, 1, 0]);
+  assert.deepEqual(kpiFor([request], [paidReceipt, { ...paidReceipt, receiptId: 52 }]).uncertain?.reasons, { multiple_receipts: 1 });
+  assert.equal(kpiFor([request], [{ ...paidReceipt, paymentStatus: 1 }]).open?.amount, 0);
+  assert.deepEqual(kpiFor([{ ...request, lines: null }]).uncertain?.reasons, { open_without_lines: 1 });
+});
+
+test("200k header / 300k details including Status 6: preserve all three menus and warn without changing paid sales", () => {
+  const lines = normalizeOrderLines([line(1, { Amount: 100000 }), line(2, { Amount: 100000 }),
+    line(3, { Status: 6, Amount: 100000 })]);
+  const original = JSON.stringify(lines);
+  const kpi = kpiFor([collected(12, { totalAmount: 200000, lines })]);
+  assert.deepEqual(orderLineTotals(lines), { menuLineCount: 3, optionLineCount: 0, itemQuantity: 3,
+    lineAmount: 300000, orphanOptionCount: 0 });
+  assert.deepEqual(kpi.open, { amount: 200000, orderCount: 1, menuLineCount: 3, optionLineCount: 0, itemQuantity: 3 });
+  assert.deepEqual(kpi.detailWarnings, [{ orderId: uuid(12), orderNo: "1.12", headerAmount: 200000,
+    lineAmount: 300000, amountMismatch: true, unverifiedLineStatusCount: 1, orphanOptionCount: 0 }]);
+  assert.equal(kpi.complete, false);
+  assert.equal(kpi.uncertain?.orderCount, 0); // Header estimate is still usable.
+  assert.deepEqual(kpi.paid, paid);
+  assert.equal(kpi.provisional?.amount, paid.amount + 200000);
+  assert.equal(JSON.stringify(lines), original);
+  assert.equal(lines[2].isCanceled, false);
+  const converted = kpiFor([collected(12, { totalAmount: 200000, lines })],
+    [{ orderId: uuid(12), receiptId: 120, paymentStatus: 3, isCanceled: false }]);
+  assert.equal(converted.open?.amount, 0);
+  assert.deepEqual(converted.detailWarnings, []);
+  assert.deepEqual(converted.paid, paid);
+  // A mismatch without Status 6 and a Status 6 without a mismatch both need review.
+  assert.equal(kpiFor([collected(12, { totalAmount: 300000, lines })]).complete, false);
+  const ordinary = lines.map((item) => ({ ...item, lineStatus: 1 }));
+  assert.equal(kpiFor([collected(12, { totalAmount: 200000, lines: ordinary })]).complete, false);
+  const normal = kpiFor([collected(12, { totalAmount: 300000, lines: ordinary })]);
+  assert.equal(normal.complete, true);
+  assert.deepEqual(normal.detailWarnings, []);
+  assert.deepEqual(normal.open, { ...kpi.open!, amount: 300000 });
+});
+
+test("Status 6 parent and option relationships survive; diagnostics never promote or remove options", () => {
+  const lines = normalizeOrderLines([line(1, { Status: 6, Amount: 100000, Quantity: 2 }),
+    line(2, { Status: 6, ParentId: uuid(1001), Amount: 10000, Quantity: 2 }),
+    line(3, { ParentId: uuid(9999), Amount: 5000 })]);
+  const kpi = kpiFor([collected(1, { totalAmount: 115000, lines })]);
+  assert.deepEqual(lines.map((item) => [item.isOption, item.isOrphanOption, item.isCanceled]),
+    [[false, false, false], [true, false, false], [true, true, false]]);
+  assert.equal(lines[1].parentDetailId, lines[0].detailId);
+  assert.deepEqual(kpi.open, { amount: 115000, orderCount: 1, menuLineCount: 1, optionLineCount: 2, itemQuantity: 2 });
+  assert.equal(kpi.detailWarnings?.[0].unverifiedLineStatusCount, 2);
+  assert.equal(kpi.detailWarnings?.[0].orphanOptionCount, 1);
+  assert.equal(kpi.complete, false);
+  assert.deepEqual(kpi.paid, paid);
+});
+
+test("daily panel renders header estimates and menu review warnings in KO/VI; disabled remains hidden", () => {
+  const compiled = ts.transpileModule(readFileSync("components/sales/OpenOrdersPanel.tsx", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const loaded = { exports: {} as { default: typeof import("../components/sales/OpenOrdersPanel.tsx").default } };
+  new Function("require", "module", "exports", compiled)(createRequire(import.meta.url), loaded, loaded.exports);
+  const data = kpiFor([collected(12, { totalAmount: 200000, lines: normalizeOrderLines([
+    line(1, { Amount: 100000 }), line(2, { Amount: 100000 }), line(3, { Status: 6, Amount: 100000 }),
+  ]) })]);
+  for (const lang of ["ko", "vi"] as const) {
+    const text: OpenOrdersPanelText = { ...salesText[lang].daily, ...salesText[lang].common };
+    const render = (kpi: typeof data) => renderToStaticMarkup(createElement(loaded.exports.default, { data: kpi, text }));
+    const html = render(data);
+    assert.ok(html.includes(text.openOrdersDetailWarning));
+    assert.ok(html.includes(text.openOrdersIncomplete));
+    assert.match(html, /200\.000/);
+    assert.doesNotMatch(html, /300\.000/);
+    assert.equal(render({ ...data, status: "not_enabled" }), "");
+    const normal = kpiFor([collected(1, { totalAmount: 50000, lines: normalizeOrderLines([line(1)]) })]);
+    assert.ok(!render(normal).includes(text.openOrdersDetailWarning));
+  }
+});
 
 test("KPI: fresh snapshot gives open estimate and provisional totals beside unchanged paid values", () => {
   const classified = classifyOrdersForBusinessDate([collected(1), collected(2)], [], "2026-11-09");
