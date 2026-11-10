@@ -105,11 +105,11 @@ test("level modal initializes legacy employees with a month candidate and offers
   assert.match(modal, /employeeLevelMonthCandidate/);
   assert.doesNotMatch(modal, /text\.levelLegacyReadOnly/);
   assert.doesNotMatch(modal, /text\.levelLegacyDateMode|type="date"/);
-  assert.match(modal, /text\.levelHireMonthMode/);
-  assert.match(modal, /text\.levelOverrideMonthMode/);
-  assert.match(modal, /text\.levelSalaryRaise/);
+  assert.match(modal, /text\.levelAutoShort/);
+  assert.match(modal, /text\.levelDirectShort/);
+  assert.match(modal, /text\.levelRaiseShort/);
   assert.match(modal, /effectiveMonth: isLegacy \? "next"/);
-  assert.match(modal, /<Field label=\{text\.levelEffectiveMonth\}>/);
+  assert.match(modal, /<legend style=\{styles\.modalLabel\}>\{text\.levelEffectiveMonth\}/);
 });
 
 test("modal state is local until apply; detail cancel and saving preserve the boundary", () => {
@@ -119,6 +119,10 @@ test("modal state is local until apply; detail cancel and saving preserve the bo
   assert.match(listPage, /if \(isSaving \|\| savePending\.current\) return/);
   assert.match(listPage, /<fieldset disabled=\{isSaving\}/);
   assert.match(listPage, /role="switch" aria-checked=\{checked\}/);
+  assert.match(listPage, /<header style=\{styles\.modalHeader\}>/);
+  assert.match(listPage, /<div style=\{styles\.modalBody\}>/);
+  assert.match(listPage, /<footer style=\{styles\.modalFooter\}>/);
+  assert.match(listPage, /const showComparison = nextDateChanged \|\| raiseDelta !== 0/);
 });
 
 test("list page: toggling included back to true does not reset baseDateMode/baseDateOverride draft state (no reset side effect on the included radio)", () => {

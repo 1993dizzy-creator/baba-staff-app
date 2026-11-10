@@ -642,63 +642,89 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
     && (levelDraft.baseDateMode !== "override_month" || (/^\d{4}-(0[1-9]|1[0-2])$/.test(levelDraft.baseMonth)
       && Boolean(draft.hire_date) && levelDraft.baseMonth >= draft.hire_date!.slice(0, 7)
       && (!draft.termination_date || levelDraft.baseMonth <= draft.termination_date.slice(0, 7))));
+  const raiseDelta = raise(after) - raise(before);
+  const nextDateChanged = before.nextLevelDate !== after.nextLevelDate;
+  const showComparison = nextDateChanged || raiseDelta !== 0;
+  const amount = (value: number) => value.toLocaleString("vi-VN") + "₫";
+
   return <dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
-    <form onSubmit={event => { event.preventDefault(); if (valid) onApply(levelDraft); }}>
-<section style={styles.levelEditor}>
-            <strong style={styles.levelEditorTitle}>{text.longTermLevel}</strong>
-            {user.termination_date ? (
-              <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span>
-            ) : (
-              <>
-                <div style={styles.segmented}>
-                  {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
-                    <input type="radio" name={`level-${user.id}`} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled }))} />
-                    {enabled ? text.levelEnabled : text.levelDisabled}
-                  </label>)}
-                </div>
-                <span style={styles.fieldNotice}>{text.levelPolicyHelp}</span>
-
-                {levelDraft.included ? (
-                  <>
-                    <strong style={styles.levelEditorTitle}>{text.levelCalculationBasis}</strong>
-                    <div style={styles.segmented}>
-                      {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
-                        <input type="radio" name={`level-base-${user.id}`} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft((current) => ({ ...current, baseDateMode: mode, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
-                        {mode === "hire_month" ? text.levelHireMonthMode : text.levelOverrideMonthMode}
-                      </label>)}
-                    </div>
-                    {levelDraft.baseDateMode === "hire_month" ? <>
-                      <span style={styles.fieldNotice}>{text.hireDate}: {draft.hire_date ?? "-"} → {text.levelBaseMonth}: {draftHireMonth ?? "-"}</span>
-                      <span style={styles.fieldNotice}>{text.levelHireMonthRule}</span>
-                    </> : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>}
-                    <strong style={styles.levelEditorTitle}>{text.levelSalaryRaise}</strong>
-                    <div style={styles.segmented}>
-                      {[true, false].map((applied) => <label key={String(applied)} style={levelDraft.salaryRaiseEnabled === applied ? styles.segmentActive : styles.segment}>
-                        <input type="radio" name={`level-raise-${user.id}`} checked={levelDraft.salaryRaiseEnabled === applied} onChange={() => setLevelDraft((current) => ({ ...current, salaryRaiseEnabled: applied }))} />
-                        {applied ? text.levelSalaryRaiseApplied : text.levelSalaryRaiseNotApplied}
-                      </label>)}
-                    </div>
-                    {levelDraft.salaryRaiseEnabled === false ? <span style={styles.fieldNotice}>{text.levelRaiseNotAppliedNotice}</span> : levelDraft.salaryRaiseEnabled === null ? <span style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</span> : null}
-                    <span style={styles.fieldNotice}>{text.levelHourlyRaiseNotice}</span>
-                  </>
-                ) : null}
-                <Field label={text.levelEffectiveMonth}><select value={levelDraft.effectiveMonth} onChange={(event) => setLevelDraft((current) => ({ ...current, effectiveMonth: event.target.value as LevelPolicyDraft["effectiveMonth"] }))} style={styles.input}><option value="current">{text.thisMonth}</option><option value="next">{text.nextMonth}</option></select></Field>
-              </>
-            )}
-</section>
-
-      <p style={styles.fieldNotice}>{text.levelEffectiveHelp} · {effectiveFrom}</p>
-      {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
-      <div style={styles.detailSection} aria-live="polite">
-        <strong>{text.levelPreview} · {effectiveFrom}</strong>
-        <span>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</span>
-        <span>{text.levelBaseMonth}: {before.baseDate?.slice(0, 7) ?? "-"} → {after.baseMonth ?? "-"}</span>
-        <span>{text.nextLevel}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</span>
-        <span>{text.levelRaisePreview}: {raise(before).toLocaleString("vi-VN")}₫ → {raise(after).toLocaleString("vi-VN")}₫ (Δ {(raise(after) - raise(before)).toLocaleString("vi-VN")}₫)</span>
-        <span style={styles.fieldNotice}>{text.levelPreviewHelp}</span>
+    <form style={styles.modalForm} onSubmit={event => { event.preventDefault(); if (valid) onApply(levelDraft); }}>
+      <header style={styles.modalHeader}>
+        <div style={{ minWidth: 0 }}>
+          <strong style={styles.modalTitle}>{text.longTermLevel}</strong>
+          <div style={styles.modalMuted}>{draft.name || draft.full_name || user.username} · {user.levelInfo.displayLabel ?? text.levelDisabled}</div>
+        </div>
+        <button type="button" aria-label={text.levelClose} onClick={onCancel} style={styles.modalClose}>×</button>
+      </header>
+      <div style={styles.modalBody}>
+        <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
+          <legend style={styles.modalLabel}>{text.levelParticipation}</legend>
+          <div style={styles.segmented}>
+            {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
+              <input type="radio" name={"level-" + user.id} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled }))} />
+              {enabled ? text.levelEnabled : text.levelDisabled}
+            </label>)}
+          </div>
+        </fieldset>
+        <fieldset style={styles.modalField} disabled={!levelDraft.included || Boolean(user.termination_date)}>
+          <legend style={styles.modalLabel}>{text.levelBasisShort}</legend>
+          <div style={styles.segmented}>
+            {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
+              <input type="radio" name={"level-base-" + user.id} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft(current => ({ ...current, baseDateMode: mode, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
+              {mode === "hire_month" ? text.levelAutoShort : text.levelDirectShort}
+            </label>)}
+          </div>
+          {levelDraft.baseDateMode === "hire_month"
+            ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {draftHireMonth ?? "-"}</p>
+            : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value }))} style={styles.input} /></Field>}
+        </fieldset>
+        <fieldset style={styles.modalField} disabled={!levelDraft.included || Boolean(user.termination_date)}>
+          <legend style={styles.modalLabel}>{text.levelRaiseShort}</legend>
+          <div style={styles.segmented}>
+            {[true, false].map((applied) => <label key={String(applied)} style={levelDraft.salaryRaiseEnabled === applied ? styles.segmentActive : styles.segment}>
+              <input type="radio" name={"level-raise-" + user.id} checked={levelDraft.salaryRaiseEnabled === applied} onChange={() => setLevelDraft(current => ({ ...current, salaryRaiseEnabled: applied }))} />
+              {applied ? text.levelSalaryRaiseApplied : text.levelNotAppliedShort}
+            </label>)}
+          </div>
+          {levelDraft.included && levelDraft.salaryRaiseEnabled === null ? <p role="alert" style={styles.fieldNotice}>{text.levelSalaryRaiseChoose}</p> : null}
+        </fieldset>
+        <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
+          <legend style={styles.modalLabel}>{text.levelEffectiveMonth}</legend>
+          <div style={styles.segmented}>
+            {(["current", "next"] as const).map(month => <label key={month} style={levelDraft.effectiveMonth === month ? styles.segmentActive : styles.segment}>
+              <input type="radio" name={"level-effective-" + user.id} checked={levelDraft.effectiveMonth === month} onChange={() => setLevelDraft(current => ({ ...current, effectiveMonth: month }))} />
+              {month === "current" ? text.levelThisMonth : text.levelNextMonth}
+            </label>)}
+          </div>
+        </fieldset>
+        {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
+        {user.termination_date ? <p role="alert" style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</p> : null}
+        <details style={styles.modalHelp}>
+          <summary>{text.levelHelp}</summary>
+          <p>{text.levelHireMonthRule}</p>
+          <p>{text.levelHourlyRaiseNotice}</p>
+          <p>{text.levelEffectiveHelp}</p>
+          <p>{text.levelPreviewHelp}</p>
+          <p>{text.levelApplyHelp}</p>
+        </details>
+        <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
+          <strong>{text.levelChangeSummary} <span style={styles.modalMuted}>· {effectiveFrom}</span></strong>
+          <dl style={styles.modalSummaryGrid}>
+            <dt>{text.levelAfter}</dt><dd style={styles.modalValue}>{after.displayLabel ?? text.levelDisabled}</dd>
+            <dt>{text.nextLevelShort}</dt><dd style={styles.modalValue}>{after.nextLevelDate ?? (after.eligible ? text.highestLevel : "-")}</dd>
+            <dt>{text.levelRaiseDelta}</dt><dd style={styles.modalValue}>{raiseDelta > 0 ? "+" : ""}{amount(raiseDelta)}</dd>
+          </dl>
+          {showComparison ? <details>
+            <summary style={styles.modalMuted}>{text.levelCompareDetails}</summary>
+            {nextDateChanged ? <p style={styles.modalHint}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
+            {raiseDelta !== 0 ? <p style={styles.modalHint}>{text.levelRaisePreview}: {amount(raise(before))} → {amount(raise(after))}</p> : null}
+          </details> : null}
+        </section>
       </div>
-      <p style={styles.fieldNotice}>{text.levelApplyHelp}</p>
-      <div style={styles.actionRow}><button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button><button type="submit" disabled={!valid} style={styles.primaryButton}>{text.levelApply}</button></div>
+      <footer style={styles.modalFooter}>
+        <button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button>
+        <button type="submit" disabled={!valid || Boolean(user.termination_date)} style={styles.primaryButton}>{text.levelApply}</button>
+      </footer>
     </form>
   </dialog>;
 }
@@ -1213,7 +1239,21 @@ const styles = {
     fontWeight: 800,
     cursor: "pointer",
   },
-  dialog: { width: "min(520px, calc(100% - 24px))", maxHeight: "85dvh", overflowY: "auto", padding: 12, border: "1px solid #ddd6fe", borderRadius: 12, boxSizing: "border-box", fontSize: 12 },
+  dialog: { width: "min(520px, calc(100% - 24px))", maxHeight: "90dvh", overflow: "hidden", padding: 0, border: "1px solid #d1d5db", borderRadius: 12, boxSizing: "border-box", fontSize: 12, color: "#1f2937" },
+  modalForm: { display: "flex", flexDirection: "column", maxHeight: "min(90dvh, 760px)", minHeight: 0 },
+  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
+  modalTitle: { display: "block", fontSize: 15, marginBottom: 3 },
+  modalClose: { display: "grid", placeItems: "center", flexShrink: 0, width: 36, height: 36, border: 0, borderRadius: 8, background: "#f3f4f6", color: "#374151", fontSize: 24, cursor: "pointer" },
+  modalBody: { display: "grid", gap: 14, overflowY: "auto", overscrollBehavior: "contain", minHeight: 0, padding: 14 },
+  modalField: { margin: 0, padding: 0, border: 0, minWidth: 0 },
+  modalLabel: { padding: 0, marginBottom: 6, fontSize: 12, fontWeight: 800, color: "#374151" },
+  modalHint: { margin: "7px 0 0", fontSize: 11, color: "#6b7280", lineHeight: 1.5, overflowWrap: "anywhere" },
+  modalMuted: { color: "#6b7280", fontSize: 11, fontWeight: 500, overflowWrap: "anywhere" },
+  modalHelp: { color: "#6b7280", fontSize: 11, lineHeight: 1.5 },
+  modalSummary: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 8, background: "#f9fafb" },
+  modalSummaryGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px 8px", margin: 0, fontSize: 11, alignItems: "start" },
+  modalValue: { margin: 0, fontWeight: 800, textAlign: "right" },
+  modalFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   detailSection: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
   toggle: { width: "100%", justifyContent: "space-between", textAlign: "left" },
   formGrid: {

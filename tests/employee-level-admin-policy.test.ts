@@ -174,7 +174,7 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /setUsers\(\(current\) =>[\s\S]*current\.map/);
   assert.doesNotMatch(page, /saveLevelPolicy/);
   assert.doesNotMatch(page, /changeReason|levelChangeReason|rehireReason/);
-  assert.match(page, /levelPolicyHelp/);
+  assert.match(page, /text\.levelHelp/);
   assert.match(page, /levelProgramEnabled: levelDraft\.included/);
   assert.match(page, /levelDraftChanged/);
   assert.match(route, /comparisonBaseDateMode/);
