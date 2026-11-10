@@ -129,7 +129,9 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | 연결 상태 | 처리 |
 |---|---|
 | 유효(비취소) 결제완료 영수증 1건 | 이미 매출에 포함 → 예상액에서 제외. 취소 영수증이 함께 있어도 같음 |
-| 유효 미결제 영수증 1건 | 미결제 흐름 담당 → 예상액에서 제외 |
+| 유효 결제예정 영수증(payment_status=1) 1건 + 주문 Status=1/3 | 상세가 있으면 주문 헤더 금액을 정확히 한 번 예상액에 포함. 영수증 금액은 더하지 않음 |
+| 결제예정 영수증 1건 + 주문 Status=4/5/7/8 등 | 결제 후보·미확정 상태 보호, 예상액 미포함 |
+| 의미 미확인 영수증 상태(payment_status=2/null 등) 1건 | 기존대로 예상액 미포함 |
 | 취소 영수증만 있음 + POS Status≠1/3 | 제외 |
 | 취소 영수증만 있음 + POS Status=1/3 | 불확정(재개 가능성) |
 | 유효 영수증 2건 이상 | 불확정 |
@@ -201,6 +203,46 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 - 스크린샷·화면 검사 결과는 Worktree `.local/daily-kpi-qa/`에만 보관한다. 기존 POS 결제 합계, 00:00 수동마감, 03:00 경계, 03:05 최종 검증 회귀를 함께 확인한다. 매출/장부/재고/급여 구현과 운영 설정은 수정하지 않는다.
 
 실패나 지연 시 0₫으로 표시하지 않는다. 정상 수집 결과가 0건일 때만 0₫이다.
+
+### 장애 복구 — 결제예정 영수증과 안전 진단 (2026-11-10, 기준 ce603ce5)
+
+**RED → GREEN 증거**
+
+- Worktree 시작은 깨끗한 `0ed46a9b`, main은 `ce603ce55d3f73d7dcf6e872dbcddb3c6428d9cc`였다. 기존 브랜치를 보존하고 main 기준 `codex/daily-sales-recovery-20261110`을 구성했다.
+- 구현 수정 전에 `node --experimental-strip-types --test tests/pos-open-orders-recovery.test.ts` 실행: 3개 중 3개 FAIL. Status 1/3 + 결제예정 영수증 1건의 예상액이 실제 `0`, 기대 `2,410,000`이었다. 헤더를 2,500,000으로 수정한 경우도 기존 합계 1,300,000만 나와 기대 3,800,000과 달랐다.
+- 원인: 활성 영수증 1건 중 결제완료(3)가 아닌 모든 영수증을 `receiptPending++` 후 예상액에서 제외했다. payment_status=1만 기존 주문 상태·상세 검증을 거쳐 포함하도록 수정했다. 다른 영수증 상태·중복 활성 영수증·취소만 존재·메뉴 상세 누락 보호는 유지한다.
+- 같은 회귀 테스트 3/3 GREEN. 결제완료액 1,300,000/13건/상품 26라인에 주문 1건 2,410,000을 더하면 네 카드는 3,710,000/14건/27라인/265,000이다. 결제 전 헤더 수정과 결제 후 확정액 이동에도 합계·건수·라인·평균은 중복 없이 유지된다.
+- `receiptPending`은 연결 결제예정 영수증의 진단 건수이며 예상액 제외를 뜻하지 않는다. 노란색 결제예정 영수증 배너의 합계·건수를 가져오지 않고 중앙 주문 헤더/상세만 사용한다. 기존 마감 차단은 그대로다.
+
+**READ 진단 계약**
+
+인증된 `owner/master/manager`의 `/api/admin/sales/today` 성공·500 응답에 `openOrdersReadDiagnostic`을 추가한다. 401/403에는 생성·포함하지 않는다. 응답은 `Cache-Control: private, no-store`다.
+
+| 필드 | 의미 |
+|---|---|
+| `readFlagPresent` | 런타임에 READ 변수가 정의되어 있는지. 빈 문자열도 존재=true |
+| `readFlagEnabled` | 기존 `.trim() === "true"`와 정확히 같은 판정 |
+| `deploymentSha` | `VERCEL_GIT_COMMIT_SHA`가 40자리 16진수일 때만 반환, 그 외 null |
+| `deploymentEnvironment` | `VERCEL_ENV`의 production/preview/development만 반환, 그 외 unknown |
+
+환경변수 원문·자격 증명·다른 환경변수는 반환하지 않는다. 기존 READ 판정과 비활성 기본값은 바꾸지 않는다. 추가 DB/API 조회도 없다. 사용자가 보고한 현재 운영 `not_enabled`의 원인이 미정의/비활성값/배포환경 차이 중 무엇인지는 승인된 후속 배포 후 이 진단을 읽어야 구분할 수 있다. 이번 작업에서는 운영 API·CUKCUK·Vercel 조회나 설정 변경을 하지 않았다.
+
+**중앙 수집 장애 분석과 진단**
+
+- 사용자 제공 실측: 22:17 `orders_invalid_row`, 이후 `orders_vanished_unconfirmed` 반복, 23:12까지 12회 연속 실패, 마지막 정상 22:12:21. 공급자 원본 응답이 없으므로 실제 원인은 확정하지 않는다.
+- `orders_invalid_row`는 헤더 객체 형식, ID 누락, 날짜 형식, 유효하지 않거나 음수인 금액, 목록 Data 형식에서 발생할 수 있다. 목록은 영업일 필터 전 전체 행을 검증하므로 다른 영업일의 잘못된 행도 실행을 실패시킬 수 있다. 행을 건너뛰도록 완화하지 않았다.
+- 이전 미완료 주문이 새 목록에 없으면 기존 상세 재조회로 확인한다. 이 경로는 공급자 오류·헤더 검증 실패·상세 누락을 모두 `orders_vanished_unconfirmed`로 감싸 원인을 잃고 있었다. 잘못된 주문 ID/영업일이나 확인 대상 20건 초과도 같은 외부 코드로 실패한다.
+- 기존 Cron의 같은 요청에서 `[OPEN_ORDERS_SYNC_DIAGNOSTIC]` 로그를 추가한다. 기존 외부 실패 코드와 DB fail 코드, Cron HTTP 응답은 유지한다.
+- 로그는 허용 목록의 `code`, `stage`(page/detail/vanished_detail/vanished_limit/run), `reason`, 원인 코드 `causeCode`, 숫자 `page`(1부터)·`rowIndex`(0부터)·`vanishedCount`·`confirmedCount`만 투영한다. 예외 message/stack, 주문 ID, 고객명·전화·원본 JSON·토큰은 남기지 않는다.
+- 오류 원인이나 위치를 알 수 없는 항목은 추측하지 않는다. 진단 기록 자체가 실패해도 실행 실패 처리에 영향을 주지 않는다. 추가 공급자 호출, 사라진 주문 삭제·정상 종료 추론, 부분 스냅샷 커밋은 없다. lease·vanished DB 보호와 상세 재조회 상한을 그대로 유지한다.
+
+**이번 수정 검증**
+
+- 이전 94/94 결과를 이번 복구 완료 근거로 삼지 않았다. 이번 RED 후 회귀·진단·실제 Cron 모듈·KPI 네 카드·POS 확정 결제합계 관련 6개 파일을 선정해 79/79 PASS를 확인했다.
+- 대상: `pos-open-orders-recovery`, `pos-open-orders-read-diagnostic`, `pos-open-orders-core`, `sales-daily-kpi`, `pos-open-orders-cron-route`, `sales-daily-payment-total`.
+- 이번 변경의 TypeScript(`--noEmit --incremental false`), 변경 파일 ESLint, `git diff --check` PASS.
+- 기존 Cron 정적 범위 단언은 `686f3803..현재` 전체 매출 코드 변경을 금지하고 있어 이번 수정 전 main에서도 `open-orders-core.ts`, `daily-kpi.ts` 때문에 실패했다. 원래 Cron 납품 커밋 `2b3d750b`까지의 범위를 고정해 당시 계약을 검증하도록 수정했다. 현재 Cron의 인증·시간·직렬 요청·실패 처리와 새 안전 로그는 실제 모듈 실행 테스트로 별도 확인했다.
+- DB·Migration·장부·재고·급여 및 마감 코드 변경 없음. 운영 복구 완료나 런타임 READ 활성화 확인을 의미하지 않는다.
 
 ## DB 초안 요약
 

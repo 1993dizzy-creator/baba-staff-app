@@ -12,6 +12,7 @@ import ts from 'typescript';
 const core = await import('../lib/pos/cukcuk/open-orders-core.ts');
 const policy = await import('../lib/pos/cukcuk/open-orders-cron-policy.ts');
 const BASE = '686f380394e2e58bc81da6bc20e8fd572223f497';
+const CRON_DELIVERY = '2b3d750bde5f2f9739f5b650cdf8727809e877a1';
 const SECRET = 'local-cron-test-secret';
 const SCOPE = `${'a'.repeat(64)}:b1`;
 const ORDER_ID = '00000000-0000-4000-8000-000000000001';
@@ -73,7 +74,7 @@ function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', 
     if (enabled === UNSET) delete process.env.POS_OPEN_ORDERS_SYNC_ENABLED; else process.env.POS_OPEN_ORDERS_SYNC_ENABLED = enabled;
     if (secret === UNSET) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = secret;
     const logged = [];
-    console.error = (...args) => logged.push(args.join(' '));
+    console.error = (...args) => logged.push(args.map(value => typeof value === 'string' ? value : JSON.stringify(value)).join(' '));
     globalThis.fetch = async (url, init) => {
       calls.push(`cukcuk:${new URL(url).pathname.replace(/[0-9a-f-]{36}$/, '{id}')}`);
       const reply = cukcuk ? cukcuk(url, init) : { status: 200, json: { Success: true, Code: 200, Total: 0, Data: [] } };
@@ -91,6 +92,23 @@ function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', 
   return { calls, meta, run, route };
 }
 const cukcukCalls = (calls) => calls.filter((c) => c === 'login' || c.startsWith('cukcuk:'));
+
+test('existing Cron logs only allowlisted failure diagnostics and makes no extra CUKCUK call', async () => {
+  const h = harness({ cukcuk: () => ({ status: 200, json: { Success: true, Total: 1, Data: [{
+    Id: ORDER_ID, Date: '2026-11-09T20:00:00+07:00', Status: 3, TotalAmount: 'PRIVATE_AMOUNT',
+    CustomerName: 'PRIVATE_CUSTOMER', Phone: 'PRIVATE_PHONE', Token: 'PRIVATE_TOKEN',
+  }] } }) });
+  const result = await h.run();
+  assert.equal(result.status, 502);
+  assert.deepEqual(result.body, { ok: false, outcome: 'failed', code: 'orders_invalid_row' });
+  assert.equal(h.meta.failCode, 'orders_invalid_row');
+  assert.deepEqual(cukcukCalls(h.calls), ['login', 'cukcuk:/api/v1/orders/paging']);
+  const line = result.logged.find(value => value.startsWith('[OPEN_ORDERS_SYNC_DIAGNOSTIC] '));
+  assert.deepEqual(JSON.parse(line.slice('[OPEN_ORDERS_SYNC_DIAGNOSTIC] '.length)), {
+    code: 'orders_invalid_row', stage: 'page', reason: 'total_amount_invalid', causeCode: 'orders_invalid_row', page: 1, rowIndex: 0,
+  });
+  assert.doesNotMatch(result.logged.join(' ') + result.text, /PRIVATE_|CustomerName|Phone|Token|tok-SECRET/);
+});
 
 test('auth missing/wrong/unconfigured: 401/403 and zero collector calls', async () => {
   for (const [headers, secret, status] of [[{}, SECRET, 401], [{ authorization: 'Bearer wrong' }, SECRET, 401], [{ 'x-cron-secret': 'nope' }, SECRET, 401], [{ authorization: `Bearer ${SECRET}` }, UNSET, 403]]) {
@@ -249,7 +267,7 @@ test('cron schedule x route window: Vercel fires 17:02–02:57 (+07) every 5 min
   assert.deepEqual(fires.map(vnLabel).filter((t) => !allowed.includes(t)), ['17:02', '17:07', '17:12', '17:17', '17:22', '17:27', '02:57']);
 });
 
-test('static: route config, reuse only, no own lock, sales/close code untouched', () => {
+test('static: current route config/reuse/lock guards and the original cron delivery scope', () => {
   const src = readFileSync('app/api/cron/pos-open-orders-sync/route.ts', 'utf8');
   assert.match(src, /export const runtime = "nodejs";/);
   assert.match(src, /export const dynamic = "force-dynamic";/);
@@ -263,8 +281,9 @@ test('static: route config, reuse only, no own lock, sales/close code untouched'
   assert.equal(policy.OPEN_ORDERS_CRON_LAST_START_MINUTE, 2 * 60 + 54);
   assert.match(src, /17:30–02:54:59/);
   assert.match(src, /"2-57\/5 10-19 \* \* \*"/);
-  // Paid sales, close and sync code paths unchanged from the base commit.
-  const touched = execFileSync('git', ['diff', '--name-only', BASE, '--', 'lib/sales', 'app/api/admin/sales', 'app/api/cron/sales-close-final',
+  // Verify the historical Cron delivery, not a permanent freeze on later authorized
+  // KPI/receipt fixes. Current Cron/collector behavior is exercised above with real modules.
+  const touched = execFileSync('git', ['diff', '--name-only', BASE, CRON_DELIVERY, '--', 'lib/sales', 'app/api/admin/sales', 'app/api/cron/sales-close-final',
     'app/api/cron/sales-sync', 'app/api/cron/sales-sync-final', 'lib/ledger', 'lib/pos/cukcuk/sales-receipt-sync.ts', 'lib/pos/cukcuk/sales-sync-cron-shared.ts',
     'lib/pos/cukcuk/open-orders-core.ts', 'lib/pos/cukcuk/open-orders-sync-server.ts'], { encoding: 'utf8' }).trim();
   assert.equal(touched, '');

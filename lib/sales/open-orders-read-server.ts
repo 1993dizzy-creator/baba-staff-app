@@ -16,8 +16,21 @@ import { resolveConfiguredBusinessDate } from "@/lib/store-settings/business-tim
 import { fetchAllExactPages } from "@/lib/sales/daily-sales-summary";
 
 // Reads the central snapshot only. Never imports or calls the CUKCUK transport.
-export function openOrdersReadEnabled() {
-  return process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
+export function openOrdersReadEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
+}
+
+/** Authenticated admin response only. Never expose the flag's value or other env keys. */
+export function getOpenOrdersReadDiagnostic(env: NodeJS.ProcessEnv = process.env) {
+  const environment = env.VERCEL_ENV;
+  const sha = env.VERCEL_GIT_COMMIT_SHA;
+  return {
+    readFlagPresent: env.POS_OPEN_ORDERS_READ_ENABLED !== undefined,
+    readFlagEnabled: openOrdersReadEnabled(env),
+    deploymentSha: sha && /^[a-f0-9]{40}$/i.test(sha) ? sha.toLowerCase() : null,
+    deploymentEnvironment: environment === "production" || environment === "preview" || environment === "development"
+      ? environment : "unknown",
+  };
 }
 
 type ReadPayload = { sync: (OpenOrderSyncState & { consecutiveFailures?: number }) | null; orders: CollectedOrder[] };
