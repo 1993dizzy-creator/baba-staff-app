@@ -25,32 +25,63 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
 export type OrderStatusClass = "open" | "paid_candidate" | "unknown";
 
-export type OpenOrderErrorCode =
-  | "provider_http_failure"
-  | "provider_timeout"
-  | "provider_token_expired"
-  | "provider_error_7"
-  | "provider_busy_102"
-  | "provider_failure"
-  | "orders_total_missing"
-  | "orders_total_changed"
-  | "orders_page_count_mismatch"
-  | "orders_duplicate_id"
-  | "orders_invalid_row"
-  | "orders_page_bound"
-  | "order_detail_mismatch"
-  | "order_detail_lines_missing"
-  | "order_detail_duplicate_line"
-  | "orders_vanished_unconfirmed"
-  | "run_deadline_exceeded";
+const OPEN_ORDER_ERROR_CODES = [
+  "provider_http_failure", "provider_timeout", "provider_token_expired", "provider_error_7",
+  "provider_busy_102", "provider_failure", "orders_total_missing", "orders_total_changed",
+  "orders_page_count_mismatch", "orders_duplicate_id", "orders_invalid_row", "orders_page_bound",
+  "order_detail_mismatch", "order_detail_lines_missing", "order_detail_duplicate_line",
+  "orders_vanished_unconfirmed", "run_deadline_exceeded",
+] as const;
+export type OpenOrderErrorCode = typeof OPEN_ORDER_ERROR_CODES[number];
+
+const DIAGNOSTIC_STAGES = ["page", "detail", "vanished_detail", "vanished_limit", "run"] as const;
+const DIAGNOSTIC_REASONS = [
+  "row_not_object", "order_id_missing", "order_date_invalid", "total_amount_invalid",
+  "page_data_not_array", "detail_data_missing", "detail_id_mismatch", "vanished_id_mismatch",
+  "vanished_business_date_mismatch", "vanished_limit", "unexpected_error",
+] as const;
+type OpenOrderDiagnosticContext = {
+  stage?: typeof DIAGNOSTIC_STAGES[number];
+  reason?: typeof DIAGNOSTIC_REASONS[number];
+  causeCode?: OpenOrderErrorCode;
+  page?: number;
+  rowIndex?: number;
+  vanishedCount?: number;
+  confirmedCount?: number;
+};
+export type OpenOrderSyncDiagnostic = OpenOrderDiagnosticContext & { code: string };
 
 export class OpenOrderSyncError extends Error {
   code: OpenOrderErrorCode;
-  constructor(code: OpenOrderErrorCode, detail?: string) {
+  diagnostic?: OpenOrderDiagnosticContext;
+  constructor(code: OpenOrderErrorCode, detail?: string, diagnostic?: OpenOrderDiagnosticContext) {
     super(detail ? `${code}: ${detail}` : code);
     this.name = "OpenOrderSyncError";
     this.code = code;
+    this.diagnostic = diagnostic;
   }
+}
+
+function withDiagnostic(error: unknown, context: OpenOrderDiagnosticContext) {
+  if (!(error instanceof OpenOrderSyncError)) return error;
+  error.diagnostic = { ...error.diagnostic, ...context, causeCode: error.diagnostic?.causeCode ?? error.code };
+  return error;
+}
+
+/** Strict projection for logs: never message/stack/IDs/raw rows or arbitrary provider values. */
+function syncFailureDiagnostic(error: unknown, code: string): OpenOrderSyncDiagnostic {
+  const allowedCodes: readonly string[] = [...OPEN_ORDER_ERROR_CODES, ...OPEN_ORDERS_DB_ERRORS,
+    "open_orders_permission_denied", "open_orders_rpc_missing", "open_orders_persistence_failed", "collection_failed"];
+  const context = error instanceof OpenOrderSyncError ? error.diagnostic : undefined;
+  const diagnostic: OpenOrderSyncDiagnostic = { code: allowedCodes.includes(code) ? code : "collection_failed", stage: "run" };
+  if (context?.stage && DIAGNOSTIC_STAGES.includes(context.stage)) diagnostic.stage = context.stage;
+  if (context?.reason && DIAGNOSTIC_REASONS.includes(context.reason)) diagnostic.reason = context.reason;
+  if (context?.causeCode && (OPEN_ORDER_ERROR_CODES as readonly string[]).includes(context.causeCode)) diagnostic.causeCode = context.causeCode;
+  for (const key of ["page", "rowIndex", "vanishedCount", "confirmedCount"] as const) {
+    const value = context?.[key];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) diagnostic[key] = value;
+  }
+  return diagnostic;
 }
 
 type Json = Record<string, unknown>;
@@ -175,13 +206,15 @@ export type OrderSummary = {
 };
 
 export function normalizeOrderSummary(row: unknown): OrderSummary {
-  if (!isObject(row)) throw new OpenOrderSyncError("orders_invalid_row");
+  if (!isObject(row)) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "row_not_object" });
   const orderId = toId(pick(row, ["Id", "ID", "OrderId", "OrderID"]));
   const orderDate = pick(row, ["Date", "OrderDate"]);
   const totalAmount = toFiniteNumber(pick(row, ["TotalAmount", "Amount"]));
-  if (!orderId || typeof orderDate !== "string" || !Number.isFinite(Date.parse(orderDate)) || totalAmount === null || totalAmount < 0) {
-    throw new OpenOrderSyncError("orders_invalid_row", orderId || "missing id");
+  if (!orderId) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "order_id_missing" });
+  if (typeof orderDate !== "string" || !Number.isFinite(Date.parse(orderDate))) {
+    throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "order_date_invalid" });
   }
+  if (totalAmount === null || totalAmount < 0) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "total_amount_invalid" });
   const status = toFiniteNumber(row.Status);
   const orderNo = pick(row, ["No", "OrderNo", "Code"]);
   return {
@@ -213,23 +246,27 @@ export async function fetchAllOrderPages(
   let total: number | null = null;
   let pages = 0;
   for (let page = 1; ; page++) {
-    if (page > maxPages) throw new OpenOrderSyncError("orders_page_bound");
-    const json = await callProvider(transport, { kind: "page", page, limit, branchId: params.branchId, lastSyncDate: params.lastSyncDate }, state, params.retryDelayMs);
-    const pageTotal = json.Total;
-    if (typeof pageTotal !== "number" || !Number.isSafeInteger(pageTotal) || pageTotal < 0) throw new OpenOrderSyncError("orders_total_missing");
-    if (total === null) total = pageTotal;
-    else if (pageTotal !== total) throw new OpenOrderSyncError("orders_total_changed", `${total} -> ${pageTotal}`);
-    if (!Array.isArray(json.Data)) throw new OpenOrderSyncError("orders_invalid_row", "Data");
-    const expected = Math.min(limit, Math.max(0, total - (page - 1) * limit));
-    if (json.Data.length !== expected) throw new OpenOrderSyncError("orders_page_count_mismatch", `page ${page} expected ${expected} got ${json.Data.length}`);
-    pages++;
-    for (const row of json.Data) {
-      const order = normalizeOrderSummary(row);
-      if (seen.has(order.orderId)) throw new OpenOrderSyncError("orders_duplicate_id", order.orderId);
-      seen.add(order.orderId);
-      orders.push(order);
-    }
-    if (orders.length >= total) break;
+    try {
+      if (page > maxPages) throw new OpenOrderSyncError("orders_page_bound");
+      const json = await callProvider(transport, { kind: "page", page, limit, branchId: params.branchId, lastSyncDate: params.lastSyncDate }, state, params.retryDelayMs);
+      const pageTotal = json.Total;
+      if (typeof pageTotal !== "number" || !Number.isSafeInteger(pageTotal) || pageTotal < 0) throw new OpenOrderSyncError("orders_total_missing");
+      if (total === null) total = pageTotal;
+      else if (pageTotal !== total) throw new OpenOrderSyncError("orders_total_changed", `${total} -> ${pageTotal}`);
+      if (!Array.isArray(json.Data)) throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "page_data_not_array" });
+      const expected = Math.min(limit, Math.max(0, total - (page - 1) * limit));
+      if (json.Data.length !== expected) throw new OpenOrderSyncError("orders_page_count_mismatch", `page ${page} expected ${expected} got ${json.Data.length}`);
+      pages++;
+      for (const [rowIndex, row] of json.Data.entries()) {
+        let order: OrderSummary;
+        try { order = normalizeOrderSummary(row); }
+        catch (error) { throw withDiagnostic(error, { stage: "page", page, rowIndex }); }
+        if (seen.has(order.orderId)) throw new OpenOrderSyncError("orders_duplicate_id", order.orderId);
+        seen.add(order.orderId);
+        orders.push(order);
+      }
+      if (orders.length >= total) break;
+    } catch (error) { throw withDiagnostic(error, { stage: "page", page }); }
   }
   if (orders.length !== total) throw new OpenOrderSyncError("orders_page_count_mismatch", "final");
   return { orders, total, pages };
@@ -314,9 +351,9 @@ export type CollectedOrder = OrderSummary & {
 /** Applies GET orders/{id}: the detail must be the same order and carry OrderDetails. */
 export function mergeOrderDetail(summary: OrderSummary, detailJson: unknown, cutoff: string): CollectedOrder {
   const data = isObject(detailJson) && isObject(detailJson.Data) ? detailJson.Data : null;
-  if (!data) throw new OpenOrderSyncError("order_detail_mismatch", summary.orderId);
+  if (!data) throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "detail_data_missing" });
   const detailSummary = normalizeOrderSummary(data);
-  if (detailSummary.orderId !== summary.orderId) throw new OpenOrderSyncError("order_detail_mismatch", summary.orderId);
+  if (detailSummary.orderId !== summary.orderId) throw new OpenOrderSyncError("order_detail_mismatch", undefined, { reason: "detail_id_mismatch" });
   const tableName = pick(data, ["TableName"]);
   // The detail is newer than the list row: its status, amount and lines win.
   return {
@@ -410,23 +447,30 @@ export function classifyOrdersForBusinessDate(
     const statusClass = classifyOrderStatus(order.status);
     const uncertain = (reason: UncertainReason) =>
       result.uncertain.push({ orderId: order.orderId, orderNo: order.orderNo, reason, amount: order.totalAmount });
+    const classifyUnpaid = () => {
+      if (statusClass === "open") {
+        if (order.lines) result.open.push({ ...order, statusClass, lines: order.lines });
+        else uncertain("open_without_lines");
+      } else if (statusClass === "paid_candidate") uncertain("paid_without_receipt");
+      else uncertain("unknown_status");
+    };
     // A canceled receipt re-issued as a paid one (seen in production: status 4 + 3 on one
     // OrderId) is one sale. Only non-canceled receipts decide; two of those stay uncertain.
     const active = linked.filter((receipt) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
     if (active.length > 1) uncertain("multiple_receipts");
     else if (active.length === 1) {
       if (active[0].paymentStatus === 3) result.converted++;
-      // Unpaid receipts belong to the pending-payment flow; never mixed into this estimate.
-      else result.receiptPending++;
+      else {
+        result.receiptPending++;
+        // Payment Status 1 is pending, not paid. Count the linked order's header
+        // once (never add the receipt amount). Other receipt statuses stay excluded.
+        if (active[0].paymentStatus === 1) classifyUnpaid();
+      }
     } else if (linked.length > 0) {
       // Only canceled receipts: an order still open in POS may have been re-opened.
       if (statusClass === "open") uncertain("open_after_canceled_receipt");
       else result.receiptCanceled++;
-    } else if (statusClass === "open") {
-      if (order.lines) result.open.push({ ...order, statusClass, lines: order.lines });
-      else uncertain("open_without_lines");
-    } else if (statusClass === "paid_candidate") uncertain("paid_without_receipt");
-    else uncertain("unknown_status");
+    } else classifyUnpaid();
   }
   return result;
 }
@@ -467,21 +511,25 @@ export async function collectOpenOrderSnapshot(
   const orders: CollectedOrder[] = [];
   let detailCount = 0;
   // Serial detail reads: CUKCUK rejects concurrent requests (102). Unverified statuses
-  // (e.g. 3/7/8) are also read, so their menu lines exist once the mapping is confirmed;
+  // (e.g. 5/7/8) are also read, so their menu lines exist once the mapping is confirmed;
   // until then they are reported as uncertain and the KPI is marked incomplete.
   for (const summary of selected) {
     if (summary.statusClass === "paid_candidate") {
       orders.push(summaryOnly(summary, input.cutoff));
       continue;
     }
-    const detail = await callProvider(transport, { kind: "detail", orderId: summary.orderId }, state, input.retryDelayMs);
-    detailCount++;
-    orders.push(mergeOrderDetail(summary, detail, input.cutoff));
+    try {
+      const detail = await callProvider(transport, { kind: "detail", orderId: summary.orderId }, state, input.retryDelayMs);
+      detailCount++;
+      orders.push(mergeOrderDetail(summary, detail, input.cutoff));
+    } catch (error) { throw withDiagnostic(error, { stage: "detail" }); }
   }
 
   const listedIds = new Set(selected.map((order) => order.orderId));
   const vanished = [...new Set(input.previousUnfinishedIds ?? [])].map(toId).filter((id) => id && !listedIds.has(id));
-  if (vanished.length > MAX_VANISHED_CONFIRMATIONS) throw new OpenOrderSyncError("orders_vanished_unconfirmed", `${vanished.length} missing`);
+  if (vanished.length > MAX_VANISHED_CONFIRMATIONS) throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined,
+    { stage: "vanished_limit", reason: "vanished_limit", vanishedCount: vanished.length, confirmedCount: 0 });
+  let confirmedCount = 0;
   for (const orderId of vanished) {
     let confirmed: CollectedOrder;
     try {
@@ -490,13 +538,20 @@ export async function collectOpenOrderSnapshot(
       const data = isObject(detail.Data) ? detail.Data : null;
       confirmed = mergeOrderDetail(normalizeOrderSummary(data), detail, input.cutoff);
     } catch (error) {
-      if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
-      throw new OpenOrderSyncError("orders_vanished_unconfirmed", "detail unavailable");
+      const context: OpenOrderDiagnosticContext = { ...(error instanceof OpenOrderSyncError ? error.diagnostic : {}),
+        stage: "vanished_detail", vanishedCount: vanished.length, confirmedCount,
+        ...(error instanceof OpenOrderSyncError ? {} : { reason: "unexpected_error" as const }),
+        causeCode: error instanceof OpenOrderSyncError ? error.code : undefined };
+      if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw withDiagnostic(error, context);
+      throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, context);
     }
     if (confirmed.orderId !== orderId || confirmed.businessDate !== input.businessDate) {
-      throw new OpenOrderSyncError("orders_vanished_unconfirmed", "detail outside business date");
+      throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, { stage: "vanished_detail",
+        reason: confirmed.orderId !== orderId ? "vanished_id_mismatch" : "vanished_business_date_mismatch",
+        vanishedCount: vanished.length, confirmedCount });
     }
     orders.push(confirmed);
+    confirmedCount++;
   }
   return {
     orders,
@@ -554,7 +609,8 @@ export type OpenOrderRpc = (name: string, args: Record<string, unknown>) => Prom
  * extra triggers return without calling CUKCUK.
  */
 export async function runOpenOrderSync(
-  deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string; now?: () => number },
+  deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string; now?: () => number;
+    onDiagnostic?: (diagnostic: OpenOrderSyncDiagnostic) => void },
   input: { scope: string; branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number }
 ): Promise<Record<string, unknown>> {
   const now = deps.now ?? Date.now;
@@ -594,6 +650,7 @@ export async function runOpenOrderSync(
     } catch {
       /* The lease expires on its own; the last good snapshot stays marked by its time. */
     }
+    try { deps.onDiagnostic?.(syncFailureDiagnostic(error, code)); } catch { /* Diagnostics never change the run outcome. */ }
     return { status: "failed", code };
   }
 }

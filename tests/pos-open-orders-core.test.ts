@@ -230,7 +230,7 @@ test("order/receipt: a paid receipt removes the order from the estimate; uncerta
     [...receipts, { orderId: uuid(10), receiptId: 100, paymentStatus: 5, isCanceled: true }],
     "2026-11-09"
   );
-  assert.deepEqual(result.open.map((o) => o.orderNo), ["1.1"]);
+  assert.deepEqual(result.open.map((o) => o.orderNo), ["1.1", "1.3"]);
   assert.equal(result.converted, 1);
   assert.equal(result.receiptPending, 1);
   // Order 10 is no longer open in POS and only has a canceled receipt: excluded.
@@ -296,7 +296,7 @@ test("persisted Status 3 unknown snapshots are reclassified; canceled, duplicate
   const reissued = classifyOrdersForBusinessDate([request], [canceled, paidReceipt, paidReceipt], fresh.businessDate);
   assert.deepEqual([reissued.open.length, reissued.converted, reissued.uncertain.length], [0, 1, 0]);
   assert.deepEqual(kpiFor([request], [paidReceipt, { ...paidReceipt, receiptId: 52 }]).uncertain?.reasons, { multiple_receipts: 1 });
-  assert.equal(kpiFor([request], [{ ...paidReceipt, paymentStatus: 1 }]).open?.amount, 0);
+  assert.equal(kpiFor([request], [{ ...paidReceipt, paymentStatus: 1 }]).open?.amount, 500000);
   assert.deepEqual(kpiFor([{ ...request, lines: null }]).uncertain?.reasons, { open_without_lines: 1 });
 });
 

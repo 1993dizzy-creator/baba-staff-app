@@ -18,8 +18,7 @@ import {
 // Central (server/cron) collector for CUKCUK in-progress orders.
 // Timing: collection ends by claim + OPEN_ORDERS_RUN_BUDGET_MS (150s) inside the 3-minute
 // lease. A future cron route must allow at least that duration (e.g. maxDuration >= 180).
-// NOT ACTIVATED: no route or cron calls this yet. Activation needs the DB draft
-// (docs/sql/pos-open-orders-v1-draft.sql) applied and POS_OPEN_ORDERS_SYNC_ENABLED=true.
+// The existing guarded Cron invokes this only with POS_OPEN_ORDERS_SYNC_ENABLED=true.
 // Browsers never call CUKCUK: they read the snapshot via /api/admin/sales/today.
 
 const REQUEST_TIMEOUT_MS = OPEN_ORDERS_REQUEST_TIMEOUT_MS;
@@ -91,7 +90,8 @@ export async function runCentralOpenOrderSync(now = new Date()) {
   // Business day D starts at D cutoff (Asia/Ho_Chi_Minh, +07:00, no DST).
   const windowFrom = new Date(`${businessDate}T${cutoff}:00+07:00`).toISOString();
   return runOpenOrderSync(
-    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID },
+    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID,
+      onDiagnostic: (diagnostic) => console.error("[OPEN_ORDERS_SYNC_DIAGNOSTIC]", diagnostic) },
     { scope: openOrdersScope(), branchId: openOrdersBranchId(), businessDate, windowFrom, cutoff }
   );
 }

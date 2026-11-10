@@ -11,7 +11,7 @@ import {
   fetchAllExactPages,
   type DailyCloseSnapshotRow,
 } from "@/lib/sales/daily-sales-summary";
-import { loadOpenOrderKpi } from "@/lib/sales/open-orders-read-server";
+import { getOpenOrdersReadDiagnostic, loadOpenOrderKpi } from "@/lib/sales/open-orders-read-server";
 
 type ReceiptRow = {
   id: number;
@@ -467,6 +467,7 @@ export async function GET(req: Request) {
     const auth = await requireRole(["owner", "master", "manager"]);
     if (!auth.ok) return NextResponse.json({ ok: false, error: auth.code }, { status: auth.status });
 
+  const openOrdersReadDiagnostic = getOpenOrdersReadDiagnostic();
   try {
     const { searchParams } = new URL(req.url);
     const explicitBusinessDate = searchParams.get("businessDate");
@@ -607,22 +608,24 @@ export async function GET(req: Request) {
       paymentReconciliation: dailySales.reconciliation,
       closeCheck,
       openOrders,
+      openOrdersReadDiagnostic,
       taxSummary: buildTaxSummary(receiptRows, lineRows),
       hourlySales: buildHourlySales(receiptRows),
       topItems: buildTopItems(lineRows, paidReceiptIds),
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("[SALES_TODAY_GET_ERROR]", error);
 
     return NextResponse.json(
       {
         ok: false,
+        openOrdersReadDiagnostic,
         error:
           error instanceof Error
             ? error.message
             : "Failed to fetch today's sales.",
       },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "private, no-store" } }
     );
   }
 }
