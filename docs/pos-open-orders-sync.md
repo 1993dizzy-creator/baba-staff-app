@@ -1,6 +1,6 @@
 # CUKCUK 진행 주문 중앙 동기화 (3차) — 설계와 적용 절차
 
-상태: **코드 준비 완료, 비활성.** 운영 DB, Cron, 환경변수는 아무것도 바꾸지 않았다.
+이 문서는 초기 설계·적용 이력을 포함한다. 2026-11-10 네 카드 통합 작업은 기존 중앙 수집을 재사용하며 DB·RPC·Cron·환경변수를 변경하지 않는다. 아래 초기 비활성화 설명보다 최신 KPI 표시 규칙을 우선한다.
 
 ## 흐름
 
@@ -19,10 +19,11 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 | 파일 | 역할 |
 |---|---|
 | `lib/pos/cukcuk/open-orders-core.ts` | 순수 로직: 호출 정책, 페이지 검증, 상세 정규화, 주문/영수증 분류, KPI 계약 |
-| `lib/pos/cukcuk/open-orders-sync-server.ts` | 서버 전용 수집기(CUKCUK transport). 아직 어떤 route·cron에서도 호출하지 않음 |
+| `lib/pos/cukcuk/open-orders-sync-server.ts` | 서버 전용 중앙 수집기(CUKCUK transport), 기존 Cron 경로에서 호출 |
 | `lib/pos/cukcuk/open-orders-scope.ts` | CUKCUK 로그인 없이 scope 계산(조회 경로용) |
 | `lib/sales/open-orders-read-server.ts` | 스냅샷 + 영수증 연결 → KPI 계약 |
-| `components/sales/OpenOrdersPanel.tsx` | KO/VI, 모바일 대응 패널. `not_enabled`이면 렌더링 안 함 |
+| `lib/sales/daily-kpi.ts` | 결제완료 summary + 중앙 주문 결과를 기존 네 카드용으로 결합하는 순수 표시 정책 |
+| `components/sales/OpenOrdersPanel.tsx` | KO/VI 동기화·불확실성 안내만 표시. 별도 주문 KPI 없음 |
 | `docs/sql/pos-open-orders-v1-draft.sql` | DB 초안(미적용) |
 
 ## 수집 규칙
@@ -32,7 +33,7 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
   - 페이지 건수가 맞지 않음
   - 페이지 사이로 행이 밀려 같은 ID가 다시 나옴
   - 필수 필드 누락
-- `GET /api/v1/orders/{orderId}`: Status=4(결제완료 후보)를 뺀 모든 주문(1, 3·7·8 등 미확정 상태 포함)의 상세를 읽는다. 동시 요청 거부(102)를 피하려고 상세는 순차 호출한다.
+- `GET /api/v1/orders/{orderId}`: Status=4(결제완료 후보)를 뺀 모든 주문(진행 1/3, 미확정 5/7/8 등)의 상세를 읽는다. 동시 요청 거부(102)를 피하려고 상세는 순차 호출한다.
   - 미확정 상태 주문은 메뉴 라인까지 저장하지만 예상액에는 넣지 않는다. `unknown_status`로 보고하고 KPI `complete=false`로 표시한다.
   - 상태 의미가 확인되면 `ORDER_STATUS_OPEN` 매핑만 바꾸면 된다.
 - 오류 처리:
@@ -144,8 +145,8 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 
 | status | open / provisional | 표시 |
 |---|---|---|
-| `not_enabled` | null | 패널 숨김. 2차 KPI 그대로 |
-| `closed` | null | "마감된 영업일에는 표시하지 않음" |
+| `not_enabled` | null | 영업 중 결제완료 값만 표시, 중앙 주문 조회 비활성 경고, 현재 전체 객단가 확인 불가 |
+| `closed` | null | 기존 네 카드의 결제완료 값 유지, 진행 예상 미포함 |
 | `unavailable` | null | 경고 + 최근 정상 확인 시각(없으면 "기록 없음") |
 | `incomplete` | null | 최근 시도에서 이전 진행 주문의 종료를 확인하지 못함(`orders_vanished_unconfirmed`, `open_orders_vanished`). 성공 시각이 10분 이내여도 이전 스냅샷을 현재 값으로 보이지 않음 |
 | `stale` (10분 초과) | null | 지연 경고 + 최근 정상 확인 시각 |
@@ -167,12 +168,37 @@ Cron(서버, 1곳) ──► runCentralOpenOrderSync ──► CUKCUK orders/pag
 
 `statusCounts`로 영업일의 원시 Status별 건수를 함께 제공한다.
 
-`ok`일 때 표시하는 항목:
-- 진행 예상액
-- 진행 주문 건수
-- 주문 상품 라인
-- 결제완료 + 진행 예상
-- 잠정 객단가 = (결제 합계 + 진행 예상) ÷ (결제 영수증 + 진행 주문)
+### 일간현황 기존 KPI 네 카드 통합 (2026-11-10)
+
+API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분류 결과와 `provisional`을 화면에서 결합한다. DB·RPC·마감 계약은 변경하지 않는다.
+
+| 카드 | 영업 중 정상·완전 조회 | 마감 후·과거 영업일 |
+|---|---|---|
+| 총매출 | POS 결제완료 + 진행 주문 헤더 예상액 | 기존 `summary.totalSales` |
+| 영수증 | 결제완료 영수증 + 진행 주문 건수 | 기존 `summary.receiptCount` |
+| 판매상품 | 결제완료 상품 라인 + 진행 메뉴 라인, 옵션·부모 참조 있는 하위 라인 중복 제외 | 기존 `summary.salesLineCount` |
+| 객단가 | 총매출 ÷ 영수증·진행 주문 건수, 잠정 표시 | 기존 `summary.averageReceiptAmount` |
+
+- 네 카드·2열 기본 레이아웃을 유지한다. 결제완료와 진행 주문의 금액·건수는 각 카드 보조 문구에서 구분한다. 별도 진행 주문 KPI 패널은 제거하고 동기화 시각·경고만 남긴다.
+- `ok, complete=false`: 확인된 부분집계라고 명시하며 전체 잠정 객단가는 숨긴다. 미확정 주문은 기존 분류대로 제외한다.
+- 메뉴 상세 경고가 있으면 헤더 예상액·주문 건수는 유지하되, 진행 메뉴 수량은 판매상품 카드에서 보류하고 결제완료 라인만 표시한다. 중앙 스냅샷의 행·수량·옵션 관계는 수정하지 않는다.
+- `not_enabled/unavailable/stale/incomplete`, 누락된 응답, 영업일·결제완료 기준 불일치: 진행 주문 0으로 간주하지 않는다. 결제완료 수치는 보존하고 전체 규모·현재 객단가 확인 불가를 표시한다.
+- 마감 여부·영업 중 여부는 기존 서버 마감 상태를 사용한다. 클라이언트에서 03:00 경계를 계산하지 않는다. 결제예정 영수증 배너는 이 계산에 사용하지 않는다.
+
+### READ 스위치 조사 결과 (이번 작업의 읽기 전용 확인)
+
+- 운영 alias `baba-staff-app.vercel.app`는 READY Production 배포 `dpl_DJPYFdNFnxfdk53gD7ffYnJHFYtE`, SHA `21fd82cde6647c421f13f6161a9d26072420af4e`를 가리켰다.
+- `POS_OPEN_ORDERS_READ_ENABLED`는 Production 대상 sensitive 변수로 등록되어 있다. 값은 조회·출력하지 않았으며 실제 런타임 ON 여부는 이 메타데이터만으로 단정하지 않는다.
+- 운영 `/api/admin/sales/today` 미인증 GET은 HTTP 401이다. 연결된 브라우저도 사용할 수 없어 로그인된 API의 현재 `openOrders.status`는 재확인하지 못했다.
+- 코드상 `process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true"`일 때만 읽는다. 누락·false·TRUE·1은 `not_enabled`다. 비활성 분기는 영업일/DB 조회 전에 반환한다. 이 동작은 운영 자격 증명 없이 모의 의존성으로 검증한다.
+- Notion 정본은 이번 세션의 조회 수단으로 열지 못했다. 사용자가 제공한 2026-11-07 확정 요구사항 전문에 따라 구현했다.
+
+### 로컬 검증 범위
+
+- 최종 영향 범위 회귀 테스트 94/94 PASS, TypeScript(`--noEmit --incremental false`) PASS, 변경 파일 ESLint PASS, `git diff --check` PASS. 테스트 범위: `sales-daily-kpi`, `pos-open-orders-core`, `pos-business-day-close-phase`, `sales-daily-payment-total`, `admin-sales-business-time`, `admin-sales-today-performance`, `sales-sync-cron-final-policy`, `pos-business-day-final-policy`.
+- 네 카드 통합, 13+8=21, 금액 변경, 결제 전환 중복 방지, 메뉴/옵션/하위 라인, 실제 0과 조회 불가 구분, Status 5/7/8·메뉴 6, 마감 후 유지, READ 분기, 한국어·베트남어 실제 페이지 렌더링을 테스트한다.
+- 오프라인 페이지 렌더링과 격리된 headless Chrome에서 320/390/430/1280px × KO/VI × 정상/부분/비활성/지연/메뉴확인/마감 = 48개 표시 조합을 확인했다. 네 카드 수·가로 넘침·카드 내부 넘침 검사 PASS. 실제 로그인 세션·실데이터 end-to-end 검증과는 구분한다.
+- 스크린샷·화면 검사 결과는 Worktree `.local/daily-kpi-qa/`에만 보관한다. 기존 POS 결제 합계, 00:00 수동마감, 03:00 경계, 03:05 최종 검증 회귀를 함께 확인한다. 매출/장부/재고/급여 구현과 운영 설정은 수정하지 않는다.
 
 실패나 지연 시 0₫으로 표시하지 않는다. 정상 수집 결과가 0건일 때만 0₫이다.
 

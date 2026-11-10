@@ -129,7 +129,10 @@ test('panel re-reads the server status at the next boundary and reports the live
   assert.match(page, /onLiveChange=\{setIsLiveBusinessDay\}/);
   assert.match(page, /const kpiPrefix = isLiveBusinessDay \? dailyText\.currentPrefix : ""/);
   for (const key of ['totalSales', 'receipts', 'soldItems', 'averageReceiptAmount']) assert.match(page, new RegExp(`kpiPrefix \\+ dailyText\\.${key}`));
-  assert.equal((page.match(/meta: paidBaseMeta,/g) || []).length, 2);
+  // The same server phase now gates the restored four-card integration.
+  assert.match(page, /buildDailySalesKpi\(\{/);
+  assert.match(page, /isClosed: Boolean\(closeCheck && closeCheck\.status !== "not_closed"\)/);
+  assert.match(page, /dailyText\.provisionalAverage : dailyText\.partialAverageHidden/);
   assert.equal(salesText.ko.daily?.currentPrefix ?? findKey(salesText.ko, 'currentPrefix'), '현재 ');
   assert.equal(findKey(salesText.vi, 'openOrdersExcluded'), 'chưa gồm đơn đang mở');
   assert.equal(findKey(salesText.ko, 'openOrdersExcluded'), '진행 주문 미포함');

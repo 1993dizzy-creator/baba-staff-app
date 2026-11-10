@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import PosBusinessDayClosePanel from "@/components/sales/PosBusinessDayClosePanel";
 import OpenOrdersPanel from "@/components/sales/OpenOrdersPanel";
 import type { OpenOrderKpi } from "@/lib/pos/cukcuk/open-orders-core";
+import { buildDailySalesKpi } from "@/lib/sales/daily-kpi";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { useLanguage } from "@/lib/language-context";
@@ -432,10 +433,20 @@ export default function SalesPage() {
   const closeCheck = salesData?.closeCheck;
   const hasError = Boolean(errorMessage);
 
-  // Live day: KPIs are paid receipts so far; open (unpaid) orders are not included.
+  // The API summary remains paid-only; only these four presentation cards combine it
+  // with the central snapshot. Close controls and pending-payment holds are independent.
+  const kpi = summary ? buildDailySalesKpi({
+    summary,
+    openOrders: salesData?.openOrders,
+    businessDate: salesData?.businessDate ?? "",
+    isLiveBusinessDay,
+    isClosed: Boolean(closeCheck && closeCheck.status !== "not_closed"),
+  }) : null;
   const kpiPrefix = isLiveBusinessDay ? dailyText.currentPrefix : "";
-  const paidBaseMeta = isLiveBusinessDay
-    ? `${dailyText.paidReceiptBase} · ${dailyText.openOrdersExcluded}`
+  const includesOpen = kpi?.mode === "complete" || kpi?.mode === "partial";
+  const subtotalMeta = kpi?.mode === "partial" ? `${dailyText.knownSubtotal} · ` : "";
+  const paidBaseMeta = kpi?.mode === "unavailable" || kpi?.menuNeedsReview
+    ? dailyText.paidOnly
     : dailyText.paidReceiptBase;
 
   const summaryCards = useMemo(
@@ -446,8 +457,10 @@ export default function SalesPage() {
           ? dailyText.loading
           : hasError
             ? dailyText.error
-            : formatVnd(summary?.totalSales),
-        meta: paidBaseMeta,
+            : formatVnd(kpi?.amount),
+        meta: includesOpen
+          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatVnd(summary?.totalSales)} · ${dailyText.openOrdersAmount} ${formatVnd(kpi?.openOrders?.open?.amount)}`
+          : paidBaseMeta,
       },
       {
         label: withEmoji(SALES_UI_EMOJIS.receipts, kpiPrefix + dailyText.receipts),
@@ -455,8 +468,10 @@ export default function SalesPage() {
           ? dailyText.loading
           : hasError
             ? dailyText.error
-            : `${formatNumber(summary?.receiptCount)}${dailyText.receiptCountSuffix}`,
-        meta: `${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)} / ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}`,
+            : `${formatNumber(kpi?.receiptCount)}${dailyText.receiptCountSuffix}`,
+        meta: includesOpen
+          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)}${dailyText.receiptCountSuffix} · ${dailyText.openOrdersCount} ${formatNumber(kpi?.openOrders?.open?.orderCount)}${dailyText.receiptCountSuffix}`
+          : `${paidBaseMeta} · ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}${dailyText.receiptCountSuffix}`,
       },
       {
         label: withEmoji(SALES_UI_EMOJIS.soldItems, kpiPrefix + dailyText.soldItems),
@@ -464,8 +479,10 @@ export default function SalesPage() {
           ? dailyText.loading
           : hasError
             ? dailyText.error
-            : `${formatNumber(summary?.salesLineCount)}${dailyText.itemCountSuffix}`,
-        meta: `${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}`,
+            : `${formatNumber(kpi?.menuLineCount)}${dailyText.itemCountSuffix}`,
+        meta: includesOpen && !kpi?.menuNeedsReview
+          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatNumber(summary?.salesLineCount)}${dailyText.itemCountSuffix} · ${dailyText.openOrdersCount} ${formatNumber(kpi?.openOrders?.open?.menuLineCount)}${dailyText.itemCountSuffix} · ${dailyText.optionsExcluded}`
+          : `${paidBaseMeta} · ${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}${kpi?.menuNeedsReview ? ` · ${dailyText.menuCountUnavailable}` : ""}`,
       },
       {
         label: withEmoji(
@@ -476,11 +493,15 @@ export default function SalesPage() {
           ? dailyText.loading
           : hasError
             ? dailyText.error
-            : formatVnd(summary?.averageReceiptAmount),
-        meta: paidBaseMeta,
+            : kpi?.averageAmount === null
+              ? dailyText.currentAverageUnavailable
+              : formatVnd(kpi?.averageAmount),
+        meta: includesOpen
+          ? (kpi?.mode === "complete" ? dailyText.provisionalAverage : dailyText.partialAverageHidden)
+          : kpi?.mode === "unavailable" ? dailyText.overallScaleUnavailable : dailyText.paidReceiptBase,
       },
     ],
-    [dailyText, hasError, isLoading, summary, kpiPrefix, paidBaseMeta]
+    [dailyText, hasError, isLoading, summary, kpiPrefix, paidBaseMeta, kpi, includesOpen, subtotalMeta]
   );
 
   const paymentRows = useMemo(
@@ -565,7 +586,7 @@ export default function SalesPage() {
         </section>
 
         {!isLoading && !hasError ? (
-          <OpenOrdersPanel data={salesData?.openOrders} text={dailyText} />
+          <OpenOrdersPanel data={kpi?.openOrders} text={dailyText} active={Boolean(kpi && kpi.mode !== "paid")} />
         ) : null}
 
         {!isLoading && !hasError && paymentReconciliation?.status === "mismatch" ? (
@@ -956,6 +977,8 @@ const summaryCardStyle: CSSProperties = {
   ...ui.card,
   padding: "11px 10px",
   minHeight: 88,
+  minWidth: 0,
+  overflowWrap: "anywhere",
 };
 
 const summaryLabelStyle: CSSProperties = {
