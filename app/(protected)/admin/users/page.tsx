@@ -684,10 +684,6 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   const compactDate = (date: string) => date.replaceAll("-", ".");
   const nextLabel = displayInfo.nextLevelDate ? compactDate(displayInfo.nextLevelDate) + " · Lv." + Math.min(7, (displayInfo.level ?? 0) + 1)
     : displayInfo.eligible ? text.highestLevel : "-";
-  const historySummary = historyError ? text.levelHistoryError : !history?.history ? text.loading
-    : history.history.promotions.length === 0 && !history.history.next ? text.levelHistoryEmpty
-    : text.levelPastCount.replace("{count}", String(history.history.promotions.length)) + " · " + text.levelNextPromotion + " "
-      + (history.history.next ? compactDate(history.history.next.date) : text.levelNoNextShort);
   const amount = (value: number) => value.toLocaleString("vi-VN") + "₫";
 
   return createPortal(<dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
@@ -709,7 +705,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             </label>)}
           </div>
         </fieldset>
-        <fieldset style={styles.modalField} disabled={!levelDraft.included || Boolean(user.termination_date)}>
+        {levelDraft.included ? <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
           <legend style={styles.modalLabel}>{text.levelBasisShort}</legend>
           <div style={styles.segmented}>
             {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
@@ -720,12 +716,15 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
           {levelDraft.baseDateMode === "hire_month"
             ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>
             : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled }))} style={styles.input} /></Field>}
-        </fieldset>
+        </fieldset> : <section style={styles.levelOffCard} aria-label={text.levelChangeSummary} aria-live="polite">
+          <strong style={styles.levelOffCardLabel}>{text.levelOffEmpty}</strong>
+          {hasChanges ? <span style={styles.modalMuted}>{text.levelStartsAt}: {dateLabel(effectiveFrom)}</span> : null}
+        </section>}
         {scheduledDate ? <p role="status" style={styles.modalMuted}>{text.levelScheduledPolicy}: {dateLabel(scheduledDate)}</p> : null}
         {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
         {user.termination_date ? <p role="alert" style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</p> : null}
         <details style={styles.modalHelp}>
-          <summary>{text.levelHelp}</summary>
+          <summary style={styles.modalHelpTitle}>{text.levelHelp}</summary>
           <ul style={styles.levelHelpRules}>
             <li>{text.levelHelpBase}</li>
             <li>{text.levelHelpPromotion}</li>
@@ -734,7 +733,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             <li>{text.levelHelpTwoYears}</li>
           </ul>
         </details>
-        <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
+        {levelDraft.included ? <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
           <strong>{hasChanges ? text.levelPreviewTitle : text.levelCurrentPolicy}</strong>
           {hasChanges ? <span style={styles.modalMuted}>{text.levelStartsAt}: {dateLabel(effectiveFrom)}</span> : null}
           <dl style={styles.modalSummaryGrid}>
@@ -748,13 +747,11 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             {nextDateChanged ? <p style={styles.modalHint}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
             {raiseDelta !== null && raiseDelta !== 0 && raiseBefore !== null && raiseAfter !== null ? <p style={styles.modalHint}>{contract?.payType === "hourly" ? text.levelHourlyDelta : text.levelRaisePreview}: {amount(raiseBefore)} → {amount(raiseAfter)}</p> : null}
           </details> : null}
-        </section>
+        </section> : null}
         <details style={styles.modalHelp}>
-          <summary>{text.levelHistory}<span style={{ ...styles.modalMuted, display: "block", marginTop: 4 }}>{historySummary}</span></summary>
-          <p>{text.levelHistoryHelp}</p>
+          <summary style={styles.modalHelpTitle}>{text.levelHistory}</summary>
           {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status">{text.loading}</p> :
             <LevelHistoryView history={history.history} adminChanges={history.adminChanges ?? []} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
-
         </details>
       </div>
       {hasChanges ? <p style={{ ...styles.modalHint, margin: 0, padding: "6px 14px", flexShrink: 0 }}>{text.levelApplyHelp}</p> : null}
@@ -796,12 +793,31 @@ function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate,
   };
   const dateLabel = (date: string) => date.replaceAll("-", ".");
   const countLabel = (label: string, count: number) => label.replace("{count}", String(count));
+  // Phase comes from the calculated current level (calculateEmployeeLevel), never from row order or labels.
+  // Without an active level (before base, OFF, terminated) only the existing date comparison applies.
+  const phaseOf = (index: number, date: string): "past" | "current" | "future" => {
+    if (active && currentInfo.level !== null) {
+      if (index === currentInfo.level || (index === 8 && currentInfo.negotiationEligible)) return "current";
+      return index < currentInfo.level ? "past" : "future";
+    }
+    return date > history.asOfDate ? "future" : "past";
+  };
+  const timelineRows = milestones.map((event, index) => ({ ...event, index, phase: phaseOf(index, event.date) }));
+  const pastRows = timelineRows.filter(row => row.phase === "past");
+  const upcomingRows = timelineRows.filter(row => row.phase !== "past");
+  const timelineRow = (row: (typeof timelineRows)[number]) => {
+    const isCurrent = row.phase === "current";
+    return <li key={row.month} aria-current={isCurrent ? "step" : undefined} style={{ ...styles.levelTimelineRow, ...(isCurrent ? styles.levelTimelineCurrentRow : {}) }}>
+      <div><time dateTime={row.date}>{dateLabel(row.date)}</time><span style={{ ...styles.modalMuted, display: "block" }}>{text.levelMonthOffset.replace("{count}", String(row.month))}</span></div>
+      <div style={{ textAlign: "right" }}><span>{row.index === 8 ? text.levelNegotiation : "Lv." + row.index}</span><span style={{ ...styles.modalMuted, ...(isCurrent ? { color: "#1d4ed8" } : {}), display: "block" }}>{isCurrent ? text.levelCurrentlyActive : row.phase === "future" ? text.levelScheduleFuture : text.levelSchedulePast}</span></div>
+    </li>;
+  };
   const promotionRows = (events: typeof past) => <ul style={styles.levelHistoryList}>{events.map(event =>
     <li key={event.date + ":" + event.versionId} style={styles.levelHistoryRow}><time dateTime={event.date}>{dateLabel(event.date)}</time><strong>Lv.{event.level}</strong></li>)}</ul>;
   return <div style={styles.levelHistorySections}>
     <section aria-label={text.levelTimeline} style={styles.levelTimelinePanel}>
       <div style={styles.levelTimelineCurrent}>
-        <strong>{terminated ? text.levelAtTermination : text.currentLevel} {currentInfo.displayLabel ?? (currentInfo.reason === "PROGRAM_DISABLED" ? text.levelDisabled : text.levelUnset)}</strong>
+        {terminated ? <strong>{text.levelAtTermination} {currentInfo.displayLabel ?? (currentInfo.reason === "PROGRAM_DISABLED" ? text.levelDisabled : text.levelUnset)}</strong> : null}
         {terminated ? <span>{text.terminatedLevelReadOnly}</span> : beforeBase ? <span>{text.levelBeforeBaseDate}</span>
           : active && periodStart ? <span>{text.levelPeriod} {dateLabel(periodStart)} ~ {periodEnd ? dateLabel(periodEnd) : text.levelContinues}</span> : null}
         {active && currentInfo.nextLevelDate ? <span>{text.nextLevelShort} Lv.{Math.min(7, (currentInfo.level ?? 0) + 1)} · {dateLabel(currentInfo.nextLevelDate)}</span>
@@ -810,13 +826,11 @@ function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate,
         <span style={styles.modalMuted}>{text.levelTimelineStandard}{pending ? " · " + text.levelTimelineSaved : ""}</span>
       </div>
       {milestones.length ? <div role="region" aria-label={text.levelTimelineSchedule} tabIndex={0} style={styles.levelTimelineScroll}>
-        <ol style={styles.levelHistoryList}>{milestones.map((event, index) => {
-          const isCurrent = active && index < 8 && currentInfo.level === index;
-          return <li key={event.month} aria-current={isCurrent ? "step" : undefined} style={{ ...styles.levelTimelineRow, ...(isCurrent ? { fontWeight: 800, color: "#111827" } : {}) }}>
-            <div><time dateTime={event.date}>{dateLabel(event.date)}</time><span style={{ ...styles.modalMuted, display: "block" }}>{text.levelMonthOffset.replace("{count}", String(event.month))}</span></div>
-            <div style={{ textAlign: "right" }}><span>{index === 8 ? text.levelNegotiation : "Lv." + index}</span><span style={{ ...styles.modalMuted, display: "block" }}>{isCurrent ? text.currentLevel : event.date > history.asOfDate ? text.levelScheduleFuture : text.levelSchedulePast}</span></div>
-          </li>;
-        })}</ol>
+        {pastRows.length ? <details>
+          <summary style={styles.modalHelpTitle}>{countLabel(text.levelPastSchedule, pastRows.length)}</summary>
+          <ol style={styles.levelHistoryList}>{pastRows.map(timelineRow)}</ol>
+        </details> : null}
+        {upcomingRows.length ? <ol style={styles.levelHistoryList}>{upcomingRows.map(timelineRow)}</ol> : null}
       </div> : <p>{text.levelBaseRequired}</p>}
     </section>
     <details>
@@ -1381,7 +1395,11 @@ const styles = {
   modalLabel: { padding: 0, marginBottom: 6, fontSize: 12, fontWeight: 800, color: "#374151" },
   modalHint: { margin: "7px 0 0", fontSize: 11, color: "#6b7280", lineHeight: 1.5, overflowWrap: "anywhere" },
   modalMuted: { color: "#6b7280", fontSize: 11, fontWeight: 500, overflowWrap: "anywhere" },
-  modalHelp: { color: "#6b7280", fontSize: 11, lineHeight: 1.5 },
+  modalHelp: { color: "#111827", fontSize: 11, lineHeight: 1.5 },
+  modalHelpTitle: { color: "#111827", fontWeight: 700, cursor: "pointer" },
+  levelOffCard: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, minHeight: 96, padding: 10, border: "1px solid #e5e7eb", borderRadius: 8, background: "#f9fafb", textAlign: "center" },
+  levelOffCardLabel: { fontSize: 14, fontWeight: 800, color: "#374151" },
+  levelTimelineCurrentRow: { fontWeight: 800, color: "#1d4ed8" },
   modalSummary: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 8, background: "#f9fafb" },
   modalSummaryGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px 8px", margin: 0, fontSize: 11, alignItems: "start" },
   modalValue: { margin: 0, fontWeight: 800, textAlign: "right" },
