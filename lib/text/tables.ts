@@ -2,6 +2,11 @@ export const tablesText = {
   ko: {
     title: "매장현황", refresh: "새로고침", loading: "매장현황 확인 중…", failed: "현황을 확인할 수 없습니다. 다시 확인해 주세요.",
     total: "전체 테이블", occupied: "사용 중", reserved: "예약", paid: "결제완료", free: "확인된 빈자리", unknown: "미확인",
+    summaryLabels: { total: "전체", occupied: "사용 확인", reserved: "예약", paid: "결제", free: "빈자리" },
+    shortDate: "영업일", shortOrders: "주문", shortTables: "테이블", tableCountSuffix: "개",
+    reviewCount: "확인 필요 {count}개 · 빈자리 안내 금지", catalogCheck: "목록 확인 필요 · 빈자리 안내 금지",
+    ordersCheck: "주문 확인 필요 · 빈자리 안내 금지", statusInfo: "상태 안내",
+    unknownHelp: "회색 점선과 ?는 미확인 상태입니다. 빈자리로 안내하지 마세요.",
     bar: "BAR", floor1: "1층", floor2: "2층", sourceArea: "CUKCUK 구역", updated: "주문 수집", catalogUpdated: "테이블 목록 수집", businessDate: "영업일",
     noCatalog: "테이블 목록 확인 전입니다. 빈자리는 현장에서 확인해 주세요.", noArea: "확인된 테이블 목록 없음",
     uncertain: "일부 현황 미확인 · 빈자리로 안내하지 마세요.", delayed: "주문 수집 지연·오류 · 현장에서 확인해 주세요.",
@@ -14,6 +19,11 @@ export const tablesText = {
   vi: {
     title: "Tình hình cửa hàng", refresh: "Làm mới", loading: "Đang kiểm tra cửa hàng…", failed: "Chưa xác định được hiện trạng. Vui lòng thử lại.",
     total: "Tổng số bàn", occupied: "Đang sử dụng", reserved: "Đặt trước", paid: "Đã thanh toán", free: "Bàn trống đã xác nhận", unknown: "Chưa rõ",
+    summaryLabels: { total: "Tổng", occupied: "Đang dùng", reserved: "Đặt", paid: "Đã trả", free: "Trống" },
+    shortDate: "Ngày", shortOrders: "Đơn", shortTables: "Bàn", tableCountSuffix: " bàn",
+    reviewCount: "{count} bàn chưa rõ · Không báo bàn trống", catalogCheck: "Kiểm tra danh sách · Không báo bàn trống",
+    ordersCheck: "Kiểm tra đơn · Không báo bàn trống", statusInfo: "Thông tin trạng thái",
+    unknownHelp: "Nền xám, viền nét đứt và ? là chưa rõ. Không hướng dẫn là bàn trống.",
     bar: "BAR", floor1: "Tầng 1", floor2: "Tầng 2", sourceArea: "Khu vực CUKCUK", updated: "Thu thập đơn", catalogUpdated: "Thu thập danh sách bàn", businessDate: "Ngày kinh doanh",
     noCatalog: "Chưa xác nhận danh sách bàn. Hãy kiểm tra bàn trống tại chỗ.", noArea: "Chưa có danh sách bàn đã xác nhận",
     uncertain: "Một số bàn chưa rõ · Không hướng dẫn là bàn trống.", delayed: "Dữ liệu đơn chậm hoặc lỗi · Hãy kiểm tra tại chỗ.",
