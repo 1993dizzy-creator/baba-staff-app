@@ -222,7 +222,8 @@ test("termination cancellation is explicit, preserves hire date, and does not by
   const page=read("app/(protected)/admin/users/page.tsx");
   const api=read("app/api/admin/users/route.ts");
   const policy=read("lib/employment/termination-policy.ts");
-  assert.match(page,/original\.termination_date[\s\S]*draft\.termination_date === null[\s\S]*draft\.is_active !== false[\s\S]*"cancel_termination"/);
+  // 2026-11: only an explicitly confirmed cancellation sends cancel_termination with is_active=true.
+  assert.match(page,/const confirmsCancelTermination = original\.role !== "master" && Boolean\(original\.termination_date\) && draft\.termination_date === null && draft\.is_active === true;[\s\S]*if \(confirmsCancelTermination \|\| reactivatesInactive\) updates\.is_active = true;[\s\S]*action: confirmsCancelTermination \? "cancel_termination" : undefined/);
   assert.match(api,/const isCancelTermination = body\.action === "cancel_termination"/);
   assert.match(api,/update\.termination_date === null/);
   assert.match(api,/update\.is_active === true/);

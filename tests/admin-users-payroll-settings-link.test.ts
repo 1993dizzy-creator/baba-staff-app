@@ -10,26 +10,35 @@ const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
 const panel = read("components/payroll/EmployeePayrollSettingsPanel.tsx");
 const hook = read("components/payroll/usePayrollContracts.ts");
 
-test("employee detail: attendance lives in work·pay, app login in app access, is_active and payroll exception in collapsed advanced", () => {
-  // Section headers carry an emoji via SectionTitle (2026-11 UI cleanup).
+test("employee detail: attendance and the payroll exception live in work·pay, app login in app access; no advanced card", () => {
+  // 2026-11 restructure: three top cards (기본정보 · 근무·급여 · 앱 접근); the 고급 관리 card is gone.
   const work = page.indexOf('<SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>');
   const access = page.indexOf('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>');
-  const advanced = page.indexOf("{text.advancedSettings}</summary>");
-  assert.ok(work > 0 && access > work && advanced > access);
+  assert.ok(work > 0 && access > work);
   assert.ok(page.indexOf('label={text.attendanceTracking}') > work && page.indexOf('label={text.attendanceTracking}') < access);
-  assert.ok(page.indexOf('label={text.appLoginAllowed}') > access && page.indexOf('label={text.appLoginAllowed}') < advanced);
-  assert.ok(page.lastIndexOf('label={text.payrollEligibleOverride}') > advanced);
-  assert.doesNotMatch(page, /<details[^>]*\bopen\b[^>]*style=\{styles\.advancedSection\}/, "advanced is collapsed by default");
+  assert.ok(page.indexOf('label={text.appLoginAllowed}') > access);
+  const exception = page.lastIndexOf('label={text.payrollEligibleOverride}');
+  assert.ok(exception > work && exception < access, "payroll exception is a small subsection of work·pay");
+  assert.match(page, /\{isAdminGroupUser && !user\.is_system_account \? <div style=\{styles\.subsection\}>\n\s+<SubsectionTitle emoji="⚙️">\{text\.payrollException\}<\/SubsectionTitle>/);
+  assert.doesNotMatch(page, /advancedSettings|advancedSection|advancedSummary/, "no advanced card");
   assert.doesNotMatch(page, /text\.usageSettings|text\.activeStatus/, "ambiguous 계정 사용 가능 label removed from the detail UI");
 });
 
-test("is_active editing is preserved and not merged with termination", () => {
-  // Advanced toggle edits is_active only; termination date is never filled in automatically.
-  assert.match(page, /label=\{text\.employeeActiveToggle\} checked=\{!draft\.termination_date && draft\.is_active !== false\} disabled=\{Boolean\(draft\.termination_date\)\} onChange=\{value => update\("is_active", value\)\}/);
-  // Clearing a terminated employee's date surfaces the toggle for the existing cancel_termination flow.
+test("is_active has no general toggle; it changes only on an explicit cancel-termination or reactivation", () => {
+  // The general 직원 활성 상태 toggle is removed; the termination date is never filled in automatically.
+  assert.doesNotMatch(page, /employeeActiveToggle/);
+  // Clearing a terminated employee's date shows an explicit confirmation for the existing cancel_termination flow.
   assert.match(page, /const cancellingTermination = !isMasterUser && Boolean\(user\.termination_date\) && !draft\.termination_date;/);
-  assert.match(page, /original\.termination_date[\s\S]*draft\.termination_date === null[\s\S]*draft\.is_active !== false[\s\S]*"cancel_termination"/);
-  assert.match(page, /is_active: draft\.is_active !== false,\s*attendance_tracking_enabled: draft\.attendance_tracking_enabled !== false,\s*app_login_enabled: draft\.app_login_enabled !== false,/);
+  assert.match(page, /<input type="checkbox" checked=\{draft\.is_active === true\} onChange=\{\(event\) => update\("is_active", event\.target\.checked\)\} \/>\n\s+<span>\{text\.cancelTerminationConfirm\}<\/span>/);
+  // Inactive without a termination date: a conditional 비활성 해제 action only.
+  assert.match(page, /const inactiveWithoutTermination = !isMasterUser && user\.is_active === false && !user\.termination_date;/);
+  assert.match(page, /\{inactiveWithoutTermination \? <button type="button"[^>]*onClick=\{\(\) => update\("is_active", reactivating \? false : true\)\}>/);
+  // General saves (incl. app login changes) do not send is_active, so the server keeps the current value.
+  assert.match(page, /work_end_time: draft\.work_end_time,\n\s+attendance_tracking_enabled: draft\.attendance_tracking_enabled !== false,\n\s+app_login_enabled: draft\.app_login_enabled !== false,/);
+  assert.match(page, /if \(confirmsCancelTermination \|\| reactivatesInactive\) updates\.is_active = true;/);
+  assert.match(page, /const confirmsCancelTermination = original\.role !== "master" && Boolean\(original\.termination_date\) && draft\.termination_date === null && draft\.is_active === true;/);
+  assert.match(page, /const reactivatesInactive = original\.role !== "master" && original\.is_active === false && !original\.termination_date && !draft\.termination_date && draft\.is_active === true;/);
+  assert.match(page, /action: confirmsCancelTermination \? "cancel_termination" : undefined,/);
 });
 
 test("current payroll contract is read per employee only when the detail is open, and re-read on return", () => {
@@ -108,7 +117,7 @@ test("payroll settings shortcut opens the existing employee tab with the same el
 });
 
 test("new labels exist in KO and VI", () => {
-  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "advancedSettings", "employeeActiveToggle", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "payrollContractMismatch", "managePayrollSettings", "unsavedLeaveConfirm"]) {
+  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "cancelTerminationConfirm", "reactivate", "reactivateUndo", "reactivateHelp", "reactivatePending", "appLoginBlockedInactive", "appLoginBlockedTerminated", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "payrollContractMismatch", "managePayrollSettings", "unsavedLeaveConfirm"]) {
     assert.equal((text.match(new RegExp(`\\b${key}:`, "g")) ?? []).length, 2, key);
   }
   assert.match(text, /근태 설정과 현재 급여계약이 다릅니다\. 급여설정에서 계약을 확인해야 합니다\./);

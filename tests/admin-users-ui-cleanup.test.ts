@@ -22,15 +22,16 @@ test("A: total hours use the payroll schedule rule (midnight wrap, no break) and
   assert.match(page, /const workDuration = workTime \? workDurationLabel\(user, text\) : "";/);
 });
 
-test("B: detail cards carry an emoji header and a light tint; inputs stay white", () => {
-  for (const [tone, emoji, label] of [["basic", "🪪", "basicInfo"], ["workPay", "⏰", "workPayInfo"], ["level", "📈", "longTermLevel"], ["appAccess", "🔐", "appAccess"]]) {
+test("B: detail cards carry an emoji header and a light tint; inputs stay white (3 top cards since the 2026-11 restructure)", () => {
+  for (const [tone, emoji, label] of [["basic", "🪪", "basicInfo"], ["workPay", "⏰", "workPayInfo"], ["appAccess", "🔐", "appAccess"]]) {
     assert.ok(page.includes(`<section style={sectionStyle("${tone}")}>`), tone);
     assert.ok(page.includes(`<SectionTitle emoji="${emoji}">{text.${label}}</SectionTitle>`), label);
   }
-  assert.ok(page.includes('<SectionTitle emoji="💳">{text.payrollBenefits}</SectionTitle>'));
-  assert.ok(page.includes('<summary style={styles.advancedSummary}><span aria-hidden="true">🛠️</span> {text.advancedSettings}</summary>'));
+  // level and payroll·benefits are subsections of work·pay, not top cards
+  assert.ok(page.includes('<SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>'));
+  assert.ok(page.includes('<SubsectionTitle emoji="💳">{text.payrollBenefits}</SubsectionTitle>'));
+  assert.doesNotMatch(page, /sectionStyle\("(level|payroll|advanced)"\)/);
   assert.match(page, /\.\.\.ui\.input,\n\s+\/\/[^\n]*\n\s+background: "#fff",/);
-  assert.match(page, /payroll: \{ background: "#fffbeb", borderColor: "#fef3c7" \}/);
 });
 
 test("C: the work·pay card no longer has its own 급여설정 shortcut; the payroll sheet keeps one", () => {

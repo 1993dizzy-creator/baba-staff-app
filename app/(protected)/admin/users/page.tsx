@@ -480,8 +480,12 @@ function UserCard({
     router.replace(`/admin/users?userId=${encodeURIComponent(String(user.id))}&section=${payrollOpen ? "payroll" : "detail"}`, { scroll: false });
     router.push(`/admin/payroll/settings?tab=employee&userId=${encodeURIComponent(String(user.id))}`);
   }
-  // 퇴사자의 퇴사일을 지우는 중이면 활성 토글을 기본 정보에 바로 보여 준다(기존 퇴사 취소 흐름).
+  // 재직 상태(is_active)는 일반 토글로 바꾸지 않는다. 다음 두 경우에만 명시적으로 복구한다.
+  // - 퇴사 취소: 퇴사자의 퇴사일을 지우고 "퇴사 취소 확정"을 선택한 경우(서버 cancel_termination 검증)
+  // - 비활성 해제: 퇴사일 없이 비활성인 기존 직원을 "비활성 해제"한 경우
   const cancellingTermination = !isMasterUser && Boolean(user.termination_date) && !draft.termination_date;
+  const inactiveWithoutTermination = !isMasterUser && user.is_active === false && !user.termination_date;
+  const reactivating = inactiveWithoutTermination && !draft.termination_date && draft.is_active === true;
 
   function cancelEdit() {
     if (isSaving || savePending.current) return;
@@ -642,12 +646,30 @@ function UserCard({
           ) : null}
           <div style={styles.statusRow}>
             <span style={styles.fieldLabel}>{text.employmentStatus}</span>
-            <span style={employmentStatusStyle(user)}>{employmentStatusLabel(user, text)}</span>
+            <span style={styles.statusActions}>
+              <span style={employmentStatusStyle(user)}>{employmentStatusLabel(user, text)}</span>
+              {inactiveWithoutTermination ? <button type="button" style={styles.payrollLinkButton} aria-pressed={reactivating} onClick={() => update("is_active", reactivating ? false : true)}>{reactivating ? text.reactivateUndo : text.reactivate}</button> : null}
+            </span>
           </div>
+          {inactiveWithoutTermination ? <span style={reactivating ? styles.fieldNotice : styles.modalHint}>{reactivating ? text.reactivatePending : text.reactivateHelp}</span> : null}
           {cancellingTermination ? <>
-            <Toggle label={text.employeeActiveToggle} checked={draft.is_active !== false} onChange={value => update("is_active", value)} />
+            <label style={styles.confirmCheck}>
+              <input type="checkbox" checked={draft.is_active === true} onChange={(event) => update("is_active", event.target.checked)} />
+              <span>{text.cancelTerminationConfirm}</span>
+            </label>
             <span style={styles.modalHint}>{text.cancelTerminationHelp}</span>
           </> : null}
+          {user.is_active === false && user.termination_date ? (
+            <div style={styles.rehireBox}>
+              <button type="button" style={styles.secondaryButton} onClick={() => setRehireOpen(current => !current)}>{text.rehire}</button>
+              {rehireOpen ? <div style={{display:"grid",gap:8,marginTop:8}}>
+                <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
+                <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
+                <div style={styles.segmented}>{[true,false].map(enabled=><label key={String(enabled)} style={rehireLevelEnabled===enabled?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-level-${user.id}`} checked={rehireLevelEnabled===enabled} onChange={()=>setRehireLevelEnabled(enabled)}/>{enabled?text.levelEnabled:text.levelDisabled}</label>)}</div>
+                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled?true:null)}>{text.rehire}</button>
+              </div> : null}
+            </div>
+          ) : null}
           </section>
             </>
           ) : null}
@@ -678,9 +700,8 @@ function UserCard({
               <span style={styles.modalHint}>{text.attendancePayrollHelp}</span>
             </> : null}
             <PayrollContractStatus user={user} draft={draft} text={text} contracts={contracts} />
-          </section>
-          {hasLevelEditor ? <section style={sectionStyle("level")}>
-            <SectionTitle emoji="📈">{text.longTermLevel}</SectionTitle>
+          {hasLevelEditor ? <div style={styles.subsection}>
+            <SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>
             <LevelDetails levelInfo={user.levelInfo} text={text} />
             {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
             {/* 목록의 레벨 일정 줄을 없애면서, 그 줄에만 있던 월 기준 전환 안내를 이 영역(레벨 설정 버튼 옆)으로 옮긴다. 조건은 기존과 같다. */}
@@ -688,7 +709,7 @@ function UserCard({
             <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={openLevelModal}>{text.levelSettings}</button>
             {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
             {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
-          </section> : null}
+          </div> : null}
           {canManageUserPayroll(user) ? (
             <PayrollBenefitsSection
               user={user}
@@ -706,27 +727,20 @@ function UserCard({
               onOpenPayrollSettings={openPayrollSettings}
             />
           ) : null}
+          {/* 급여 대상 예외: 기존 허용 대상(owner/master 등 사장 그룹)에게만, 기존 저장 조건 그대로. */}
+          {isAdminGroupUser && !user.is_system_account ? <div style={styles.subsection}>
+            <SubsectionTitle emoji="⚙️">{text.payrollException}</SubsectionTitle>
+            <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
+            <span style={styles.modalHint}>{text.payrollEligibleOverrideHelp}</span>
+          </div> : null}
+          </section>
           {!isMasterUser ? <section style={sectionStyle("appAccess")}>
             <SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>
             <Toggle label={text.appLoginAllowed} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
             <span style={styles.modalHint}>{text.appLoginAllowedHelp}</span>
+            {/* 로그인은 재직 상태(is_active)와 앱 로그인 허용이 모두 켜져 있어야 가능하다(서버 인증과 같은 조건). */}
+            {user.termination_date || user.is_active === false ? <span style={styles.fieldNotice}>{user.termination_date ? text.appLoginBlockedTerminated : text.appLoginBlockedInactive}</span> : null}
           </section> : null}
-          {(!isMasterUser && !cancellingTermination) || (isAdminGroupUser && !user.is_system_account) ? (
-            <details style={{ ...styles.advancedSection, ...SECTION_TONES.advanced }}>
-              <summary style={styles.advancedSummary}><span aria-hidden="true">🛠️</span> {text.advancedSettings}</summary>
-              <div style={styles.advancedBody}>
-                {!isMasterUser && !cancellingTermination ? <>
-                  <Toggle label={text.employeeActiveToggle} checked={!draft.termination_date && draft.is_active !== false} disabled={Boolean(draft.termination_date)} onChange={value => update("is_active", value)} />
-                  <span style={styles.modalHint}>{text.employeeActiveHelp}</span>
-                </> : null}
-                {isAdminGroupUser && !user.is_system_account ? <>
-                  <strong style={styles.fieldLabel}>{text.payrollException}</strong>
-                  <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
-                  <span style={styles.modalHint}>{text.payrollEligibleOverrideHelp}</span>
-                </> : null}
-              </div>
-            </details>
-          ) : null}
           <div style={styles.actionRow}>
             <button
               type="button"
@@ -758,17 +772,6 @@ function UserCard({
               {isSaving ? text.saving : text.save}
             </button>
           </div>
-          {!isMasterUser && user.is_active === false && user.termination_date ? (
-            <div style={{...styles.notice, gridColumn: "1 / -1"}}>
-              <button type="button" style={styles.secondaryButton} onClick={() => setRehireOpen(current => !current)}>{text.rehire}</button>
-              {rehireOpen ? <div style={{display:"grid",gap:8,marginTop:8}}>
-                <p style={{margin:0,fontSize:12,lineHeight:1.5}}>{text.rehireWarning}</p>
-                <Field label={text.rehireDate}><input type="date" value={rehireDate} onChange={event=>setRehireDate(event.target.value)} style={styles.input}/></Field>
-                <div style={styles.segmented}>{[true,false].map(enabled=><label key={String(enabled)} style={rehireLevelEnabled===enabled?styles.segmentActive:styles.segment}><input type="radio" name={`rehire-level-${user.id}`} checked={rehireLevelEnabled===enabled} onChange={()=>setRehireLevelEnabled(enabled)}/>{enabled?text.levelEnabled:text.levelDisabled}</label>)}</div>
-                <button type="button" disabled={!rehireDate||isSaving} style={styles.primaryButton} onClick={()=>onRehire(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled?true:null)}>{text.rehire}</button>
-              </div> : null}
-            </div>
-          ) : null}
         </fieldset>
       ) : null}
       {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); focusLevelOpener(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); focusLevelOpener(); }} /> : null}
@@ -829,10 +832,7 @@ function PayrollContractStatus({ user, draft, text, contracts }: {
 const SECTION_TONES = {
   basic: { background: "#f8fafc", borderColor: "#e2e8f0" },
   workPay: { background: "#f0f9ff", borderColor: "#e0f2fe" },
-  level: { background: "#faf5ff", borderColor: "#ede9fe" },
-  payroll: { background: "#fffbeb", borderColor: "#fef3c7" },
   appAccess: { background: "#f0fdf4", borderColor: "#dcfce7" },
-  advanced: { background: "#f9fafb", borderColor: "#e5e7eb" },
 } satisfies Record<string, CSSProperties>;
 
 function sectionStyle(tone: keyof typeof SECTION_TONES): CSSProperties {
@@ -841,6 +841,11 @@ function sectionStyle(tone: keyof typeof SECTION_TONES): CSSProperties {
 
 function SectionTitle({ emoji, children }: { emoji: string; children: ReactNode }) {
   return <strong style={styles.sectionTitle}><span aria-hidden="true">{emoji}</span>{children}</strong>;
+}
+
+/** 근무·급여 카드 안의 소제목(장기근무 레벨·급여·복리후생·급여 대상 예외). 구분선으로 나눈다. */
+function SubsectionTitle({ emoji, children }: { emoji: string; children: ReactNode }) {
+  return <strong style={styles.subsectionTitle}><span aria-hidden="true">{emoji}</span>{children}</strong>;
 }
 
 /** 급여관리와 같은 판정의 적용 아이콘(목록 둘째 줄·급여·복리후생 카드 요약에서 함께 쓴다). */
@@ -927,9 +932,9 @@ function PayrollBenefitsSection({ user, text, lang, open, onOpen, onClose, appli
   }, [onMealChanged]);
   const name = user.name || user.full_name || user.username;
   const readyIcons = applicability.status === "ready" ? applicability.icons : null;
-  return <section style={sectionStyle("payroll")}>
+  return <div style={styles.subsection}>
     <div style={styles.sectionHead}>
-      <SectionTitle emoji="💳">{text.payrollBenefits}</SectionTitle>
+      <SubsectionTitle emoji="💳">{text.payrollBenefits}</SubsectionTitle>
       <button ref={openButtonRef} type="button" aria-haspopup="dialog" aria-expanded={open} disabled={isSaving} onClick={onOpen} style={styles.payrollOpenButton}>{text.payrollManage}</button>
     </div>
     <div style={styles.statusRow}>
@@ -964,7 +969,7 @@ function PayrollBenefitsSection({ user, text, lang, open, onOpen, onClose, appli
         />
       </PayrollSheet>
     ) : null}
-  </section>;
+  </div>;
 }
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
@@ -1359,6 +1364,15 @@ export default function AdminUsersPage() {
       ).length,
     [users]
   );
+  // 파트별 목록 접힘 상태. 사용자가 바꾼 값만 기억해 재조회·저장 후에도 유지한다(목록 데이터와 분리).
+  const [groupOpenOverrides, setGroupOpenOverrides] = useState<Partial<Record<UserGroupKey, boolean>>>({});
+  // 급여설정에서 ?userId=로 돌아온 직원의 그룹은 (사장·비활성이어도) 처음에 펼친다.
+  const focusGroupKey = useMemo(() => {
+    if (!initialFocus.userId) return null;
+    const focused = users.find((user) => String(user.id) === initialFocus.userId);
+    return focused ? getActiveUserGroup(focused) : null;
+  }, [initialFocus.userId, users]);
+  const isGroupOpen = (key: UserGroupKey) => groupOpenOverrides[key] ?? (key === focusGroupKey || (key !== "owner" && key !== "inactive"));
   const groupedUsers = useMemo(
     () =>
       groupOrder
@@ -1420,25 +1434,24 @@ export default function AdminUsersPage() {
             termination_date: draft.termination_date,
             work_start_time: draft.work_start_time,
             work_end_time: draft.work_end_time,
-            is_active: draft.is_active !== false,
             attendance_tracking_enabled: draft.attendance_tracking_enabled !== false,
             app_login_enabled: draft.app_login_enabled !== false,
           };
       if (original.role === "owner") {
         updates.payroll_eligible_override = draft.payroll_eligible_override;
       }
+      // 재직 상태는 일반 저장에서 보내지 않아 서버의 현재 값을 그대로 둔다(앱 로그인 변경도 재직 상태 불변).
+      // 명시적으로 퇴사 취소를 확정했거나, 퇴사일 없는 비활성 직원을 "비활성 해제"한 경우에만 true를 보낸다.
+      const confirmsCancelTermination = original.role !== "master" && Boolean(original.termination_date) && draft.termination_date === null && draft.is_active === true;
+      const reactivatesInactive = original.role !== "master" && original.is_active === false && !original.termination_date && !draft.termination_date && draft.is_active === true;
+      if (confirmsCancelTermination || reactivatesInactive) updates.is_active = true;
       if (levelDraftChanged(original, levelDraft, draft.hire_date) && levelDraft.effectiveMonth === "current"
         && !window.confirm(text.levelCurrentMonthWarning)) return false;
       const res = await attendanceFetch("/api/admin/users", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action:
-            original.termination_date &&
-            draft.termination_date === null &&
-            draft.is_active !== false
-              ? "cancel_termination"
-              : undefined,
+          action: confirmsCancelTermination ? "cancel_termination" : undefined,
           lang,
           id: original.id,
           updates,
@@ -1535,6 +1548,8 @@ export default function AdminUsersPage() {
             onRehire={rehireUser}
             savingId={savingId}
             payroll={payrollControl}
+            open={isGroupOpen(group.key)}
+            onToggle={() => setGroupOpenOverrides((current) => ({ ...current, [group.key]: !isGroupOpen(group.key) }))}
           />
         ))}
       </section>
@@ -1550,6 +1565,8 @@ function UserGroup({
   onRehire,
   savingId,
   payroll,
+  open,
+  onToggle,
 }: {
   groupKey: UserGroupKey;
   users: UserRow[];
@@ -1558,14 +1575,22 @@ function UserGroup({
   onRehire: (user: UserRow, rehireDate: string, levelEnabled: boolean, salaryRaiseEnabled: boolean | null) => void;
   savingId: number | string | null;
   payroll: PayrollSectionControl;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const meta = getGroupMeta(groupKey, text);
+  const listId = useId();
 
   return (
     <div style={styles.group}>
-      <div
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={onToggle}
         style={{
           ...styles.groupTitle,
+          ...styles.groupToggle,
           color: meta.color,
           background: meta.bg,
           borderLeft: `4px solid ${meta.border}`,
@@ -1576,8 +1601,10 @@ function UserGroup({
           <span>{meta.label}</span>
         </span>
         <span style={styles.groupCount}>{users.length}</span>
-      </div>
-      <div style={styles.groupList}>
+        <span aria-hidden="true" style={{ ...styles.groupChevron, transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+      </button>
+      {/* 접어도 카드는 남겨 두고 숨기기만 한다. 편집 중인 직원의 입력·상세 상태가 사라지지 않는다. */}
+      <div id={listId} hidden={!open} style={open ? styles.groupList : { ...styles.groupList, display: "none" }}>
         {users.map((user) => (
           <UserCard
             key={user.id}
@@ -1648,6 +1675,20 @@ const styles = {
     fontSize: 11,
     fontWeight: 900,
     opacity: 0.75,
+  },
+  groupToggle: {
+    width: "100%",
+    border: "none",
+    textAlign: "left",
+    // font 축약형은 groupTitle의 fontSize·fontWeight를 덮어쓰므로 글꼴 계열만 상속한다.
+    fontFamily: "inherit",
+    cursor: "pointer",
+  },
+  groupChevron: {
+    flexShrink: 0,
+    fontSize: 12,
+    lineHeight: 1,
+    transition: "transform 0.15s ease",
   },
   groupList: {
     display: "grid",
@@ -1804,9 +1845,11 @@ const styles = {
   sheetTitle: { minWidth: 0, fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
   sheetBody: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: 12, background: "#f9fafb" },
   sheetFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
-  advancedSection: { padding: "8px 10px", border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
-  advancedSummary: { fontSize: 12, fontWeight: 800, color: "#374151", cursor: "pointer" },
-  advancedBody: { display: "grid", gap: 8, marginTop: 8 },
+  subsection: { display: "grid", gap: 8, paddingTop: 10, marginTop: 2, borderTop: "1px solid #bae6fd", minWidth: 0 },
+  subsectionTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#0f172a" },
+  statusActions: { display: "inline-flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, minWidth: 0 },
+  confirmCheck: { display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px", border: "1px solid #fcd34d", borderRadius: 9, background: "#fffbeb", fontSize: 12, fontWeight: 700, color: "#92400e", lineHeight: 1.5, cursor: "pointer", overflowWrap: "anywhere" },
+  rehireBox: { display: "grid", gap: 0, padding: 10, border: "1px solid #e5e7eb", borderRadius: 9, background: "#fff", minWidth: 0 },
   formGrid: {
     padding: 0,
     margin: 0,
