@@ -31,6 +31,7 @@ import {
 import { addCalendarMonthsClamped, calculateEmployeeLevel } from "@/lib/employee-level/calculate";
 import { hireMonthBase } from "@/lib/employee-level/month";
 import { employeeLevelMonthCandidate } from "@/lib/employee-level/month-transition";
+import { isPayrollEligible, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
 
 type UserRow = {
   id: number | string;
@@ -358,6 +359,8 @@ function UserCard({
   const [levelModalOpen, setLevelModalOpen] = useState(false);
   const savePending = useRef(false);
   const levelButtonRef = useRef<HTMLButtonElement>(null);
+  // 퇴사자의 퇴사일을 지우는 중이면 활성 토글을 기본 정보에 바로 보여 준다(기존 퇴사 취소 흐름).
+  const cancellingTermination = !isMasterUser && Boolean(user.termination_date) && !draft.termination_date;
 
   function cancelEdit() {
     if (isSaving || savePending.current) return;
@@ -508,32 +511,45 @@ function UserCard({
               {text.terminationDeactivationNotice}
             </span>
           ) : null}
+          <div style={styles.statusRow}>
+            <span style={styles.fieldLabel}>{text.employmentStatus}</span>
+            <span style={employmentStatusStyle(user)}>{employmentStatusLabel(user, text)}</span>
+          </div>
+          {cancellingTermination ? <>
+            <Toggle label={text.employeeActiveToggle} checked={draft.is_active !== false} onChange={value => update("is_active", value)} />
+            <span style={styles.modalHint}>{text.cancelTerminationHelp}</span>
+          </> : null}
           </section>
-          {draft.attendance_tracking_enabled !== false ? (
-            <section style={styles.detailSection}>
-            <strong>{text.workInfo}</strong>
-            <div style={styles.fieldRow2}>
-              <Field label={text.workStartTime}>
-                <input
-                  type="time"
-                  value={draft.work_start_time || ""}
-                  onChange={(event) => update("work_start_time", emptyToNull(event.target.value))}
-                  style={styles.input}
-                />
-              </Field>
-              <Field label={text.workEndTime}>
-                <input
-                  type="time"
-                  value={draft.work_end_time || ""}
-                  onChange={(event) => update("work_end_time", emptyToNull(event.target.value))}
-                  style={styles.input}
-                />
-              </Field>
-            </div>
-            </section>
-          ) : null}
             </>
           ) : null}
+          <section style={styles.detailSection}>
+            <strong>{text.workPayInfo}</strong>
+            {!isMasterUser ? <>
+              <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
+              {draft.attendance_tracking_enabled !== false ? (
+                <div style={styles.fieldRow2}>
+                  <Field label={text.workStartTime}>
+                    <input
+                      type="time"
+                      value={draft.work_start_time || ""}
+                      onChange={(event) => update("work_start_time", emptyToNull(event.target.value))}
+                      style={styles.input}
+                    />
+                  </Field>
+                  <Field label={text.workEndTime}>
+                    <input
+                      type="time"
+                      value={draft.work_end_time || ""}
+                      onChange={(event) => update("work_end_time", emptyToNull(event.target.value))}
+                      style={styles.input}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+              <span style={styles.modalHint}>{text.attendancePayrollHelp}</span>
+            </> : null}
+            <PayrollContractStatus user={user} draft={draft} text={text} isSaving={isSaving} hasUnsavedChanges={() => JSON.stringify(draft) !== JSON.stringify(user) || levelDraftChanged(user, levelDraft, draft.hire_date)} />
+          </section>
           {hasLevelEditor ? <section style={styles.detailSection}>
             <strong>{text.longTermLevel}</strong>
             <LevelDetails levelInfo={user.levelInfo} text={text} />
@@ -542,19 +558,27 @@ function UserCard({
             {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
             {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
           </section> : null}
-          <section style={styles.detailSection}>
-            <strong>{text.usageSettings}</strong>
-            {!isMasterUser ? <>
-              <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
-              <Toggle label={text.appLoginEnabled} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
-              <Toggle label={text.activeStatus} checked={!draft.termination_date && draft.is_active !== false} disabled={Boolean(draft.termination_date)} onChange={value => update("is_active", value)} />
-              <span style={styles.fieldNotice}>{text.attendanceTrackingHelp}</span>
-            </> : null}
-            {isAdminGroupUser && !user.is_system_account ? <>
-              <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
-              <span style={styles.fieldNotice}>{text.payrollEligibleOverrideHelp}</span>
-            </> : null}
-          </section>
+          {!isMasterUser ? <section style={styles.detailSection}>
+            <strong>{text.appAccess}</strong>
+            <Toggle label={text.appLoginAllowed} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
+            <span style={styles.modalHint}>{text.appLoginAllowedHelp}</span>
+          </section> : null}
+          {(!isMasterUser && !cancellingTermination) || (isAdminGroupUser && !user.is_system_account) ? (
+            <details style={styles.advancedSection}>
+              <summary style={styles.advancedSummary}>{text.advancedSettings}</summary>
+              <div style={styles.advancedBody}>
+                {!isMasterUser && !cancellingTermination ? <>
+                  <Toggle label={text.employeeActiveToggle} checked={!draft.termination_date && draft.is_active !== false} disabled={Boolean(draft.termination_date)} onChange={value => update("is_active", value)} />
+                  <span style={styles.modalHint}>{text.employeeActiveHelp}</span>
+                </> : null}
+                {isAdminGroupUser && !user.is_system_account ? <>
+                  <strong style={styles.fieldLabel}>{text.payrollException}</strong>
+                  <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
+                  <span style={styles.modalHint}>{text.payrollEligibleOverrideHelp}</span>
+                </> : null}
+              </div>
+            </details>
+          ) : null}
           <div style={styles.actionRow}>
             <button
               type="button"
@@ -597,6 +621,86 @@ function UserCard({
       {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); levelButtonRef.current?.focus(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); levelButtonRef.current?.focus(); }} /> : null}
     </article>
   );
+}
+
+function employmentStatusLabel(user: UserRow, text: AdminUsersPageText) {
+  if (user.termination_date) return `${text.employmentTerminated} · ${user.termination_date}`;
+  return user.is_active === false ? text.employmentInactive : text.employmentActive;
+}
+
+function employmentStatusStyle(user: UserRow): CSSProperties {
+  if (user.termination_date) return { ...styles.statusBadge, ...styles.statusTerminated };
+  return user.is_active === false ? { ...styles.statusBadge, ...styles.statusInactive } : { ...styles.statusBadge, ...styles.statusActive };
+}
+
+type PayrollContractSummary = { payType: "monthly" | "daily" | "hourly"; calculationBasis: "minute" | "fixed_monthly"; effectiveFrom: string };
+type PayrollContractState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; current: PayrollContractSummary | null; scheduled: PayrollContractSummary | null };
+
+function payrollContractLabel(contract: PayrollContractSummary, text: AdminUsersPageText) {
+  if (contract.calculationBasis === "fixed_monthly") return `${text.payTypeFixedMonthly} · ${text.contractBasisNoAttendance}`;
+  const payType = contract.payType === "hourly" ? text.payTypeHourly : contract.payType === "daily" ? text.payTypeDaily : text.payTypeMonthly;
+  return `${payType} · ${text.contractBasisAttendance}`;
+}
+
+/** 직원 상세를 열었을 때만 해당 직원 1명의 계약을 조회한다. 화면 복귀 시 다시 조회한다. */
+function useCurrentPayrollContract(userId: UserRow["id"]) {
+  const [state, setState] = useState<PayrollContractState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  // 재조회는 이전 계약을 남겨 두지 않도록 먼저 "확인 중"으로 바꾼다(userId는 카드 key라 바뀌지 않는다).
+  const reload = () => { setState({ status: "loading" }); setAttempt(current => current + 1); };
+  useEffect(() => {
+    const controller = new AbortController();
+    attendanceFetch(`/api/admin/payroll/contracts?userId=${encodeURIComponent(String(userId))}`, { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        const data = await response.json().catch(() => null) as { ok?: boolean; current?: PayrollContractSummary | null; scheduled?: PayrollContractSummary | null } | null;
+        if (!response.ok || !data || data.ok !== true) throw new Error("PAYROLL_CONTRACT_READ_FAILED");
+        return data;
+      })
+      .then(data => { if (!controller.signal.aborted) setState({ status: "ready", current: data.current ?? null, scheduled: data.scheduled ?? null }); })
+      .catch(() => { if (!controller.signal.aborted) setState({ status: "error" }); });
+    return () => controller.abort();
+  }, [userId, attempt]);
+  useEffect(() => {
+    const again = () => { setState({ status: "loading" }); setAttempt(current => current + 1); };
+    const refresh = () => { if (document.visibilityState === "visible") again(); };
+    const restored = (event: PageTransitionEvent) => { if (event.persisted) again(); };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pageshow", restored);
+    return () => { document.removeEventListener("visibilitychange", refresh); window.removeEventListener("pageshow", restored); };
+  }, []);
+  return { state, retry: reload };
+}
+
+function PayrollContractStatus({ user, draft, text, isSaving, hasUnsavedChanges }: {
+  user: UserRow; draft: UserRow; text: AdminUsersPageText; isSaving: boolean; hasUnsavedChanges: () => boolean;
+}) {
+  const router = useRouter();
+  const { state, retry } = useCurrentPayrollContract(user.id);
+  // 급여설정 직원 목록(/api/admin/payroll/users)과 같은 조건: 재직 중(is_active)이고 급여 대상.
+  const canOpenPayrollSettings = user.is_active === true && !user.termination_date && isPayrollEligible(user);
+  const current = state.status === "ready" ? state.current : null;
+  const mismatch = current !== null
+    && requiresFixedMonthlyContract(draft.role, draft.attendance_tracking_enabled !== false) !== (current.calculationBasis === "fixed_monthly");
+  return <>
+    <div style={styles.statusRow} aria-live="polite">
+      <span style={styles.fieldLabel}>{text.payrollContractCurrent}</span>
+      {state.status === "loading" ? <span style={styles.modalMuted}>{text.payrollContractLoading}</span>
+        : state.status === "error" ? <span style={styles.contractError}>{text.payrollContractLoadFailed} <button type="button" style={styles.inlineEditButton} onClick={retry}>{text.retry}</button></span>
+        : <strong style={styles.contractValue}>{current ? payrollContractLabel(current, text) : text.payrollContractNone}</strong>}
+      {canOpenPayrollSettings ? (
+        <button type="button" style={styles.payrollLinkButton} disabled={isSaving} onClick={() => {
+          if (hasUnsavedChanges() && !window.confirm(text.unsavedLeaveConfirm)) return;
+          router.push(`/admin/payroll/settings?tab=employee&userId=${encodeURIComponent(String(user.id))}`);
+        }}>{text.managePayrollSettings} →</button>
+      ) : null}
+    </div>
+    {state.status === "ready" && state.scheduled ? <span style={styles.modalMuted}>{text.payrollContractScheduled} {state.scheduled.effectiveFrom} · {payrollContractLabel(state.scheduled, text)}</span> : null}
+    {mismatch ? <span role="status" style={styles.fieldNotice}>{text.payrollContractMismatch}</span> : null}
+    {canOpenPayrollSettings ? null : <span style={styles.modalMuted}>{text.payrollSettingsUnavailable}</span>}
+  </>;
 }
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
@@ -1363,6 +1467,17 @@ const styles = {
   modalFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   detailSection: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
   toggle: { width: "100%", justifyContent: "space-between", textAlign: "left" },
+  statusRow: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "4px 8px", minWidth: 0 },
+  statusBadge: { borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" },
+  statusActive: { background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0" },
+  statusInactive: { background: "#f3f4f6", color: "#4b5563", border: "1px solid #d1d5db" },
+  statusTerminated: { background: "#fef2f2", color: "#991b1b", border: "1px solid #fecaca" },
+  contractValue: { marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#111827", textAlign: "right", overflowWrap: "anywhere" },
+  payrollLinkButton: { border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", borderRadius: 999, padding: "4px 9px", fontSize: 11, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" },
+  contractError: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 11, fontWeight: 800, color: "#b91c1c" },
+  advancedSection: { padding: "8px 10px", border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
+  advancedSummary: { fontSize: 12, fontWeight: 800, color: "#374151", cursor: "pointer" },
+  advancedBody: { display: "grid", gap: 8, marginTop: 8 },
   formGrid: {
     padding: 0,
     margin: 0,
