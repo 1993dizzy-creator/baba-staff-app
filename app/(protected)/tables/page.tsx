@@ -95,7 +95,7 @@ export default function TablesPage() {
       <h2>{areaName(area)}</h2>
       <div className={styles.tiles}>{data?.tables.filter(item => item.area === area).map(item => <button key={item.id}
         className={`${styles.tile} ${item.state === "unknown" ? styles.unknown : ""}`}
-        aria-label={`${item.name} · ${item.areaName} · ${t[item.state]}`} onClick={() => setSelected({ kind: "table", id: item.id })}>
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}`} onClick={() => setSelected({ kind: "table", id: item.id })}>
         {colors[item.state] ? <i className={styles.dot} style={{ background: colors[item.state] }} aria-hidden="true" /> : null}
         <strong>{item.name}</strong>{item.state === "unknown" ? <small>{t.unknown}</small> : null}
       </button>)}</div>
@@ -107,7 +107,8 @@ export default function TablesPage() {
     </details> : null}
     <dialog ref={dialog} className={styles.sheet} aria-labelledby="table-detail-title" onCancel={() => setSelected(null)}>
       <header className={styles.header}><h2 id="table-detail-title">{tile?.name ?? unlinked?.tableName ?? t.details}</h2><button onClick={() => setSelected(null)}>{t.close}</button></header>
-      {tile ? <p>{tile.areaName} · {t[tile.state]} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p> : null}
+      {tile ? <><p>{areaName(tile.area)} · {t[tile.state]} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p>
+        <p className={styles.muted}>{t.sourceArea}: {tile.areaName}</p></> : null}
       {!detailOrders.length ? <p className={styles.notice}>{t.noOrders}</p> : detailOrders.map(orderView)}
     </dialog>
   </main>;

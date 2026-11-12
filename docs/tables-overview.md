@@ -1,4 +1,38 @@
-# 전 직원 매장현황 `/tables` 1차
+# 전 직원 매장현황 `/tables`
+
+## 현재: 2차 실제 테이블 카탈로그 적용 (2026-11-13)
+
+Owner가 실증 테이블의 표시 구역을 확정했다. `lib/sales/baba-table-catalog.ts`는 실증 응답에서 추출한 실제 MapObjectID 27개를 추적 가능한 읽기 전용 상수로 관리한다.
+
+| 화면 표시 구역 | 테이블명 | 개수 | CUKCUK 원본 구역 / AreaID |
+|---|---|---:|---|
+| BAR | BAR1~BAR11 | 11 | A / ee074f4e-82e3-4bb0-b4c6-dba90289cdf5 |
+| 1층 | 1~8 | 8 | A / ee074f4e-82e3-4bb0-b4c6-dba90289cdf5 |
+| 2층 | 11~18 | 8 | B / 2c5cfe86-68a2-4aab-9568-88ee309e5905 |
+
+9·10번은 없으며 생성하지 않는다. 원본 `MapObjectID/MapObjectName/AreaID/AreaName`을 그대로 보존하고, Owner 확정 `displayArea`를 별도 필드로 둔다. 카탈로그는 BAR → 1층 → 2층, 구역 내 자연 번호 순서다. 상세 시트에서 표시 구역과 CUKCUK 원본 구역을 구분한다.
+
+생성 근거는 Worktree `.local/tables-operational-probe-20261113/`의 `tables-response.json`, `findings.md`, `execution.json`이다. 실증은 2026-11-13 01:17:40 Asia/Ho_Chi_Minh에 로그인 1회 + Tables GET 1회로 성공했다. 응답의 허용된 테이블 필드만 사용했으며 인증값을 카탈로그에 넣지 않았다.
+
+- 원본 응답 파일 SHA-256: `445c1a96491fcb7e370e8454a9c091aac4c9baefcb833d575dfed7c2fbfa3c60`.
+- 원본 식별/구역/관측 가용성 필드를 MapObjectID 순으로 정렬한 JSON SHA-256: `e102d7055f376433f26a56f4301ac4563518a95807b17d1c24267e7929141650`.
+- 이 두 지문과 27개 전체 identity, 중복 없음, Owner 구역 11/8/8을 추적 테스트로 검증한다. 테스트는 `.local` 자료가 없는 checkout에서도 실행된다.
+
+`readTableOverview()`는 이제 정적 `babaTableCatalog()`를 사용한다. `POS_TABLES_READ_ENABLED`와 무관하게 운영 Tables reader를 호출하지 않는다. 이번 2차 작업 중 운영 API·DB 호출은 0회이며, 플래그를 변경하지 않았다. 기존 미사용 Tables reader의 승인 경계는 유지한다.
+
+고정된 **식별 목록**은 10분 단위로 만료되지 않는다. 하지만 중앙 주문의 현재 영업일, 정상/실패/지연/불완전 상태와 개별 관측 시각 보호는 그대로다. 실제 테이블명에 유효한 주문이 정확히 연결될 때만 기존 사용 중 판정이 가능하다. 단독 `BAR`, 복합명, 테이블명 누락은 임의 배분하지 않는다.
+
+실증 당시 `IsAvailable=true`는 각 원본 레코드의 `observedIsAvailable` 이력으로만 보존한다. 현재 가용성 `available`은 `null`이며 오래된 true를 빈자리 증거나 현재 주문과의 충돌 증거로 사용하지 않는다. 주문이 없는 테이블은 **미확인**이고, 빈자리·예약·현재 테이블 결제완료 판정과 집계는 여전히 비활성이다. 신규 실시간 수집·점유 판정 활성화·배포는 별도 단계다.
+
+2차 검증: 실제 카탈로그·상태 보호·서버 연결·인증·네비 관련 **21/21 PASS**, TypeScript noEmit·변경 파일 ESLint·diff 검사 PASS. 기존 중앙 주문/매출 계산 42개 PASS는 해당 구현이 변경되지 않아 재사용했다.
+
+실제 27개 identity에 모의 주문/스냅샷을 결합하여 KO/VI × 320/390/430/1280px × 진행 주문 있음/없음/READ 비활성/지연/불완전 **40개 화면 조합 PASS**. 전부 27개 타일과 11/8/8 구역·자연 번호 순서, PC 3열/모바일 세로 배치, 넘침 없음, 미확인 구분, 표시/원본 구역 상세, 복수 주문, 포커스·스크롤 복귀를 확인했다. 역할별 하위 경로 네비 5개도 PASS다. 자료는 `.local/tables-static-qa/`에 보존한다.
+
+운영 진행 주문 TableName 실증, 실제 로그인된 배포 환경 end-to-end, Offline 현장 대조는 미검증으로 남는다. 정적 목록/구역 반영을 실시간 점유 판정이나 운영 배포 승인으로 확대하지 않는다.
+
+## 아래는 1차 구현 기록 (b5c795e8)
+
+다음의 실증 전 미확인/플래그 설명은 당시 기록이다. 현재 테이블 목록 공급 방식은 위 2차 정적 카탈로그 설명을 따른다.
 
 기준: 원격 `main` `d9a22d24c6a8bf9839cef14459582c27fa161de8`.
 개발 브랜치: `codex/shared-tables-overview-20261113`.

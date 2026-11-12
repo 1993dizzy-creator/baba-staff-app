@@ -4,8 +4,10 @@ import {
 } from "../pos/cukcuk/open-orders-core.ts";
 
 export type TableState = "unknown" | "occupied" | "reserved" | "paid" | "free";
-export type CatalogTable = { id: string; name: string; areaId: string; areaName: string; available: boolean };
-export type TableCatalog = { status: "ok" | "not_enabled" | "unavailable"; collectedAt: string | null; tables: CatalogTable[] };
+export type CatalogTable = { id: string; name: string; areaId: string; areaName: string; available: boolean | null;
+  displayArea?: "bar" | "floor1" | "floor2" };
+export type TableCatalog = { status: "ok" | "not_enabled" | "unavailable"; collectedAt: string | null; tables: CatalogTable[];
+  kind?: "verified_static" };
 export type TableOrder = {
   id: string; number: string | null; tableName: string | null; startedAt: string; collectedAt: string | null;
   amount: number; verifiedOpen: boolean; detailsNeedReview: boolean;
@@ -73,8 +75,13 @@ export function buildTableOverview(input: {
   const age = sync?.lastSuccessAt ? now.getTime() - Date.parse(sync.lastSuccessAt) : NaN;
   const snapshotOk = kpi.status === "ok" && !sync?.lastErrorCode && age >= 0;
   const catalogAge = catalog.collectedAt ? now.getTime() - Date.parse(catalog.collectedAt) : NaN;
-  const catalogOk = catalog.status === "ok" && catalogAge >= 0 && catalogAge <= DEFAULT_STALE_AFTER_MS;
+  // Verified static identities do not expire like live availability. Order freshness still gates occupancy.
+  const catalogOk = catalog.status === "ok" && (catalog.kind === "verified_static" || catalogAge >= 0 && catalogAge <= DEFAULT_STALE_AFTER_MS);
   const openIds = new Set(classified.open.map(order => order.orderId));
+  // Reuse the same receipt policy for each excluded order: confirmed paid predecessors
+  // are history, not competing occupancy candidates. Unknown/conflicting orders still block.
+  const convertedIds = new Set(orders.filter(order => order.businessDate === businessDate && !openIds.has(order.orderId)
+    && classifyOrdersForBusinessDate([order], receipts, businessDate).converted === 1).map(order => order.orderId));
   const reviewIds = new Set(kpi.detailWarnings?.map(review => review.orderId) ?? []);
   const projected = orders.filter(order => order.businessDate === businessDate && classifyOrderStatus(order.status) !== "canceled").map((order): TableOrder => {
     const observedAge = order.providerObservedAt ? now.getTime() - Date.parse(order.providerObservedAt) : NaN;
@@ -93,8 +100,9 @@ export function buildTableOverview(input: {
     // Exact names only. Never split composite names, nor assign a bare BAR order to every bar seat.
     const matches = unique ? projected.filter(order => order.tableName && nameKey(order.tableName) === nameKey(table.name)) : [];
     matches.forEach(order => assigned.add(order.id));
-    const occupied = catalogOk && snapshotOk && matches.length > 0 && matches.every(order => order.verifiedOpen) && !table.available;
-    return { ...table, area: tableArea(table.areaName), state: occupied ? "occupied" : "unknown", orders: matches };
+    const candidates = matches.filter(order => !convertedIds.has(order.id));
+    const occupied = catalogOk && snapshotOk && candidates.length > 0 && candidates.every(order => order.verifiedOpen) && !table.available;
+    return { ...table, area: table.displayArea ?? tableArea(table.areaName), state: occupied ? "occupied" : "unknown", orders: matches };
   });
   return {
     businessDate, serverNow: now.toISOString(), snapshotAt: kpi.lastSuccessAt, catalogAt: catalog.collectedAt,
