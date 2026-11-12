@@ -83,7 +83,7 @@ test("list card: level schedule line removed; work time moved to the second row;
   assert.doesNotMatch(firstRow, /workTime|styles\.workTimeText/);
   assert.match(firstRow, /text\.cancel : text\.edit/);
   const secondRow = usersPage.slice(usersPage.indexOf("{hasSecondRow ? (", cardStart), usersPage.indexOf("{isEditing ? (", cardStart));
-  assert.match(secondRow, /<span style=\{styles\.workTimeText\}>\{workTime\}<\/span>/);
+  assert.match(secondRow, /<span style=\{styles\.workTimeText\}>\{workTime\}\{workDuration \? ` \(\$\{workDuration\}\)` : ""\}<\/span>/);
   // formatWorkTime is reused unchanged; employees with no stored hours get no "---" placeholder.
   assert.match(usersPage, /const workTime = !isAdminGroupUser && !user\.termination_date && \(user\.work_start_time \|\| user\.work_end_time\) \? formatWorkTime\(user\) : "";/);
   assert.match(usersPage, /function formatWorkTime\(user: UserRow\) \{\n  const start = user\.work_start_time \|\| "-";\n  const end = user\.work_end_time \|\| "-";\n  return `\$\{start\}-\$\{end\}`;/);

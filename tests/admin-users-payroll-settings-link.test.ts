@@ -11,8 +11,9 @@ const panel = read("components/payroll/EmployeePayrollSettingsPanel.tsx");
 const hook = read("components/payroll/usePayrollContracts.ts");
 
 test("employee detail: attendance lives in work·pay, app login in app access, is_active and payroll exception in collapsed advanced", () => {
-  const work = page.indexOf("<strong>{text.workPayInfo}</strong>");
-  const access = page.indexOf("<strong>{text.appAccess}</strong>");
+  // Section headers carry an emoji via SectionTitle (2026-11 UI cleanup).
+  const work = page.indexOf('<SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>');
+  const access = page.indexOf('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>');
   const advanced = page.indexOf("{text.advancedSettings}</summary>");
   assert.ok(work > 0 && access > work && advanced > access);
   assert.ok(page.indexOf('label={text.attendanceTracking}') > work && page.indexOf('label={text.attendanceTracking}') < access);
@@ -62,14 +63,15 @@ test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contra
   assert.match(settings, /const contractsSource = usePayrollContracts\(activeTab === "employee" \? userId : null\);/);
 });
 
-test("2차: the employee page mounts at most one collapsed payroll·benefits panel, only for payroll-manageable employees", () => {
+test("2차: the employee page mounts at most one payroll·benefits panel (now in a dedicated sheet), only for payroll-manageable employees", () => {
   assert.match(page, /const payrollOpen = isEditing && payroll\.openUserId === String\(user\.id\);/);
-  assert.match(page, /\{open \? <div id=\{panelId\} style=\{styles\.payrollPanel\}>\s*<EmployeePayrollSettingsPanel/);
+  // The card keeps a short summary + "관리"; the shared panel mounts only inside the open sheet.
+  assert.match(page, /\{open && typeof document !== "undefined" \? \(\s*<PayrollSheet[\s\S]*?<EmployeePayrollSettingsPanel/);
   assert.match(page, /\{canManageUserPayroll\(user\) \? \(\s*<PayrollBenefitsSection/);
   assert.match(page, /showIdentity=\{false\}/);
   assert.match(page, /anchorPrefix=\{`user-\$\{user\.id\}-`\}/);
-  // One contract read is shared: the one-line summary hides while the panel shows the same contract.
-  assert.match(page, /showSummary=\{!\(payrollOpen && canManageUserPayroll\(user\)\)\}/);
+  // One contract read is shared by the work·pay summary line and the sheet's panel (C: no shortcut button there).
+  assert.match(page, /<PayrollContractStatus user=\{user\} draft=\{draft\} text=\{text\} contracts=\{contracts\} \/>/);
   assert.match(page, /contracts=\{contracts\}[\s\S]*contracts=\{contracts\}/);
 });
 

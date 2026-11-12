@@ -39,6 +39,7 @@ import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
+import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
 
 type UserRow = {
   id: number | string;
@@ -239,6 +240,20 @@ function emptyToNull(value: string) {
   return value.trim() || null;
 }
 
+/**
+ * 목록 근무시간 옆 총 근무시간. 급여 스케줄과 같은 규칙(scheduledMinutesPerDay, 자정 넘김 포함)으로
+ * 시작~종료 경과 시간을 구한다(휴게 차감 없음). 시작·종료 중 하나라도 없거나 같으면 표시하지 않는다.
+ */
+function workDurationLabel(user: Pick<UserRow, "work_start_time" | "work_end_time">, text: AdminUsersPageText) {
+  if (!user.work_start_time || !user.work_end_time) return "";
+  const minutes = scheduledMinutesPerDay(user.work_start_time.slice(0, 5), user.work_end_time.slice(0, 5), 0);
+  if (minutes === null) return "";
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const parts = [hours ? `${hours}${text.durationHours}` : "", rest ? `${rest}${text.durationMinutes}` : ""].filter(Boolean);
+  return parts.join(" ");
+}
+
 function formatWorkTime(user: UserRow) {
   const start = user.work_start_time || "-";
   const end = user.work_end_time || "-";
@@ -425,6 +440,7 @@ function UserCard({
   const nameText = `${displayName}${age ? ` (${age})` : ""}`;
   // 근무시간이 저장되지 않은 직원(근태 미사용 등)은 "---" 자리 표시 없이 비워 둔다.
   const workTime = !isAdminGroupUser && !user.termination_date && (user.work_start_time || user.work_end_time) ? formatWorkTime(user) : "";
+  const workDuration = workTime ? workDurationLabel(user, text) : "";
   const applicability = payroll.applicability(user.id);
   const applicabilityIcons = applicability.status === "ready" ? applicability.icons : [];
   // 조회 전·실패 표시는 급여 대상 후보에게만 보여 준다(그 외 계정은 급여관리에도 아이콘이 없다).
@@ -509,12 +525,10 @@ function UserCard({
           <span style={styles.payrollIcons} role="group" aria-label={text.payrollIconsGroup}>
             {applicabilityPending && applicability.status === "loading" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsLoading} aria-label={text.payrollIconsLoading}>…</span> : null}
             {applicabilityPending && applicability.status === "error" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsUnavailable} aria-label={text.payrollIconsUnavailable}>{text.payrollIconsUnavailableShort}</span> : null}
-            {applicabilityIcons.map((icon) => (
-              <span key={icon.key} role={icon.key === "tax" ? undefined : "img"} style={icon.key === "tax" ? { ...styles.payrollIcon, ...styles.payrollTaxIcon } : styles.payrollIcon} title={icon.description} aria-label={icon.description}>{icon.symbol}</span>
-            ))}
+            <PayrollIconList icons={applicabilityIcons} />
           </span>
           {workTime || user.termination_date ? <span style={styles.rowSubRight}>
-            {workTime ? <span style={styles.workTimeText}>{workTime}</span> : null}
+            {workTime ? <span style={styles.workTimeText}>{workTime}{workDuration ? ` (${workDuration})` : ""}</span> : null}
             {user.termination_date ? <span style={styles.lockedBadge}>{text.terminatedOn} {user.termination_date}</span> : null}
           </span> : null}
         </div>
@@ -524,8 +538,8 @@ function UserCard({
         <fieldset disabled={isSaving} style={styles.formGrid}>
           {!isMasterUser ? (
             <>
-          <section style={styles.detailSection}>
-          <strong>{text.basicInfo}</strong>
+          <section style={sectionStyle("basic")}>
+          <SectionTitle emoji="🪪">{text.basicInfo}</SectionTitle>
           <div style={styles.fieldRow2}>
             <Field label={text.name}>
               <input
@@ -630,8 +644,8 @@ function UserCard({
           </section>
             </>
           ) : null}
-          <section style={styles.detailSection}>
-            <strong>{text.workPayInfo}</strong>
+          <section style={sectionStyle("workPay")}>
+            <SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>
             {!isMasterUser ? <>
               <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
               {draft.attendance_tracking_enabled !== false ? (
@@ -656,10 +670,10 @@ function UserCard({
               ) : null}
               <span style={styles.modalHint}>{text.attendancePayrollHelp}</span>
             </> : null}
-            <PayrollContractStatus user={user} draft={draft} text={text} isSaving={isSaving} contracts={contracts} showSummary={!(payrollOpen && canManageUserPayroll(user))} onOpenPayrollSettings={openPayrollSettings} />
+            <PayrollContractStatus user={user} draft={draft} text={text} contracts={contracts} />
           </section>
-          {hasLevelEditor ? <section style={styles.detailSection}>
-            <strong>{text.longTermLevel}</strong>
+          {hasLevelEditor ? <section style={sectionStyle("level")}>
+            <SectionTitle emoji="📈">{text.longTermLevel}</SectionTitle>
             <LevelDetails levelInfo={user.levelInfo} text={text} />
             {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
             {/* 목록의 레벨 일정 줄을 없애면서, 그 줄에만 있던 월 기준 전환 안내를 이 영역(레벨 설정 버튼 옆)으로 옮긴다. 조건은 기존과 같다. */}
@@ -674,7 +688,9 @@ function UserCard({
               text={text}
               lang={lang}
               open={payrollOpen}
-              onToggle={() => payroll.setOpen(user.id, !payrollOpen)}
+              onOpen={() => payroll.setOpen(user.id, true)}
+              onClose={() => payroll.setOpen(user.id, false)}
+              applicability={applicability}
               contracts={contracts}
               isSaving={isSaving}
               levelAction={hasLevelEditor ? <button type="button" style={styles.payrollLinkButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button> : null}
@@ -683,14 +699,14 @@ function UserCard({
               onOpenPayrollSettings={openPayrollSettings}
             />
           ) : null}
-          {!isMasterUser ? <section style={styles.detailSection}>
-            <strong>{text.appAccess}</strong>
+          {!isMasterUser ? <section style={sectionStyle("appAccess")}>
+            <SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>
             <Toggle label={text.appLoginAllowed} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
             <span style={styles.modalHint}>{text.appLoginAllowedHelp}</span>
           </section> : null}
           {(!isMasterUser && !cancellingTermination) || (isAdminGroupUser && !user.is_system_account) ? (
-            <details style={styles.advancedSection}>
-              <summary style={styles.advancedSummary}>{text.advancedSettings}</summary>
+            <details style={{ ...styles.advancedSection, ...SECTION_TONES.advanced }}>
+              <summary style={styles.advancedSummary}><span aria-hidden="true">🛠️</span> {text.advancedSettings}</summary>
               <div style={styles.advancedBody}>
                 {!isMasterUser && !cancellingTermination ? <>
                   <Toggle label={text.employeeActiveToggle} checked={!draft.termination_date && draft.is_active !== false} disabled={Boolean(draft.termination_date)} onChange={value => update("is_active", value)} />
@@ -781,11 +797,8 @@ function userDraftChanged(user: UserRow, draft: UserRow) {
 }
 
 /** 현재 급여계약 한 줄 요약. 계약 조회는 카드가 소유한 usePayrollContracts 결과를 받아 쓴다(별도 조회 없음). */
-function PayrollContractStatus({ user, draft, text, isSaving, contracts, showSummary, onOpenPayrollSettings }: {
-  user: UserRow; draft: UserRow; text: AdminUsersPageText; isSaving: boolean; contracts: PayrollContractsController;
-  /** 급여·복리후생 영역이 열려 있으면 같은 계약 내용을 두 번 보이지 않도록 한 줄 요약을 숨긴다. */
-  showSummary: boolean;
-  onOpenPayrollSettings: () => void;
+function PayrollContractStatus({ user, draft, text, contracts }: {
+  user: UserRow; draft: UserRow; text: AdminUsersPageText; contracts: PayrollContractsController;
 }) {
   const canOpenPayrollSettings = canManageUserPayroll(user);
   const ready = !contracts.loading && !contracts.loadFailed;
@@ -793,65 +806,155 @@ function PayrollContractStatus({ user, draft, text, isSaving, contracts, showSum
   const mismatch = current !== null
     && requiresFixedMonthlyContract(draft.role, draft.attendance_tracking_enabled !== false) !== (current.calculationBasis === "fixed_monthly");
   return <>
-    {showSummary ? <>
-      <div style={styles.statusRow} aria-live="polite">
-        <span style={styles.fieldLabel}>{text.payrollContractCurrent}</span>
-        {contracts.loading ? <span style={styles.modalMuted}>{text.payrollContractLoading}</span>
-          : contracts.loadFailed ? <span style={styles.contractError}>{text.payrollContractLoadFailed} <button type="button" style={styles.inlineEditButton} onClick={contracts.reload}>{text.retry}</button></span>
-          : <strong style={styles.contractValue}>{current ? payrollContractLabel(current, text) : text.payrollContractNone}</strong>}
-        {canOpenPayrollSettings ? (
-          <button type="button" style={styles.payrollLinkButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
-        ) : null}
-      </div>
-      {ready && contracts.scheduled ? <span style={styles.modalMuted}>{text.payrollContractScheduled} {contracts.scheduled.effectiveFrom} · {payrollContractLabel(contracts.scheduled, text)}</span> : null}
-    </> : null}
+    <div style={styles.statusRow} aria-live="polite">
+      <span style={styles.fieldLabel}>{text.payrollContractCurrent}</span>
+      {contracts.loading ? <span style={styles.modalMuted}>{text.payrollContractLoading}</span>
+        : contracts.loadFailed ? <span style={styles.contractError}>{text.payrollContractLoadFailed} <button type="button" style={styles.inlineEditButton} onClick={contracts.reload}>{text.retry}</button></span>
+        : <strong style={styles.contractValue}>{current ? payrollContractLabel(current, text) : text.payrollContractNone}</strong>}
+    </div>
+    {ready && contracts.scheduled ? <span style={styles.modalMuted}>{text.payrollContractScheduled} {contracts.scheduled.effectiveFrom} · {payrollContractLabel(contracts.scheduled, text)}</span> : null}
     {mismatch ? <span role="status" style={styles.fieldNotice}>{text.payrollContractMismatch}</span> : null}
     {canOpenPayrollSettings ? null : <span style={styles.modalMuted}>{text.payrollSettingsUnavailable}</span>}
   </>;
 }
 
+// 직원 상세 카드별 은은한 배경색(입력창·버튼은 흰 바탕/기존 색 유지).
+const SECTION_TONES = {
+  basic: { background: "#f8fafc", borderColor: "#e2e8f0" },
+  workPay: { background: "#f0f9ff", borderColor: "#e0f2fe" },
+  level: { background: "#faf5ff", borderColor: "#ede9fe" },
+  payroll: { background: "#fffbeb", borderColor: "#fef3c7" },
+  appAccess: { background: "#f0fdf4", borderColor: "#dcfce7" },
+  advanced: { background: "#f9fafb", borderColor: "#e5e7eb" },
+} satisfies Record<string, CSSProperties>;
+
+function sectionStyle(tone: keyof typeof SECTION_TONES): CSSProperties {
+  return { ...styles.detailSection, ...SECTION_TONES[tone] };
+}
+
+function SectionTitle({ emoji, children }: { emoji: string; children: ReactNode }) {
+  return <strong style={styles.sectionTitle}><span aria-hidden="true">{emoji}</span>{children}</strong>;
+}
+
+/** 급여관리와 같은 판정의 적용 아이콘(목록 둘째 줄·급여·복리후생 카드 요약에서 함께 쓴다). */
+function PayrollIconList({ icons }: { icons: PayrollApplicabilityIcon[] }) {
+  return <>{icons.map((icon) => (
+    <span key={icon.key} role={icon.key === "tax" ? undefined : "img"} style={icon.key === "tax" ? { ...styles.payrollIcon, ...styles.payrollTaxIcon } : styles.payrollIcon} title={icon.description} aria-label={icon.description}>{icon.symbol}</span>
+  ))}</>;
+}
+
 /**
- * 직원 상세의 "급여·복리후생" 영역. 기본 접힘이며, 펼친 직원 1명에게만 공용 패널을 마운트한다
- * (급여설정 직원 탭과 같은 EmployeePayrollSettingsPanel). 계약은 카드의 usePayrollContracts를 공유한다.
+ * 급여·복리후생 전용 시트. 공용 패널을 그대로 담는다.
+ * - 안쪽 계약 등록·정정 창(PayrollModal)은 시트 안에 그려지고 z-index가 더 높아 위에 뜬다.
+ * - Escape는 안쪽 대화상자(계약 창, 레벨 설정 dialog)가 열려 있으면 그쪽만 닫히게 시트는 무시한다.
+ * - 닫기(×·배경·Escape·닫기 버튼)는 모두 onClose → 미저장 입력 확인(P0)을 거친다.
  */
-function PayrollBenefitsSection({ user, text, lang, open, onToggle, contracts, levelAction, isSaving, onUnsavedChange, onMealChanged, onOpenPayrollSettings }: {
-  user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; open: boolean; onToggle: () => void;
+function PayrollSheet({ title, closeLabel, onClose, children, footer }: {
+  title: string; closeLabel: string; onClose: () => void; children: ReactNode; footer: ReactNode;
+}) {
+  const titleId = useId();
+  const sheetRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
+  useEffect(() => {
+    closeRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const nestedOpen = sheetRef.current?.querySelector('[role="dialog"][aria-modal="true"]') || document.querySelector("dialog[open]");
+      if (nestedOpen) return;
+      onCloseRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", onKey); };
+  }, []);
+  return createPortal(
+    <div role="presentation" style={styles.sheetOverlay} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section ref={sheetRef} role="dialog" aria-modal="true" aria-labelledby={titleId} style={styles.sheet}>
+        <header style={styles.sheetHeader}>
+          <strong id={titleId} style={styles.sheetTitle}>{title}</strong>
+          <button ref={closeRef} type="button" aria-label={closeLabel} onClick={onClose} style={styles.modalClose}>×</button>
+        </header>
+        <div style={styles.sheetBody}>{children}</div>
+        <footer style={styles.sheetFooter}>{footer}</footer>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+/**
+ * 직원 상세의 "급여·복리후생" 카드. 카드에는 이번 달 적용 아이콘 요약과 "관리" 버튼만 두고,
+ * 관리를 누르면 전용 시트에서 공용 패널(급여설정 직원 탭과 같은 EmployeePayrollSettingsPanel)을 연다.
+ * 시트는 한 번에 한 직원만 열리며, 계약은 카드의 usePayrollContracts를 공유한다.
+ */
+function PayrollBenefitsSection({ user, text, lang, open, onOpen, onClose, applicability, contracts, levelAction, isSaving, onUnsavedChange, onMealChanged, onOpenPayrollSettings }: {
+  user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; open: boolean; onOpen: () => void; onClose: () => boolean;
+  applicability: PayrollIconsForUser;
   contracts: PayrollContractsController; levelAction: ReactNode; isSaving: boolean;
   onUnsavedChange: (state: PayrollUnsavedState) => void; onMealChanged: () => void; onOpenPayrollSettings: () => void;
 }) {
-  const panelId = useId();
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(open);
   const lastMealHistory = useRef<string | null>(null);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const panelUser = useMemo<EmployeePayrollPanelUser>(() => ({
     id: Number(user.id), name: user.name || user.full_name, username: user.username, role: user.role,
     attendanceTrackingEnabled: user.attendance_tracking_enabled !== false, levelInfo: user.levelInfo,
   }), [user]);
-  // 식대 대상 저장 후 이력이 바뀌면 목록의 식대 배지를 맞추기 위해 직원 목록을 다시 조회한다.
+  // 시트를 닫으면 "관리" 버튼으로 포커스를 돌려준다.
+  useEffect(() => {
+    if (wasOpen.current && !open) openButtonRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+  // 식대 대상 저장 후 이력이 바뀌면 목록의 식대 아이콘을 맞추기 위해 직원 목록을 다시 조회한다.
   const handleMealHistory = useCallback((state: SettingHistoryState<MealAllowanceVersion>) => {
     if (state.status !== "ready") return;
     const serialized = JSON.stringify(state.history);
     if (lastMealHistory.current !== null && lastMealHistory.current !== serialized) onMealChanged();
     lastMealHistory.current = serialized;
   }, [onMealChanged]);
-  return <section style={styles.detailSection}>
-    <button type="button" aria-expanded={open} aria-controls={panelId} disabled={isSaving} onClick={onToggle} style={styles.payrollToggle}>
-      <strong>{text.payrollBenefits}</strong>
-      <span style={styles.modalMuted}>{open ? text.collapse : text.expand}</span>
-    </button>
-    {open ? <div id={panelId} style={styles.payrollPanel}>
-      <EmployeePayrollSettingsPanel
-        user={panelUser}
-        lang={lang}
-        contracts={contracts}
-        summaryReference={resolveSettingsSummaryReference(null, today)}
-        showIdentity={false}
-        anchorPrefix={`user-${user.id}-`}
-        levelAction={levelAction}
-        onUnsavedChange={onUnsavedChange}
-        onMealHistoryChange={handleMealHistory}
-      />
-      <button type="button" style={styles.payrollLinkButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
-    </div> : null}
+  const name = user.name || user.full_name || user.username;
+  const readyIcons = applicability.status === "ready" ? applicability.icons : null;
+  return <section style={sectionStyle("payroll")}>
+    <div style={styles.sectionHead}>
+      <SectionTitle emoji="💳">{text.payrollBenefits}</SectionTitle>
+      <button ref={openButtonRef} type="button" aria-haspopup="dialog" aria-expanded={open} disabled={isSaving} onClick={onOpen} style={styles.payrollOpenButton}>{text.payrollManage}</button>
+    </div>
+    <div style={styles.statusRow}>
+      <span style={styles.fieldLabel}>{text.payrollIconsGroup}</span>
+      <span style={styles.payrollIcons} role="group" aria-label={text.payrollIconsGroup}>
+        {applicability.status === "loading" ? <span style={styles.payrollIconsMuted} role="status">{text.payrollIconsLoading}</span>
+          : applicability.status === "error" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsUnavailable}>{text.payrollIconsUnavailableShort}</span>
+          : readyIcons?.length ? <PayrollIconList icons={readyIcons} />
+          : <span style={styles.payrollIconsMuted}>{text.payrollIconsNone}</span>}
+      </span>
+    </div>
+    {open && typeof document !== "undefined" ? (
+      <PayrollSheet
+        title={`${text.payrollBenefits} · ${name}`}
+        closeLabel={text.close}
+        onClose={() => { onClose(); }}
+        footer={<>
+          <button type="button" style={styles.secondaryButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
+          <button type="button" style={styles.primaryButton} onClick={() => { onClose(); }}>{text.close}</button>
+        </>}
+      >
+        <EmployeePayrollSettingsPanel
+          user={panelUser}
+          lang={lang}
+          contracts={contracts}
+          summaryReference={resolveSettingsSummaryReference(null, today)}
+          showIdentity={false}
+          anchorPrefix={`user-${user.id}-`}
+          levelAction={levelAction}
+          onUnsavedChange={onUnsavedChange}
+          onMealHistoryChange={handleMealHistory}
+        />
+      </PayrollSheet>
+    ) : null}
   </section>;
 }
 
@@ -1675,8 +1778,15 @@ const styles = {
   contractValue: { marginLeft: "auto", fontSize: 12, fontWeight: 800, color: "#111827", textAlign: "right", overflowWrap: "anywhere" },
   payrollLinkButton: { border: "1px solid #c7d2fe", background: "#eef2ff", color: "#3730a3", borderRadius: 999, padding: "4px 9px", fontSize: 11, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" },
   contractError: { display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 11, fontWeight: 800, color: "#b91c1c" },
-  payrollToggle: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 0, border: 0, background: "transparent", color: "#111827", fontSize: 13, textAlign: "left", cursor: "pointer" },
-  payrollPanel: { display: "grid", gap: 8, minWidth: 0 },
+  sectionTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, color: "#111827" },
+  sectionHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 },
+  payrollOpenButton: { flexShrink: 0, minHeight: 32, padding: "5px 12px", border: "1px solid #d97706", borderRadius: 999, background: "#fff", color: "#92400e", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  sheetOverlay: { position: "fixed", inset: 0, zIndex: 1400, display: "flex", alignItems: "center", justifyContent: "center", padding: "max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom))", background: "rgba(15,23,42,.55)", overscrollBehavior: "contain" },
+  sheet: { width: "min(720px, 100%)", maxHeight: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRadius: 14, background: "#fff", boxShadow: "0 20px 60px rgba(0,0,0,.28)" },
+  sheetHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
+  sheetTitle: { minWidth: 0, fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
+  sheetBody: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: 12, background: "#f9fafb" },
+  sheetFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   advancedSection: { padding: "8px 10px", border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
   advancedSummary: { fontSize: 12, fontWeight: 800, color: "#374151", cursor: "pointer" },
   advancedBody: { display: "grid", gap: 8, marginTop: 8 },
@@ -1765,6 +1875,8 @@ const styles = {
   },
   input: {
     ...ui.input,
+    // 카드 배경색이 있어도 입력창은 흰 바탕으로 대비를 유지한다.
+    background: "#fff",
     padding: "7px 8px",
     borderRadius: 7,
     fontSize: 12,
