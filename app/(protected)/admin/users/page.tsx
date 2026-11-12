@@ -37,6 +37,7 @@ import type { MealAllowanceVersion } from "@/components/payroll/EmployeeMealAllo
 import { usePayrollContracts, type PayrollContractView, type PayrollContractsController } from "@/components/payroll/usePayrollContracts";
 import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
+import { isTopModal, useModalFocusTrap } from "@/components/payroll/useModalFocusTrap";
 import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
@@ -453,6 +454,11 @@ function UserCard({
   const [levelModalOpen, setLevelModalOpen] = useState(false);
   const savePending = useRef(false);
   const levelButtonRef = useRef<HTMLButtonElement>(null);
+  // 레벨 설정 창을 연 버튼(상세의 레벨 카드 또는 급여·복리후생 시트 안). 닫으면 그 버튼으로 포커스를 돌린다.
+  const levelOpenerRef = useRef<HTMLElement | null>(null);
+  const openLevelModal = (event: { currentTarget: HTMLElement }) => { levelOpenerRef.current = event.currentTarget; setLevelModalOpen(true); };
+  // 열린 modal <dialog> 동안 바깥 요소는 inert라 focus가 무시되므로, dialog가 닫혀 DOM에서 빠진 뒤 포커스를 옮긴다.
+  const focusLevelOpener = () => { window.setTimeout(() => { const opener = levelOpenerRef.current; (opener?.isConnected ? opener : levelButtonRef.current)?.focus(); }, 0); };
   const payrollOpen = isEditing && payroll.openUserId === String(user.id);
   // 직원 상세를 연 경우에만 이 직원 1명의 계약을 조회한다(목록 전체 조회 없음). 한 줄 요약과
   // 급여·복리후생 패널이 이 결과를 함께 쓴다. 다른 화면에서 돌아오면 다시 조회한다.
@@ -678,7 +684,7 @@ function UserCard({
             {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
             {/* 목록의 레벨 일정 줄을 없애면서, 그 줄에만 있던 월 기준 전환 안내를 이 영역(레벨 설정 버튼 옆)으로 옮긴다. 조건은 기존과 같다. */}
             {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
-            <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button>
+            <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={openLevelModal}>{text.levelSettings}</button>
             {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
             {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
           </section> : null}
@@ -693,7 +699,7 @@ function UserCard({
               applicability={applicability}
               contracts={contracts}
               isSaving={isSaving}
-              levelAction={hasLevelEditor ? <button type="button" style={styles.payrollLinkButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button> : null}
+              levelAction={hasLevelEditor ? <button type="button" style={styles.payrollLinkButton} disabled={isSaving || Boolean(user.termination_date)} onClick={openLevelModal}>{text.levelSettings}</button> : null}
               onUnsavedChange={payroll.setUnsaved}
               onMealChanged={payroll.onMealChanged}
               onOpenPayrollSettings={openPayrollSettings}
@@ -764,7 +770,7 @@ function UserCard({
           ) : null}
         </fieldset>
       ) : null}
-      {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); levelButtonRef.current?.focus(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); levelButtonRef.current?.focus(); }} /> : null}
+      {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); focusLevelOpener(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); focusLevelOpener(); }} /> : null}
     </article>
   );
 }
@@ -847,6 +853,7 @@ function PayrollIconList({ icons }: { icons: PayrollApplicabilityIcon[] }) {
  * 급여·복리후생 전용 시트. 공용 패널을 그대로 담는다.
  * - 안쪽 계약 등록·정정 창(PayrollModal)은 시트 안에 그려지고 z-index가 더 높아 위에 뜬다.
  * - Escape는 안쪽 대화상자(계약 창, 레벨 설정 dialog)가 열려 있으면 그쪽만 닫히게 시트는 무시한다.
+ * - 키보드 포커스는 최상단 모달 안에서만 순환하고(useModalFocusTrap), 닫으면 시트를 연 버튼으로 돌아간다.
  * - 닫기(×·배경·Escape·닫기 버튼)는 모두 onClose → 미저장 입력 확인(P0)을 거친다.
  */
 function PayrollSheet({ title, closeLabel, onClose, children, footer }: {
@@ -855,6 +862,8 @@ function PayrollSheet({ title, closeLabel, onClose, children, footer }: {
   const titleId = useId();
   const sheetRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  // 포커스 가두기는 닫기 버튼 포커스보다 먼저 등록해야 연 버튼(관리)을 복원 대상으로 기억한다.
+  useModalFocusTrap(sheetRef);
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; });
   useEffect(() => {
@@ -863,8 +872,7 @@ function PayrollSheet({ title, closeLabel, onClose, children, footer }: {
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      const nestedOpen = sheetRef.current?.querySelector('[role="dialog"][aria-modal="true"]') || document.querySelector("dialog[open]");
-      if (nestedOpen) return;
+      if (!isTopModal(sheetRef.current)) return;
       onCloseRef.current();
     };
     window.addEventListener("keydown", onKey);

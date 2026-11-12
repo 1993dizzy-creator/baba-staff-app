@@ -162,7 +162,8 @@ test("contract amount formatting, read-only schedule summary, and modal focus ar
   assert.doesNotMatch(settings, /<small style=\{s\.fieldHelp\}>\{hoursInputToMinutes/);
   assert.match(payrollModal, /const onCloseRef=useRef\(onClose\)/);
   assert.match(payrollModal, /onCloseRef\.current=onClose/);
-  assert.match(payrollModal, /if\(e\.key==="Escape"\)onCloseRef\.current\(\)/);
+  // Escape는 최상단 모달일 때만 닫는다(중첩 모달 보호).
+  assert.match(payrollModal, /if\(e\.key==="Escape"&&isTopModal\(sectionRef\.current\)\)onCloseRef\.current\(\)/);
   assert.match(payrollModal, /closeRef\.current\?\.focus\(\)[\s\S]*document\.body\.style\.overflow="hidden"[\s\S]*\},\[\]\)/);
   assert.doesNotMatch(payrollModal, /closeRef\.current\?\.focus\(\)[\s\S]*\},\[onClose\]\)/);
 });

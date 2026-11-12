@@ -46,7 +46,8 @@ test("D: payroll·benefits opens a dedicated sheet; closing goes through the uns
   assert.match(page, /onOpen=\{\(\) => payroll\.setOpen\(user\.id, true\)\}\n\s+onClose=\{\(\) => payroll\.setOpen\(user\.id, false\)\}/);
   const sheet = page.slice(page.indexOf("function PayrollSheet("), page.indexOf("function PayrollBenefitsSection("));
   assert.match(sheet, /role="dialog" aria-modal="true" aria-labelledby=\{titleId\}/);
-  assert.match(sheet, /const nestedOpen = sheetRef\.current\?\.querySelector\('\[role="dialog"\]\[aria-modal="true"\]'\) \|\| document\.querySelector\("dialog\[open\]"\);/);
+  // 안쪽 계약 창·레벨 설정 dialog가 열려 있으면 시트는 Escape를 무시한다(최상단 모달 판정은 useModalFocusTrap).
+  assert.match(sheet, /if \(!isTopModal\(sheetRef\.current\)\) return;/);
   assert.match(sheet, /if \(event\.target === event\.currentTarget\) onClose\(\);/);
   assert.match(sheet, /document\.body\.style\.overflow = previousOverflow;/);
   assert.match(page, /aria-haspopup="dialog" aria-expanded=\{open\}/);
