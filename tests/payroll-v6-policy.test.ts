@@ -7,7 +7,7 @@ const read=(file:string)=>fs.readFileSync(path.join(process.cwd(),file),"utf8");
 const migration=read("supabase/migrations/202608010001_add_payroll_work_policy_penalties_v6.sql");
 const engine=read("lib/payroll/monthly-run.ts");
 const settings=read("components/payroll/PayrollCommonSettings.tsx");
-const contractUi=read("app/(protected)/admin/payroll/settings/page.tsx");
+const contractUi=["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const labels=read("lib/payroll/ui-labels.ts");
 const v7Migration=read("supabase/migrations/202608020002_add_unified_payroll_engine_v7.sql");
 

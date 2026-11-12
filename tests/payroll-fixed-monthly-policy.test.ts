@@ -5,7 +5,7 @@ import test from "node:test";
 import { calculateFixedMonthlyPayroll } from "../lib/payroll/fixed-monthly.ts";
 
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "utf8");
-const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const usersRoute = read("app/api/admin/payroll/users/route.ts");
 const contractsRoute = read("app/api/admin/payroll/contracts/route.ts");
 const correctRoute = read("app/api/admin/payroll/contracts/correct/route.ts");
@@ -43,7 +43,9 @@ test("employee list loads active users once per tab/language and restores URL se
 
 test("employee clicks wait for collapsed layout and both detail requests before one scroll", () => {
   assert.match(settings, /pendingScrollUserIdRef/);
-  assert.match(settings, /employeeListOpen \|\| contractsLoading \|\| selectedInsuranceLoading/);
+  // 2차: 계약·보험 조회 완료를 공용 패널이 settled로 알려 주고, 페이지는 그 뒤에 한 번만 스크롤한다.
+  assert.match(settings, /const settled = !contractsLoading && !selectedInsuranceLoading;/);
+  assert.match(settings, /!selectedId \|\| employeeListOpen \|\| !selectedPanelSettled/);
   assert.match(settings, /pendingScrollUserIdRef\.current = null/);
   assert.equal((settings.match(/scrollIntoView\(/g) ?? []).length, 1);
 });

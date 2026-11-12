@@ -6,7 +6,7 @@ const read = (file: string) =>
   fs.readFileSync(path.join(process.cwd(), file), "utf8");
 const list = read("app/(protected)/admin/payroll/page.tsx");
 const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
-const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const compensationCard = read("components/payroll/CompensationCard.tsx");
 const roles = read("lib/common/roles.ts");
 const employeeInsurance = read(
@@ -46,8 +46,8 @@ test("settings sends versioned compensation fields, preserves contract policy, a
     settings,
     /levelRaiseIncludedCount|level_raise_included_count/,
   );
-  assert.match(settings, /await load\(userId\)/);
-  assert.match(settings, /await load\(userId\)/);
+  assert.match(settings, /await load\(\)/);
+  assert.match(settings, /await load\(\)/);
 });
 test("ledger detail is read-only and omits the retired review and transition workflow", () => {
   for (const action of ["force_finalize","cancel_finalization","recalculate","resolve_review","mutate_item"])
@@ -110,18 +110,21 @@ test("employee payroll requests ignore aborts without allowing stale state", () 
     assert.match(source, /signal\?\.aborted|controller\.signal\.aborted/);
     assert.match(source, /name === "AbortError"|name==="AbortError"/);
     assert.match(source, /\.abort\(\)/);
-    assert.match(source, /mounted\.current|setContracts\(\[\]\)/);
+    assert.match(source, /mounted\.current|own \? state\.contracts : \[\]/);
   }
-  assert.match(settings, /setContracts\(\[\]\)/);
+  // 2차: 계약 훅은 직원이 바뀌면 이전 직원 자료 대신 빈 상태를 보이고, 늦은 응답은 버린다.
+  assert.match(settings, /contracts: own \? state\.contracts : \[\]/);
+  assert.match(settings, /userIdRef\.current !== id/);
   assert.doesNotMatch(settings, /\/api\/admin\/payroll\/insurance\?userId=/);
   assert.equal(employeeInsurance.match(/\/api\/admin\/payroll\/insurance\?userId=/g)?.length, 1);
   assert.match(employeeInsurance, /onLoadStateChange\?\.\(userId/);
-  assert.match(settings, /selectedInsuranceState\?\.userId === selectedId/);
+  // 보험 상태는 직원별로 key가 다른 공용 패널 안에 있어 직원이 바뀌면 함께 초기화된다.
+  assert.match(settings, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
 });
 
 test("employee insurance remounts per employee without the removed schedule editor", () => {
   assert.match(settings, /key=\{`insurance-\$\{selected\.id\}`\}/);
-  assert.doesNotMatch(settings, /key=\{selected\.id\}/);
+  assert.doesNotMatch(settings, /<(EmployeeInsuranceSettings|PayrollScheduleVersions)\s+key=\{selected\.id\}/);
   assert.doesNotMatch(settings, /PayrollScheduleVersions/);
   assert.match(settings, /selected\.username !== "mjk"/);
 });
@@ -195,7 +198,7 @@ test("employee payroll parts use the shared localized formatter", () => {
 
 test("contract modal starts at the top and renders the effective date first", () => {
   assert.match(settings, /<PayrollModal\s+[\s\S]*?placement="top"/);
-  const formStart = settings.indexOf('<form id="contract"');
+  const formStart = settings.indexOf('<form id={formId}');
   const baseSalary = settings.indexOf('value={form.baseSalary}', formStart);
   const effectiveDate = settings.indexOf('value={form.effectiveFrom}', formStart);
   const fixedRaise = settings.indexOf('value={form.fixedRaiseAmount}', formStart);

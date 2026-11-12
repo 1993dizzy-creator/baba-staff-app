@@ -6,7 +6,7 @@ import test from "node:test";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
 const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
-const settingsPage = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const commonSettings = read("components/payroll/PayrollCommonSettings.tsx");
 const employeeMealSettings = read("components/payroll/EmployeeMealAllowanceSettings.tsx");
 const overviewText = read("lib/text/payroll-overview.ts");

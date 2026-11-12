@@ -39,7 +39,7 @@ test("v7 daily rates and recognized days use each schedule's minutes", () => {
 
 test("contract history API and UI expose named registration and all corrections without normal internal-id labels", () => {
   const route = fs.readFileSync("app/api/admin/payroll/contracts/route.ts", "utf8");
-  const page = fs.readFileSync("app/(protected)/admin/payroll/settings/page.tsx", "utf8");
+  const page = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx"].map((path) => fs.readFileSync(path, "utf8")).join("\n");
   assert.match(route, /action,actor_user_id,reason,created_at/);
   assert.match(route, /\.in\("id", actorIds\)/);
   assert.match(route, /auditLogs/);

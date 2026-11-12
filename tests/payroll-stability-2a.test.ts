@@ -10,7 +10,7 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/payroll/page.tsx");
 const card = read("components/payroll/CompensationCard.tsx");
 const common = read("components/payroll/PayrollCommonSettings.tsx");
-const settingsPage = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 
 // ---------------------------------------------------------------------------
 // 1. 급여관리 조회 실패 복구
@@ -197,8 +197,8 @@ test("contract save distinguishes failure, uncertain result and post-save reload
   const submitFn = settingsPage.slice(settingsPage.indexOf("async function submit("), settingsPage.indexOf("async function verifyContractSave("));
   assert.equal((submitFn.match(/method: "POST"/g) ?? []).length, 1);
   assert.match(submitFn, /if \(pendingContractSave\) return;/);
-  assert.match(submitFn, /\} catch \{\n        \/\/ 네트워크 오류·응답 유실[^\n]*\n        await verifyContractSave\(userId, submitted\);\n        return;/);
-  assert.match(submitFn, /const history = await load\(userId\);\n      setOpen\(false\);\n      setNotice\(history/);
+  assert.match(submitFn, /\} catch \{\n        \/\/ 네트워크 오류·응답 유실[^\n]*\n        await verifyContractSave\(submitted\);\n        return;/);
+  assert.match(submitFn, /const history = await load\(\);\n      setOpen\(false\);\n      setNotice\(history/);
   assert.match(submitFn, /급여계약은 저장되었지만 계약 목록을 다시 불러오지 못했습니다/);
   const verifyFn = settingsPage.slice(settingsPage.indexOf("async function verifyContractSave("), settingsPage.indexOf("async function recheckContracts("));
   assert.match(verifyFn, /setPendingContractSave\(submitted\);/);

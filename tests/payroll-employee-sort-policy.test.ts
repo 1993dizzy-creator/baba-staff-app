@@ -7,7 +7,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "
 const sort = read("lib/payroll/employee-sort.ts");
 const roles = read("lib/common/roles.ts");
 const main = read("app/(protected)/admin/payroll/page.tsx");
-const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const labels = read("lib/payroll/ui-labels.ts");
 const attendance = read("lib/text/attendance.ts");
 const parts = read("lib/common/parts.ts");

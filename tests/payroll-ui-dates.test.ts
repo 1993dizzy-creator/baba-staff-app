@@ -19,7 +19,7 @@ test("Vietnam current-month helper uses the timezone year and month with day one
 });
 
 test("new and existing contract forms share the Vietnam month-start default", () => {
-  const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+  const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
   assert.doesNotMatch(settings, /effectiveFrom:\s*"2026-08-01"/);
   assert.match(
     settings,

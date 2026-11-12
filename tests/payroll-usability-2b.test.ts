@@ -12,7 +12,7 @@ import { reviewLabel } from "../lib/payroll/ui-labels.ts";
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/payroll/page.tsx");
 const card = read("components/payroll/CompensationCard.tsx");
-const settingsPage = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const summary = read("components/payroll/EmployeeSettingsSummary.tsx");
 
 type E = Parameters<typeof matchesPayrollDashboardFilter>[0];
@@ -214,12 +214,15 @@ test("summary shows load failures separately from unset values and reuses card r
   assert.doesNotMatch(summary, /fetch\(/);
   assert.match(settingsPage, /resolveSettingsSummaryReference\(params\.get\("month"\), vietnamToday\)/);
   assert.match(settingsPage, /contractsLoading \? loadingHistory : contractsLoadFailed \? \{ status: "error", history: \[\] \}/);
-  assert.match(settingsPage, /selectedId && taxHistoryState\?\.userId === selectedId \? taxHistoryState\.state : loadingHistory/);
+  // 2차: 세금 이력은 직원별 공용 패널(key=selected.id) 안에 보관된다.
+  assert.match(settingsPage, /const summaryTax = taxHistoryState \?\? loadingHistory;/);
+  assert.match(settingsPage, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
   for (const file of ["EmployeeTaxSettings", "EmployeeMealAllowanceSettings", "EmployeeAttendanceBonusSettings"]) {
     const source = read(`components/payroll/${file}.tsx`);
     assert.match(source, /reportHistoryRef\.current\?\.\(\{ status: "error", history: \[\] \}\)/, file);
     assert.match(source, /reportHistoryRef\.current\?\.\(\{ status: "ready", history:/, file);
     assert.equal((source.match(/fetch\(/g) ?? []).length, file === "EmployeeAttendanceBonusSettings" ? 4 : 2, file);
   }
-  for (const anchor of ["contract", "insurance", "tax", "meal", "bonus"]) assert.match(settingsPage, new RegExp(`EMPLOYEE_SETTING_ANCHORS\\.${anchor}`));
+  for (const anchor of ["contract", "insurance", "tax", "meal", "bonus"]) assert.match(settingsPage, new RegExp(`id=\\{anchor\\("${anchor}"\\)\\}`));
+  assert.match(settingsPage, /`\$\{anchorPrefix\}\$\{EMPLOYEE_SETTING_ANCHORS\[key\]\}`/);
 });

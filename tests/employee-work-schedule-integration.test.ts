@@ -7,7 +7,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "
 const migration = read("supabase/migrations/202608010002_unify_employee_work_schedule_source.sql");
 const usersRoute = read("app/api/admin/users/route.ts");
 const usersCreateRoute = read("app/api/admin/users/create/route.ts");
-const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const monthlyRun = read("lib/payroll/monthly-run.ts");
 
 test("employee profile update and schedule revision share one RPC transaction", () => {

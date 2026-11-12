@@ -44,6 +44,7 @@ export default function EmployeeSettingsSummary({
   tax,
   meal,
   bonus,
+  anchorPrefix = "",
 }: {
   lang: PayrollUiLang;
   reference: SummaryReference;
@@ -55,6 +56,8 @@ export default function EmployeeSettingsSummary({
   tax: SettingHistoryState<PayrollTaxSettingVersion>;
   meal: SettingHistoryState<MealVersion>;
   bonus: SettingHistoryState<BonusVersion>;
+  /** 같은 화면에 여러 직원 패널이 열릴 때 항목 id 앞에 붙는 구분자(급여설정 화면은 빈 값). */
+  anchorPrefix?: string;
 }) {
   const vi = lang === "vi";
   const past = reference.kind === "past";
@@ -197,7 +200,7 @@ export default function EmployeeSettingsSummary({
       <ul style={s.list}>
         {rows.map((row) => (
           <li key={row.key} style={s.row}>
-            <button type="button" style={s.rowButton} onClick={() => document.getElementById(row.anchor)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <button type="button" style={s.rowButton} onClick={() => document.getElementById(anchorPrefix + row.anchor)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
               <span style={s.label}>{row.label}</span>
               <span style={s.body}>
                 <span style={{ ...s.value, ...toneStyle[row.tone] }}>{row.value}</span>

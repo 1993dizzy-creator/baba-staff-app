@@ -7,6 +7,8 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const page = read("app/(protected)/admin/users/page.tsx");
 const text = read("lib/text/admin-users.ts");
 const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const panel = read("components/payroll/EmployeePayrollSettingsPanel.tsx");
+const hook = read("components/payroll/usePayrollContracts.ts");
 
 test("employee detail: attendance lives in work·pay, app login in app access, is_active and payroll exception in collapsed advanced", () => {
   const work = page.indexOf("<strong>{text.workPayInfo}</strong>");
@@ -30,15 +32,57 @@ test("is_active editing is preserved and not merged with termination", () => {
 });
 
 test("current payroll contract is read per employee only when the detail is open, and re-read on return", () => {
-  assert.equal((page.match(/\/api\/admin\/payroll\/contracts\?userId=/g) ?? []).length, 1);
-  assert.match(page, /function PayrollContractStatus[\s\S]*useCurrentPayrollContract\(user\.id\)/);
-  // Rendered only inside the edit fieldset, never in the list rows.
-  assert.ok(page.indexOf("<PayrollContractStatus") > page.indexOf("{isEditing ? ("));
-  assert.match(page, /document\.addEventListener\("visibilitychange", refresh\)/);
-  assert.match(page, /window\.addEventListener\("pageshow", restored\)/);
+  // 2차: the employee page no longer fetches contracts itself; the card owns one shared hook instance.
+  assert.equal((page.match(/\/api\/admin\/payroll\/contracts\?userId=/g) ?? []).length, 0);
+  assert.equal((hook.match(/fetch\(`\/api\/admin\/payroll\/contracts\?userId=/g) ?? []).length, 1);
+  assert.match(page, /const contracts = usePayrollContracts\(isEditing \? Number\(user\.id\) : null, \{ refreshOnReturn: true \}\);/);
+  assert.match(hook, /if \(!refreshOnReturn \|\| !userId\) return;/);
+  assert.match(hook, /document\.addEventListener\("visibilitychange", refresh\)/);
+  assert.match(hook, /window\.addEventListener\("pageshow", restored\)/);
   // Read failure and "no contract" are different states.
-  assert.match(page, /state\.status === "error" \?[\s\S]*text\.payrollContractLoadFailed/);
+  assert.match(page, /contracts\.loadFailed \? <span style=\{styles\.contractError\}>\{text\.payrollContractLoadFailed\}/);
   assert.match(page, /current \? payrollContractLabel\(current, text\) : text\.payrollContractNone/);
+});
+
+test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contract editor exists only in the shared panel", () => {
+  for (const source of [page, settings]) {
+    assert.match(source, /import EmployeePayrollSettingsPanel/);
+    assert.match(source, /<EmployeePayrollSettingsPanel/);
+    assert.doesNotMatch(source, /\/api\/admin\/payroll\/contracts\/correct|function verifyContractSave|contractSaveApplied|<EmployeeInsuranceSettings|<EmployeeTaxSettings|<EmployeeMealAllowanceSettings|<EmployeeAttendanceBonusSettings/);
+  }
+  assert.match(panel, /fetch\(correcting \? "\/api\/admin\/payroll\/contracts\/correct" : "\/api\/admin\/payroll\/contracts"/);
+  assert.match(panel, /if \(contractSaveApplied\(history, submitted\)\)/);
+  assert.match(panel, /setPendingContractSave\(submitted\)/);
+  assert.match(panel, /if \(pendingContractSave\) return;\n    const correcting/);
+  for (const component of ["EmployeeInsuranceSettings", "EmployeeTaxSettings", "EmployeeMealAllowanceSettings", "EmployeeAttendanceBonusSettings"]) {
+    assert.match(panel, new RegExp(`<${component}\\s+key=\\{\`[a-z-]+-\\$\\{selected\\.id\\}\`\\}`), component);
+  }
+  // The settings page keys the panel per employee so inputs/errors/pending saves never carry over.
+  assert.match(settings, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
+  assert.match(settings, /const contractsSource = usePayrollContracts\(activeTab === "employee" \? userId : null\);/);
+});
+
+test("2차: the employee page mounts at most one collapsed payroll·benefits panel, only for payroll-manageable employees", () => {
+  assert.match(page, /const payrollOpen = isEditing && payroll\.openUserId === String\(user\.id\);/);
+  assert.match(page, /\{open \? <div id=\{panelId\} style=\{styles\.payrollPanel\}>\s*<EmployeePayrollSettingsPanel/);
+  assert.match(page, /\{canManageUserPayroll\(user\) \? \(\s*<PayrollBenefitsSection/);
+  assert.match(page, /showIdentity=\{false\}/);
+  assert.match(page, /anchorPrefix=\{`user-\$\{user\.id\}-`\}/);
+  // One contract read is shared: the one-line summary hides while the panel shows the same contract.
+  assert.match(page, /showSummary=\{!\(payrollOpen && canManageUserPayroll\(user\)\)\}/);
+  assert.match(page, /contracts=\{contracts\}[\s\S]*contracts=\{contracts\}/);
+});
+
+test("2차: two-way navigation keeps the selected employee and confirms before discarding unsaved edits", () => {
+  assert.match(settings, /router\.push\(`\/admin\/users\?userId=\$\{id\}&section=payroll`\)/);
+  assert.match(settings, /if \(panelUnsaved && !window\.confirm\(leaveConfirmMessage\)\) return;/);
+  assert.match(settings, /if \(id !== userId && panelUnsaved && !window\.confirm\(leaveConfirmMessage\)\) return;/);
+  assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=\$\{payrollOpen \? "payroll" : "detail"\}`, \{ scroll: false \}\);/);
+  assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
+  assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
+  assert.match(panel, /const unsaved = open \|\| pendingContractSave !== null;/);
+  // Existing settings URLs keep working (no redirect away from the employee tab).
+  assert.doesNotMatch(settings, /redirect\(|router\.replace\(`\/admin\/users/);
 });
 
 test("contract/attendance mismatch reuses the payroll policy and only warns", () => {

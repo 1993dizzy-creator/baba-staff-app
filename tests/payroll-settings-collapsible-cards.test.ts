@@ -6,7 +6,7 @@ import { selectAttendanceBonusEligibilityAt } from "../lib/payroll/attendance-bo
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const card = read("components/payroll/EmployeeSettingCard.tsx");
-const settingsPage = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const insurance = read("components/payroll/EmployeeInsuranceSettings.tsx");
 const tax = read("components/payroll/EmployeeTaxSettings.tsx");
 const meal = read("components/payroll/EmployeeMealAllowanceSettings.tsx");

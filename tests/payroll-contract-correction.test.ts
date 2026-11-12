@@ -9,7 +9,7 @@ const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), "
 const migration = read("supabase/migrations/202608020001_correct_latest_unused_payroll_contract.sql");
 const v7Migration = read("supabase/migrations/202608020002_add_unified_payroll_engine_v7.sql");
 const route = read("app/api/admin/payroll/contracts/correct/route.ts");
-const settings = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const modal = read("components/payroll/PayrollModal.tsx");
 
 test("hourly contract labels and help are bilingual while monthly and daily labels remain explicit", () => {
@@ -129,7 +129,7 @@ test("correction modal preserves input on failure, prevents duplicates, and keep
   const failureReturn = settings.indexOf("return;", failedResponse);
   const closeAfterSuccess = settings.indexOf("setOpen(false);", failedResponse);
   assert.ok(failedResponse >= 0 && failureReturn > failedResponse && closeAfterSuccess > failureReturn);
-  assert.match(settings, /await load\(userId\);\s+setOpen\(false\)/);
+  assert.match(settings, /await load\(\);\s+setOpen\(false\)/);
   assert.match(modal, /body:\{[\s\S]*overflowY:"auto"/);
   assert.match(modal, /footer:\{flexShrink:0/);
   assert.match(modal, /100dvh/);

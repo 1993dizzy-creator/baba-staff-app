@@ -12,7 +12,7 @@ const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
 const runPage = read("app/(protected)/admin/payroll/[runId]/page.tsx");
 const compensationCard = read("components/payroll/CompensationCard.tsx");
 const usersText = read("lib/text/admin-users.ts");
-const settingsPage = read("app/(protected)/admin/payroll/settings/page.tsx");
+const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const attendancePage = read("app/(protected)/admin/payroll/attendance/page.tsx");
 const attendanceUserPage = read("app/(protected)/admin/payroll/attendance/[userId]/page.tsx");
 
