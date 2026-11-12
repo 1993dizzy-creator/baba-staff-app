@@ -751,7 +751,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
         <details style={styles.modalHelp}>
           <summary style={styles.modalHelpTitle}>{text.levelHistory}</summary>
           {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status">{text.loading}</p> :
-            <LevelHistoryView history={history.history} adminChanges={history.adminChanges ?? []} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
+            <LevelHistoryView history={history.history} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
         </details>
       </div>
       {hasChanges ? <p style={{ ...styles.modalHint, margin: 0, padding: "6px 14px", flexShrink: 0 }}>{text.levelApplyHelp}</p> : null}
@@ -763,13 +763,11 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
   </dialog>, document.body);
 }
 
-function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate, pending, text }: {
+function LevelHistoryView({ history, currentInfo, terminationDate, pending, text }: {
   history: ReturnType<typeof buildEmployeeLevelHistory>;
   currentInfo: EmployeeLevelInfo; terminationDate: string | null; pending: boolean;
-  adminChanges: { id: number; action: string; createdAt: string }[];
   text: AdminUsersPageText;
 }) {
-  const past = [...history.promotions].sort((a, b) => b.date.localeCompare(a.date));
   // Presentation only: a standard month schedule, never a reconstruction of actual history.
   const base = currentInfo.baseDate ? currentInfo.baseDate.slice(0, 7) + "-01" : null;
   const milestones = base ? Array.from({ length: 9 }, (_, index) => ({ month: index * 3, date: addCalendarMonthsClamped(base, index * 3)! })) : [];
@@ -779,18 +777,6 @@ function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate,
   const periodStart = currentInfo.level !== null && currentInfo.baseDate ? addCalendarMonthsClamped(currentInfo.baseDate, currentInfo.level * 3) : null;
   const periodLimit = currentInfo.nextLevelDate ?? (!currentInfo.negotiationEligible ? currentInfo.negotiationEligibleAt : null);
   const periodEnd = periodLimit ? new Date(new Date(periodLimit + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10) : null;
-  // Group only for display. No policy/audit linkage is inferred and every raw record remains visible.
-  const auditsByDate = new Map<string, typeof adminChanges>();
-  for (const event of [...adminChanges].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id)) {
-    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(event.createdAt));
-    const group = auditsByDate.get(date) ?? [];
-    group.push(event); auditsByDate.set(date, group);
-  }
-  const actionLabels: Record<string, string> = {
-    level_program_enabled: text.levelEnabled, level_program_disabled: text.levelDisabled,
-    level_base_date_changed: text.levelBasisShort, level_base_date_reset_to_hire_date: text.levelAutoShort,
-    level_reset_on_rehire: text.rehire, level_salary_raise_changed: text.levelSalaryRaise,
-  };
   const dateLabel = (date: string) => date.replaceAll("-", ".");
   const countLabel = (label: string, count: number) => label.replace("{count}", String(count));
   // Phase comes from the calculated current level (calculateEmployeeLevel), never from row order or labels.
@@ -812,10 +798,7 @@ function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate,
       <div style={{ textAlign: "right" }}><span>{row.index === 8 ? text.levelNegotiation : "Lv." + row.index}</span><span style={{ ...styles.modalMuted, ...(isCurrent ? { color: "#1d4ed8" } : {}), display: "block" }}>{isCurrent ? text.levelCurrentlyActive : row.phase === "future" ? text.levelScheduleFuture : text.levelSchedulePast}</span></div>
     </li>;
   };
-  const promotionRows = (events: typeof past) => <ul style={styles.levelHistoryList}>{events.map(event =>
-    <li key={event.date + ":" + event.versionId} style={styles.levelHistoryRow}><time dateTime={event.date}>{dateLabel(event.date)}</time><strong>Lv.{event.level}</strong></li>)}</ul>;
-  return <div style={styles.levelHistorySections}>
-    <section aria-label={text.levelTimeline} style={styles.levelTimelinePanel}>
+  return <section aria-label={text.levelTimeline} style={styles.levelTimelinePanel}>
       <div style={styles.levelTimelineCurrent}>
         {terminated ? <strong>{text.levelAtTermination} {currentInfo.displayLabel ?? (currentInfo.reason === "PROGRAM_DISABLED" ? text.levelDisabled : text.levelUnset)}</strong> : null}
         {terminated ? <span>{text.terminatedLevelReadOnly}</span> : beforeBase ? <span>{text.levelBeforeBaseDate}</span>
@@ -832,30 +815,7 @@ function LevelHistoryView({ history, adminChanges, currentInfo, terminationDate,
         </details> : null}
         {upcomingRows.length ? <ol style={styles.levelHistoryList}>{upcomingRows.map(timelineRow)}</ol> : null}
       </div> : <p>{text.levelBaseRequired}</p>}
-    </section>
-    <details>
-      <summary>{text.levelActualHistory} · {past.length}</summary>
-      {past.length ? promotionRows(past.slice(0, 3)) : <p>{text.levelHistoryEmpty}</p>}
-      {past.length > 3 ? <details><summary>{countLabel(text.levelMorePast, past.length - 3)}</summary>{promotionRows(past.slice(3))}</details> : null}
-    </details>
-    <details>
-      <summary>{text.levelAdminHistory}</summary>
-      <p style={styles.modalHint}>{text.levelHistoryCoverage}: {history.coverageFrom ? dateLabel(history.coverageFrom) : "-"}</p>
-      <strong>{countLabel(text.levelPolicyVersions, history.policies.length)}</strong>
-      <ul style={styles.levelHistoryList}>{history.policies.map(policy => <li key={policy.id} style={styles.levelHistoryPolicy}>
-        <time dateTime={policy.effectiveFrom}>{dateLabel(policy.effectiveFrom)}</time>
-        <span>{text.levelBaseMonth} {policy.baseMonth ?? "-"} · {policy.enabled ? text.levelEnabled : text.levelDisabled}</span>
-      </li>)}</ul>
-      <strong>{countLabel(text.levelAuditEntries, adminChanges.length)}</strong>
-      {[...auditsByDate].map(([date, events]) => <details key={date}>
-        <summary>{dateLabel(date)} · {countLabel(text.levelAuditEntries, events.length)}</summary>
-        <ul style={styles.levelHistoryList}>{events.map(event => <li key={event.id} style={styles.levelHistoryPolicy}>
-          <time dateTime={event.createdAt}>{new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(event.createdAt))} · #{event.id}</time>
-          <span title={event.action}>{actionLabels[event.action] ?? text.levelPolicyRecorded}</span>
-        </li>)}</ul>
-      </details>)}
-    </details>
-  </div>;
+    </section>;
 }
 
 function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText }) {
@@ -1386,11 +1346,8 @@ const styles = {
   levelTimelineCurrent: { display: "grid", gap: 5, paddingBottom: 10, flexShrink: 0 },
   levelTimelineScroll: { overflowY: "auto", minHeight: 0, overscrollBehavior: "contain" },
   levelTimelineRow: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12, padding: "7px 0", alignItems: "baseline", fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
-  levelHistorySections: { display: "grid", gap: 14 },
   levelHistoryList: { listStyle: "none", margin: "6px 0", padding: 0, display: "grid", gap: 6 },
-  levelHistoryRow: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, fontVariantNumeric: "tabular-nums" },
   levelHistoryNext: { display: "flex", justifyContent: "space-between", gap: 12, marginTop: 6, fontSize: 14, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
-  levelHistoryPolicy: { display: "grid", gap: 2, padding: "3px 0", overflowWrap: "anywhere" },
   modalField: { margin: 0, padding: 0, border: 0, minWidth: 0 },
   modalLabel: { padding: 0, marginBottom: 6, fontSize: 12, fontWeight: 800, color: "#374151" },
   modalHint: { margin: "7px 0 0", fontSize: 11, color: "#6b7280", lineHeight: 1.5, overflowWrap: "anywhere" },
