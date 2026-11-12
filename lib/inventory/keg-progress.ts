@@ -303,116 +303,51 @@ export async function fetchKegProgressByItemId(params: {
   );
   const businessDateLowerBound = getKegBusinessDateLowerBound(earliestStartedAt);
 
-  const receiptRows: PosReceiptRow[] = [];
-  const receiptsStartedAt = performance.now();
-  for (let from = 0; ; from += POS_SALES_PAGE_SIZE) {
-    const { data, error } = await withBusinessDateLowerBound(
-      supabase
-        .from("pos_sales_receipts")
-        .select("id, ref_date, synced_at, updated_at, payment_status, is_canceled"),
-      businessDateLowerBound
-    )
-      .eq("payment_status", 3)
-      .or(
-        `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`
-      )
-      .order("ref_date", { ascending: false, nullsFirst: false })
-      .range(from, from + POS_SALES_PAGE_SIZE - 1);
-
-    if (error) throw error;
-    receiptRows.push(...((data || []) as PosReceiptRow[]));
-    if (!data || data.length < POS_SALES_PAGE_SIZE) break;
-  }
-  timing?.("receipts", performance.now() - receiptsStartedAt);
-
-  const lineRowsById = new Map<string, PosReceiptLineRow>();
-  const receiptIds = receiptRows
-    .map((receipt) => Number(receipt.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
+  // POS writers assign the same business_date to each receipt and its lines.
+  // First select only paid lines for actively mapped products, then load just
+  // their parent receipts. The core calculator still applies the original
+  // timestamp-fallback, payment/cancellation and exclusion rules.
+  // Keep the conservative two-day business-date margin for late edits.
   const lineSelect =
     "id, receipt_id, item_id, item_code, quantity, is_option, is_excluded, is_canceled, payment_status, ref_date, synced_at, updated_at";
-  const lineTimeFilter =
-    `ref_date.gte.${earliestStartedAt},synced_at.gte.${earliestStartedAt},updated_at.gte.${earliestStartedAt}`;
-  const lineRequests: Array<Promise<PosReceiptLineRow[]>> = [];
   const lineQueriesStartedAt = performance.now();
-  const receiptLinesStartedAt = performance.now();
-  let receiptLineRequestCount = 0;
-  let completedReceiptLineRequestCount = 0;
-
-  if (lineMatchFilter) {
-    for (const receiptIdChunk of chunkArray(receiptIds, POS_RECEIPT_ID_CHUNK_SIZE)) {
-      receiptLineRequestCount += 1;
-      lineRequests.push(
-        fetchLinePages((from, to) =>
-          supabase
-            .from("pos_sales_receipt_lines")
-            .select(lineSelect)
-            .in("receipt_id", receiptIdChunk)
-            .eq("payment_status", 3)
-            .or(lineMatchFilter)
-            .order("id", { ascending: true })
-            .range(from, to)
-        ).finally(() => {
-          completedReceiptLineRequestCount += 1;
-          if (completedReceiptLineRequestCount === receiptLineRequestCount) {
-            timing?.(
-              "receipt_lines",
-              performance.now() - receiptLinesStartedAt
-            );
-          }
-        })
-      );
-    }
-    const timestampLinesStartedAt = performance.now();
-    lineRequests.push(
-      fetchLinePages((from, to) =>
+  // Without a match filter no line can count; skip both queries but still run the
+  // calculator below so the response keeps its zero salesBreakdown.
+  const lineRows = lineMatchFilter
+    ? await fetchLinePages((from, to) =>
         withBusinessDateLowerBound(
           supabase.from("pos_sales_receipt_lines").select(lineSelect),
           businessDateLowerBound
         )
           .eq("payment_status", 3)
           .or(lineMatchFilter)
-          .or(lineTimeFilter)
           .order("id", { ascending: true })
           .range(from, to)
-      ).finally(() => {
-        timing?.(
-          "timestamp_lines",
-          performance.now() - timestampLinesStartedAt
-        );
-      })
-    );
-  }
+      )
+    : [];
+  const lineDurationMs = performance.now() - lineQueriesStartedAt;
+  timing?.("receipt_lines", lineDurationMs);
+  timing?.("line_queries_wall", lineDurationMs);
 
-  const matchingLineGroups = await Promise.all(lineRequests);
-  timing?.("line_queries_wall", performance.now() - lineQueriesStartedAt);
-  for (const line of matchingLineGroups.flat()) {
-    lineRowsById.set(String(line.id), line);
-  }
-
-  const lineRows = Array.from(lineRowsById.values());
-  const missingReceiptIds = Array.from(
+  const receiptIds = Array.from(
     new Set(
       lineRows
         .map((line) => Number(line.receipt_id))
-        .filter((id) => Number.isFinite(id) && id > 0)
-        .filter((id) => !receiptIds.includes(id))
+        .filter((id) => Number.isInteger(id) && id > 0)
     )
   );
-  const missingReceiptsStartedAt = performance.now();
-  for (const ids of chunkArray(missingReceiptIds, 500)) {
+  const receiptRows: PosReceiptRow[] = [];
+  const receiptsStartedAt = performance.now();
+  for (const receiptIdChunk of chunkArray(receiptIds, POS_RECEIPT_ID_CHUNK_SIZE)) {
     const { data, error } = await supabase
       .from("pos_sales_receipts")
       .select("id, ref_date, synced_at, updated_at, payment_status, is_canceled")
-      .in("id", ids);
+      .in("id", receiptIdChunk);
 
     if (error) throw error;
     receiptRows.push(...((data || []) as PosReceiptRow[]));
   }
-  timing?.(
-    "missing_receipts",
-    performance.now() - missingReceiptsStartedAt
-  );
+  timing?.("receipts", performance.now() - receiptsStartedAt);
 
   const computeStartedAt = performance.now();
   for (const itemId of activeTrackingItemIds) {
