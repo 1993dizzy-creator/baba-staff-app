@@ -4,7 +4,7 @@ import { resolveConfiguredBusinessDate } from "@/lib/store-settings/business-tim
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
 import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyncState, type ReceiptLink } from "@/lib/pos/cukcuk/open-orders-core";
-import { loadTableCatalog } from "@/lib/pos/cukcuk/tables-read-server";
+import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
 import { buildTableOverview } from "./table-overview";
 
@@ -26,7 +26,7 @@ function validOrders(orders: unknown): orders is CollectedOrder[] {
 export async function readTableOverview(now = new Date()) {
   const businessDate = await resolveConfiguredBusinessDate(now);
   const enabled = process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
-  const catalog = await loadTableCatalog(now);
+  const catalog = babaTableCatalog();
   let sync: OpenOrderSyncState | null = null;
   let orders: CollectedOrder[] = [];
   let receipts: ReceiptLink[] = [];

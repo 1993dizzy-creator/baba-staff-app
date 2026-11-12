@@ -5,7 +5,8 @@ import { loadTs, authHarness, nextMock } from './helpers/sales-auth-harness.mjs'
 import * as policy from '../lib/sales/table-overview.ts';
 import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 import { addStoreDays, calculateStoreBusinessDate } from '../lib/store-settings/business-time-core.ts';
-import { input, now } from './helpers/table-overview-fixture.mjs';
+import { input, now, order } from './helpers/table-overview-fixture.mjs';
+import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 
 test('real signed-session gate allows all five roles; unauthenticated/forged/inactive/blocked cannot read snapshots', async () => {
   const old = process.env.BABA_SESSION_SECRET; process.env.BABA_SESSION_SECRET = 'offline-test-only-tables-secret-32-bytes';
@@ -73,7 +74,7 @@ test('server reads only central RPC and receipt evidence, resolves configured 03
         '@/lib/store-settings/business-time-adapter': { resolveConfiguredBusinessDate: async stamp => { assert.equal(stamp, at); return day; } },
         '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
         '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
-        '@/lib/pos/cukcuk/tables-read-server': { loadTableCatalog: async () => f.catalog },
+        './baba-table-catalog': { babaTableCatalog: () => f.catalog },
         '@/lib/supabase/server': { supabaseServer: { rpc(name, args) { calls.push([name,args]); return {
           abortSignal: async () => ({ data: { sync: f.sync, orders: f.orders.map(o => ({ ...o, raw: { CustomerTel: 'not-returned' } })) }, error: null }),
         }; } } },
@@ -86,4 +87,42 @@ test('server reads only central RPC and receipt evidence, resolves configured 03
   } finally { if (old === undefined) delete process.env.POS_OPEN_ORDERS_READ_ENABLED; else process.env.POS_OPEN_ORDERS_READ_ENABLED = old; }
   assert.doesNotMatch(readFileSync('lib/sales/table-overview-server.ts','utf8'), /sync-server|loginCukcuk|runCentral|\.insert\(|\.update\(/);
   assert.doesNotMatch(readFileSync('app/(protected)/tables/page.tsx','utf8'), /requireRole|\/admin\/|supabase/);
+});
+
+test('actual static catalog reaches the server response with READ disabled, absent/live orders, stale and failed snapshots; no Tables transport', async () => {
+  const oldRead = process.env.POS_OPEN_ORDERS_READ_ENABLED, oldTables = process.env.POS_TABLES_READ_ENABLED;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { assert.fail('offline test must never call the provider'); };
+  process.env.POS_TABLES_READ_ENABLED = 'true'; // Must have no effect on this static page read path.
+  try {
+    const base = input();
+    for (const scenario of ['read_disabled','absent','live','stale','incomplete','read_failed']) {
+      process.env.POS_OPEN_ORDERS_READ_ENABLED = scenario === 'read_disabled' ? 'false' : 'true';
+      let snapshotReads = 0;
+      const service = loadTs('lib/sales/table-overview-server.ts', {
+        'server-only': {}, './table-overview': policy, './baba-table-catalog': { babaTableCatalog },
+        '@/lib/store-settings/business-time-adapter': { resolveConfiguredBusinessDate: async () => base.businessDate },
+        '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
+        '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
+        '@/lib/supabase/server': { supabaseServer: { rpc() { snapshotReads++; return { abortSignal: async () => ({
+          error: scenario === 'read_failed' ? { code:'offline-failure' } : null,
+          data: { sync: { ...base.sync,
+            lastSuccessAt: scenario === 'stale' ? '2026-11-13T10:00:00Z' : base.sync.lastSuccessAt,
+            lastErrorCode: scenario === 'incomplete' ? 'orders_vanished_unconfirmed' : null },
+          orders: scenario === 'absent' ? [] : [order('bar1','BAR1'), order('floor1','1')] },
+        }) }; } } },
+        './daily-sales-summary': { fetchAllExactPages: async () => ({ data:[], error:null }) },
+      });
+      const result = await service.readTableOverview(now);
+      assert.equal(result.tables.length,27,scenario);
+      assert.deepEqual(['bar','floor1','floor2'].map(area=>result.tables.filter(t=>t.area===area).length),[11,8,8]);
+      assert.equal(result.tables.filter(t=>t.state==='occupied').length,scenario==='live'?2:0,scenario);
+      assert.equal(result.summary.free,null); assert.equal(result.summary.reserved,null); assert.equal(result.summary.paid,null);
+      assert.equal(snapshotReads,scenario==='read_disabled'?0:1);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if(oldRead===undefined)delete process.env.POS_OPEN_ORDERS_READ_ENABLED;else process.env.POS_OPEN_ORDERS_READ_ENABLED=oldRead;
+    if(oldTables===undefined)delete process.env.POS_TABLES_READ_ENABLED;else process.env.POS_TABLES_READ_ENABLED=oldTables;
+  }
 });
