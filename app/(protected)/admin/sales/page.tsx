@@ -445,12 +445,8 @@ export default function SalesPage() {
   const compactKpi = Boolean(kpi && kpi.mode !== "paid");
   const includesOpen = kpi?.mode === "complete" || kpi?.mode === "partial";
   const subtotalMeta = kpi?.mode === "partial" ? dailyText.compactPartial : "";
-  const statusMeta = (paid: number | undefined, open: number | undefined,
-    format: (value: number) => string, canceled?: number) => [
-    paid && paid > 0 ? `${dailyText.kpiPaid} ${format(paid)}` : "",
-    includesOpen && open && open > 0 ? `${dailyText.kpiOpen} ${format(open)}` : "",
-    canceled && canceled > 0 ? `${dailyText.kpiCanceled} ${format(canceled)}` : "",
-  ].filter(Boolean).join(" · ");
+  const paidMeta = (paid: number | undefined, format: (value: number) => string) =>
+    paid && paid > 0 ? `${dailyText.kpiPaid} ${format(paid)}` : "";
   const compactMeta = (statuses: string, warning = "") =>
     [subtotalMeta, statuses, warning].filter(Boolean).join(" · ");
   const paidBaseMeta = kpi?.mode === "unavailable" || kpi?.menuNeedsReview
@@ -466,7 +462,7 @@ export default function SalesPage() {
           ? dailyText.error
           : formatVnd(kpi?.amount),
       meta: compactKpi
-        ? compactMeta(statusMeta(summary?.totalSales, kpi?.openOrders?.open?.amount, formatVnd), kpi?.mode === "unavailable" ? paidBaseMeta : "")
+        ? compactMeta(paidMeta(summary?.totalSales, formatVnd), kpi?.mode === "unavailable" ? paidBaseMeta : "")
         : paidBaseMeta,
     },
     {
@@ -477,8 +473,8 @@ export default function SalesPage() {
           ? dailyText.error
           : `${formatNumber(kpi?.receiptCount)}${dailyText.receiptCountSuffix}`,
       meta: compactKpi
-        ? compactMeta(statusMeta(summary?.paidReceiptCount, kpi?.openOrders?.open?.orderCount,
-          (value) => `${formatNumber(value)}${dailyText.receiptCountSuffix}`, summary?.canceledReceiptCount), kpi?.mode === "unavailable" ? paidBaseMeta : "")
+        ? compactMeta(paidMeta(summary?.paidReceiptCount,
+          (value) => `${formatNumber(value)}${dailyText.receiptCountSuffix}`), kpi?.mode === "unavailable" ? paidBaseMeta : "")
         : `${paidBaseMeta} · ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}${dailyText.receiptCountSuffix}`,
     },
     {
@@ -489,7 +485,7 @@ export default function SalesPage() {
           ? dailyText.error
           : `${formatNumber(kpi?.menuLineCount)}${dailyText.itemCountSuffix}`,
       meta: compactKpi
-        ? compactMeta(statusMeta(summary?.salesLineCount, kpi?.menuNeedsReview ? undefined : kpi?.openOrders?.open?.menuLineCount,
+        ? compactMeta(paidMeta(summary?.salesLineCount,
           (value) => `${formatNumber(value)}${dailyText.itemCountSuffix}`), kpi?.menuNeedsReview ? dailyText.menuCountUnavailable : kpi?.mode === "unavailable" ? paidBaseMeta : "")
         : `${paidBaseMeta} · ${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}${kpi?.menuNeedsReview ? ` · ${dailyText.menuCountUnavailable}` : ""}`,
     },

@@ -115,7 +115,7 @@ for (const lang of ['ko', 'vi']) {
     assert.equal((cards.match(/min-height:88px/g) ?? []).length, 4);
     assert.match(cards, /2\.100\.000/);
     assert.match(cards, /21/);
-    assert.ok(cards.includes(t.kpiOpen));
+    assert.ok(cards.includes(t.kpiPaid));
     assert.ok(cards.includes(t.compactProvisional));
     assert.ok(!html.includes(t.openOrdersTitle), 'no separate order KPI panel');
     const partial = renderDailySales(response(openKpi([...orders(), order(9, { Status: 7 })])), { lang });
@@ -204,19 +204,25 @@ for (const lang of ['ko', 'vi']) {
         .split(/<div style="[^"]*min-height:88px[^"]*">/).slice(1);
       assert.equal(cards.length, 4, s.name);
       const expected = [
-        [[t.kpiPaid, s.paid], [t.kpiOpen, s.open]],
-        [[t.kpiPaid, s.count], [t.kpiOpen, s.orders], [t.kpiCanceled, s.canceled]],
-        [[t.kpiPaid, s.menus], [t.kpiOpen, s.lines]],
+        [[t.kpiPaid, s.paid]],
+        [[t.kpiPaid, s.count]],
+        [[t.kpiPaid, s.menus]],
       ];
       for (let i = 0; i < 3; i++) {
         for (const [label, value] of expected[i]) {
           assert.equal(cards[i].includes(label + ' '), value > 0, `${s.name} card ${i}: ${label}`);
+          if (value > 0) {
+            const suffix = i === 0 ? '\\s*₫' : i === 1 ? common.receiptCountSuffix : common.itemCountSuffix;
+            assert.match(cards[i], new RegExp(`${label} ${fmt(value).replaceAll('.', '\\.')}${suffix}`));
+          }
         }
         if (expected[i].every(([, value]) => value === 0)) {
           assert.equal((cards[i].match(/<div style=/g) ?? []).length, 2, 'only label/value, no empty meta');
         }
         assert.ok(!cards[i].includes(t.optionsExcluded));
         assert.ok(!cards[i].includes(common.currentPrefix));
+        assert.ok(!cards[i].includes(t.kpiOpen + ' '));
+        assert.ok(!cards[i].includes(t.kpiCanceled + ' '));
       }
       assert.equal(cards[3].includes(t.compactProvisional), s.orders > 0);
       if (!s.orders) assert.equal((cards[3].match(/<div style=/g) ?? []).length, 2);
@@ -226,9 +232,6 @@ for (const lang of ['ko', 'vi']) {
       assert.equal(JSON.stringify({ paid, snapshot }), before, 'presentation leaves inputs untouched');
       if (s.name === 'open only actual case') {
         assert.deepEqual([kpi.amount, kpi.receiptCount, kpi.menuLineCount, kpi.averageAmount], [1500000, 2, 8, 750000]);
-        assert.match(cards[0], new RegExp(`${t.kpiOpen} 1\\.500\\.000\\s*₫`));
-        assert.ok(cards[1].includes(`${t.kpiOpen} 2${common.receiptCountSuffix}`));
-        assert.ok(cards[2].includes(`${t.kpiOpen} 8${common.itemCountSuffix}`));
       }
     }
   });
