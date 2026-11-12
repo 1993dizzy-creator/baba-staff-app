@@ -82,17 +82,6 @@ function inactiveItemStyle(): CSSProperties {
   };
 }
 
-function disabledItemStyle(): CSSProperties {
-  return {
-    ...inactiveItemStyle(),
-    border: 0,
-    padding: 0,
-    fontFamily: "inherit",
-    cursor: "not-allowed",
-    opacity: 0.72,
-  };
-}
-
 function adminItemStyle(isActive: boolean): CSSProperties {
   return {
     ...adminItemBase,
@@ -220,6 +209,7 @@ export default function BottomNav() {
   const isAdminPage = pathname === "/admin" || pathname.startsWith("/admin/");
 
   const isBarPage = pathname === "/bar" || pathname.startsWith("/bar/");
+  const isTablesPage = pathname === "/tables" || pathname.startsWith("/tables/");
 
   const adminLabel = lang === "vi" ? "Admin" : "관리자";
 
@@ -234,14 +224,14 @@ export default function BottomNav() {
           <span>{t.inventory}</span>
         </Link>
 
-        <button
-          type="button"
-          disabled
-          style={disabledItemStyle()}
+        <Link
+          href="/tables"
+          style={isTablesPage ? activeItemStyle() : inactiveItemStyle()}
+          aria-current={isTablesPage ? "page" : undefined}
         >
           <span style={iconStyle} aria-hidden="true">🏪</span>
           <span>{t.operation}</span>
-        </button>
+        </Link>
 
         {canUseAdmin && (
           <Link href="/admin" style={adminItemStyle(isAdminPage)}>
