@@ -49,10 +49,10 @@ export const salesCloseText = {
     "transfer": "계좌이체",
     "card": "카드",
     "other": "기타",
-    "pendingTitle": "결제예정 영수증",
+    "pendingTitle": "결제예정",
     "pendingCount": "건",
     "pendingBlocked": "결제예정 영수증이 남아 있어 영업 마감을 할 수 없습니다. 결제상태를 정리한 뒤 다시 마감해 주세요.",
-    "pendingGo": "바로가기",
+    "pendingGo": "확인하기",
     "holdTitle": "마감 보류 영업일",
     "holdResolved": "결제예정 정리가 끝났습니다. 영업 마감을 진행해 주세요."
   },
