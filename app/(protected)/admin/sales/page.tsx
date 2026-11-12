@@ -442,67 +442,74 @@ export default function SalesPage() {
     isLiveBusinessDay,
     isClosed: Boolean(closeCheck && closeCheck.status !== "not_closed"),
   }) : null;
-  const kpiPrefix = isLiveBusinessDay ? dailyText.currentPrefix : "";
+  const compactKpi = Boolean(kpi && kpi.mode !== "paid");
   const includesOpen = kpi?.mode === "complete" || kpi?.mode === "partial";
-  const subtotalMeta = kpi?.mode === "partial" ? `${dailyText.knownSubtotal} · ` : "";
+  const subtotalMeta = kpi?.mode === "partial" ? dailyText.compactPartial : "";
+  const statusMeta = (paid: number | undefined, open: number | undefined,
+    format: (value: number) => string, canceled?: number) => [
+    paid && paid > 0 ? `${dailyText.kpiPaid} ${format(paid)}` : "",
+    includesOpen && open && open > 0 ? `${dailyText.kpiOpen} ${format(open)}` : "",
+    canceled && canceled > 0 ? `${dailyText.kpiCanceled} ${format(canceled)}` : "",
+  ].filter(Boolean).join(" · ");
+  const compactMeta = (statuses: string, warning = "") =>
+    [subtotalMeta, statuses, warning].filter(Boolean).join(" · ");
   const paidBaseMeta = kpi?.mode === "unavailable" || kpi?.menuNeedsReview
     ? dailyText.paidOnly
     : dailyText.paidReceiptBase;
 
-  const summaryCards = useMemo(
-    () => [
-      {
-        label: withEmoji(SALES_UI_EMOJIS.totalSales, kpiPrefix + dailyText.totalSales),
-        value: isLoading
-          ? dailyText.loading
-          : hasError
-            ? dailyText.error
-            : formatVnd(kpi?.amount),
-        meta: includesOpen
-          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatVnd(summary?.totalSales)} · ${dailyText.openOrdersAmount} ${formatVnd(kpi?.openOrders?.open?.amount)}`
-          : paidBaseMeta,
-      },
-      {
-        label: withEmoji(SALES_UI_EMOJIS.receipts, kpiPrefix + dailyText.receipts),
-        value: isLoading
-          ? dailyText.loading
-          : hasError
-            ? dailyText.error
-            : `${formatNumber(kpi?.receiptCount)}${dailyText.receiptCountSuffix}`,
-        meta: includesOpen
-          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatNumber(summary?.paidReceiptCount)}${dailyText.receiptCountSuffix} · ${dailyText.openOrdersCount} ${formatNumber(kpi?.openOrders?.open?.orderCount)}${dailyText.receiptCountSuffix}`
-          : `${paidBaseMeta} · ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}${dailyText.receiptCountSuffix}`,
-      },
-      {
-        label: withEmoji(SALES_UI_EMOJIS.soldItems, kpiPrefix + dailyText.soldItems),
-        value: isLoading
-          ? dailyText.loading
-          : hasError
-            ? dailyText.error
-            : `${formatNumber(kpi?.menuLineCount)}${dailyText.itemCountSuffix}`,
-        meta: includesOpen && !kpi?.menuNeedsReview
-          ? `${subtotalMeta}${dailyText.paymentCompleted} ${formatNumber(summary?.salesLineCount)}${dailyText.itemCountSuffix} · ${dailyText.openOrdersCount} ${formatNumber(kpi?.openOrders?.open?.menuLineCount)}${dailyText.itemCountSuffix} · ${dailyText.optionsExcluded}`
-          : `${paidBaseMeta} · ${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}${kpi?.menuNeedsReview ? ` · ${dailyText.menuCountUnavailable}` : ""}`,
-      },
-      {
-        label: withEmoji(
-          SALES_UI_EMOJIS.averageReceiptAmount,
-          kpiPrefix + dailyText.averageReceiptAmount
-        ),
-        value: isLoading
-          ? dailyText.loading
-          : hasError
-            ? dailyText.error
-            : kpi?.averageAmount === null
-              ? dailyText.currentAverageUnavailable
-              : formatVnd(kpi?.averageAmount),
-        meta: includesOpen
-          ? (kpi?.mode === "complete" ? dailyText.provisionalAverage : dailyText.partialAverageHidden)
-          : kpi?.mode === "unavailable" ? dailyText.overallScaleUnavailable : dailyText.paidReceiptBase,
-      },
-    ],
-    [dailyText, hasError, isLoading, summary, kpiPrefix, paidBaseMeta, kpi, includesOpen, subtotalMeta]
-  );
+  const summaryCards = [
+    {
+      label: withEmoji(SALES_UI_EMOJIS.totalSales, dailyText.totalSales),
+      value: isLoading
+        ? dailyText.loading
+        : hasError
+          ? dailyText.error
+          : formatVnd(kpi?.amount),
+      meta: compactKpi
+        ? compactMeta(statusMeta(summary?.totalSales, kpi?.openOrders?.open?.amount, formatVnd), kpi?.mode === "unavailable" ? paidBaseMeta : "")
+        : paidBaseMeta,
+    },
+    {
+      label: withEmoji(SALES_UI_EMOJIS.receipts, dailyText.receipts),
+      value: isLoading
+        ? dailyText.loading
+        : hasError
+          ? dailyText.error
+          : `${formatNumber(kpi?.receiptCount)}${dailyText.receiptCountSuffix}`,
+      meta: compactKpi
+        ? compactMeta(statusMeta(summary?.paidReceiptCount, kpi?.openOrders?.open?.orderCount,
+          (value) => `${formatNumber(value)}${dailyText.receiptCountSuffix}`, summary?.canceledReceiptCount), kpi?.mode === "unavailable" ? paidBaseMeta : "")
+        : `${paidBaseMeta} · ${dailyText.canceled} ${formatNumber(summary?.canceledReceiptCount)}${dailyText.receiptCountSuffix}`,
+    },
+    {
+      label: withEmoji(SALES_UI_EMOJIS.soldItems, dailyText.soldItems),
+      value: isLoading
+        ? dailyText.loading
+        : hasError
+          ? dailyText.error
+          : `${formatNumber(kpi?.menuLineCount)}${dailyText.itemCountSuffix}`,
+      meta: compactKpi
+        ? compactMeta(statusMeta(summary?.salesLineCount, kpi?.menuNeedsReview ? undefined : kpi?.openOrders?.open?.menuLineCount,
+          (value) => `${formatNumber(value)}${dailyText.itemCountSuffix}`), kpi?.menuNeedsReview ? dailyText.menuCountUnavailable : kpi?.mode === "unavailable" ? paidBaseMeta : "")
+        : `${paidBaseMeta} · ${dailyText.options} ${formatNumber(summary?.optionLineCount)}${dailyText.itemCountSuffix}${kpi?.menuNeedsReview ? ` · ${dailyText.menuCountUnavailable}` : ""}`,
+    },
+    {
+      label: withEmoji(
+        SALES_UI_EMOJIS.averageReceiptAmount,
+        dailyText.averageReceiptAmount
+      ),
+      value: isLoading
+        ? dailyText.loading
+        : hasError
+          ? dailyText.error
+          : kpi?.averageAmount === null
+            ? dailyText.currentAverageUnavailable
+            : formatVnd(kpi?.averageAmount),
+      meta: includesOpen
+        ? (kpi?.mode === "complete" ? ((kpi.openOrders?.open?.orderCount ?? 0) > 0 ? dailyText.compactProvisional : "") : dailyText.compactPartial)
+        : kpi?.mode === "unavailable" ? dailyText.overallScaleUnavailable : dailyText.paidReceiptBase,
+    },
+  ];
 
   const paymentRows = useMemo(
     () => [
@@ -718,7 +725,7 @@ function SummaryCard({
     <div style={summaryCardStyle}>
       <div style={summaryLabelStyle}>{label}</div>
       <div style={summaryValueStyle}>{value}</div>
-      <div style={summaryMetaStyle}>{meta}</div>
+      {meta && <div style={summaryMetaStyle}>{meta}</div>}
     </div>
   );
 }

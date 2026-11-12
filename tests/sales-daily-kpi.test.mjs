@@ -115,11 +115,11 @@ for (const lang of ['ko', 'vi']) {
     assert.equal((cards.match(/min-height:88px/g) ?? []).length, 4);
     assert.match(cards, /2\.100\.000/);
     assert.match(cards, /21/);
-    assert.ok(cards.includes(t.openOrdersAmount));
-    assert.ok(cards.includes(t.provisionalAverage));
+    assert.ok(cards.includes(t.kpiOpen));
+    assert.ok(cards.includes(t.compactProvisional));
     assert.ok(!html.includes(t.openOrdersTitle), 'no separate order KPI panel');
     const partial = renderDailySales(response(openKpi([...orders(), order(9, { Status: 7 })])), { lang });
-    assert.ok(dailyCards(partial).includes(t.knownSubtotal));
+    assert.ok(dailyCards(partial).includes(t.compactPartial));
     assert.ok(dailyCards(partial).includes(t.currentAverageUnavailable));
     for (const status of ['not_enabled', 'unavailable', 'stale', 'incomplete']) {
       const unavailable = renderDailySales(response({ ...openKpi(), status }), { lang });
@@ -176,3 +176,85 @@ test('runtime READ flag: only trimmed true enables central reads; disabled retur
     assert.equal(result.open?.orderCount ?? null, enabled ? 0 : null);
   }
 });
+
+for (const lang of ['ko', 'vi']) {
+  test(`${lang}: compact status cards hide zeros and empty meta without changing KPI values`, () => {
+    const t = salesText[lang].daily;
+    const common = salesText[lang].common;
+    const fmt = value => new Intl.NumberFormat('vi-VN').format(value);
+    const scenarios = [
+      { name: 'open only actual case', paid: 0, count: 0, menus: 0, canceled: 0, open: 1500000, orders: 2, lines: 8 },
+      { name: 'paid and open', paid: 500000, count: 3, menus: 5, canceled: 0, open: 1500000, orders: 2, lines: 8 },
+      { name: 'all statuses', paid: 500000, count: 3, menus: 5, canceled: 1, open: 1500000, orders: 2, lines: 8 },
+      { name: 'paid only', paid: 500000, count: 3, menus: 5, canceled: 0, open: 0, orders: 0, lines: 0 },
+      { name: 'all zero', paid: 0, count: 0, menus: 0, canceled: 0, open: 0, orders: 0, lines: 0 },
+      { name: 'canceled only', paid: 0, count: 0, menus: 0, canceled: 1, open: 0, orders: 0, lines: 0 },
+    ];
+    for (const s of scenarios) {
+      const paid = { totalSales: s.paid, receiptCount: s.count, paidReceiptCount: s.count,
+        salesLineCount: s.menus, canceledReceiptCount: s.canceled, optionLineCount: 0,
+        averageReceiptAmount: s.count ? Math.round(s.paid / s.count) : 0 };
+      const snapshot = { ...openKpi([]), paid: { amount: s.paid, receiptCount: s.count },
+        open: { amount: s.open, orderCount: s.orders, menuLineCount: s.lines, optionLineCount: 0, itemQuantity: s.lines },
+        provisional: { amount: s.paid + s.open, count: s.count + s.orders,
+          averageAmount: s.count + s.orders ? Math.round((s.paid + s.open) / (s.count + s.orders)) : 0 } };
+      const before = JSON.stringify({ paid, snapshot });
+      const kpi = model(snapshot, { summary: paid });
+      const cards = dailyCards(renderDailySales(response(snapshot, { summary: paid }), { lang }))
+        .split(/<div style="[^"]*min-height:88px[^"]*">/).slice(1);
+      assert.equal(cards.length, 4, s.name);
+      const expected = [
+        [[t.kpiPaid, s.paid], [t.kpiOpen, s.open]],
+        [[t.kpiPaid, s.count], [t.kpiOpen, s.orders], [t.kpiCanceled, s.canceled]],
+        [[t.kpiPaid, s.menus], [t.kpiOpen, s.lines]],
+      ];
+      for (let i = 0; i < 3; i++) {
+        for (const [label, value] of expected[i]) {
+          assert.equal(cards[i].includes(label + ' '), value > 0, `${s.name} card ${i}: ${label}`);
+        }
+        if (expected[i].every(([, value]) => value === 0)) {
+          assert.equal((cards[i].match(/<div style=/g) ?? []).length, 2, 'only label/value, no empty meta');
+        }
+        assert.ok(!cards[i].includes(t.optionsExcluded));
+        assert.ok(!cards[i].includes(common.currentPrefix));
+      }
+      assert.equal(cards[3].includes(t.compactProvisional), s.orders > 0);
+      if (!s.orders) assert.equal((cards[3].match(/<div style=/g) ?? []).length, 2);
+      for (const [i, value] of [kpi.amount, kpi.receiptCount, kpi.menuLineCount, kpi.averageAmount].entries()) {
+        assert.ok(cards[i].includes(fmt(value)), `${s.name} actual KPI ${i}`);
+      }
+      assert.equal(JSON.stringify({ paid, snapshot }), before, 'presentation leaves inputs untouched');
+      if (s.name === 'open only actual case') {
+        assert.deepEqual([kpi.amount, kpi.receiptCount, kpi.menuLineCount, kpi.averageAmount], [1500000, 2, 8, 750000]);
+        assert.match(cards[0], new RegExp(`${t.kpiOpen} 1\\.500\\.000\\s*₫`));
+        assert.ok(cards[1].includes(`${t.kpiOpen} 2${common.receiptCountSuffix}`));
+        assert.ok(cards[2].includes(`${t.kpiOpen} 8${common.itemCountSuffix}`));
+      }
+    }
+  });
+
+  test(`${lang}: unsafe snapshots never expose unverified status totals`, () => {
+    const t = salesText[lang].daily;
+    for (const status of ['not_enabled', 'unavailable', 'stale', 'incomplete']) {
+      const html = renderDailySales(response({ ...openKpi(), status }), { lang });
+      assert.ok(!dailyCards(html).includes(t.kpiOpen + ' '));
+      assert.ok(dailyCards(html).includes(t.currentAverageUnavailable));
+      assert.ok(html.includes(t.overallScaleUnavailable));
+    }
+    const menus = dailyCards(renderDailySales(response(openKpi([
+      order(12, { TotalAmount: 200000 }, [line(1), line(2), line(3, { Status: 6 })]),
+    ])), { lang })).split(/<div style="[^"]*min-height:88px[^"]*">/).slice(1);
+    assert.ok(!menus[2].includes(`${t.kpiOpen} 3${salesText[lang].common.itemCountSuffix}`));
+    assert.ok(menus[2].includes(t.menuCountUnavailable));
+    assert.ok(menus[3].includes(t.compactPartial));
+    assert.ok(menus[3].includes(t.currentAverageUnavailable));
+    for (const options of [{ live: false }, { live: true }]) {
+      const cards = dailyCards(renderDailySales(response(openKpi(), {
+        closeCheck: { status: options.live ? 'matched' : 'not_closed' },
+      }), { lang, ...options }));
+      assert.ok(cards.includes(salesText[lang].common.paidReceiptBase));
+      assert.ok(!cards.includes(t.kpiOpen + ' '));
+      assert.ok(!cards.includes(t.compactProvisional));
+    }
+  });
+}
