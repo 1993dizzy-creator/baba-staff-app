@@ -13,6 +13,7 @@ import { money } from "@/lib/payroll/ui-labels";
 import type { PayrollInsuranceSettingVersion } from "@/lib/payroll/insurance";
 import { formatInsuranceNote } from "@/lib/payroll/insurance-note";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
+import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -32,14 +33,22 @@ export type EmployeeInsuranceLoadState = {
   loading: boolean;
 };
 
+// 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
+function insuranceFormBaseline(setting: PayrollInsuranceSettingVersion | null) {
+  return { enrolled: setting?.isEnrolled ?? false, base: String(setting?.insuranceBaseAmount ?? 0), effectiveMonth: currentMonth(), note: "" };
+}
+
 export default function EmployeeInsuranceSettings({
   userId,
   vi,
   onLoadStateChange,
+  onDirtyChange,
 }: {
   userId: number;
   vi: boolean;
   onLoadStateChange?: (userId: number, state: EmployeeInsuranceLoadState) => void;
+  /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const mounted = useRef(true);
   const [history, setHistory] = useState<PayrollInsuranceSettingVersion[]>([]);
@@ -56,10 +65,11 @@ export default function EmployeeInsuranceSettings({
 
   const resetForm = useCallback(
     (setting: PayrollInsuranceSettingVersion | null) => {
-      setEnrolled(setting?.isEnrolled ?? false);
-      setBase(String(setting?.insuranceBaseAmount ?? 0));
-      setEffectiveMonth(currentMonth());
-      setNote("");
+      const baseline = insuranceFormBaseline(setting);
+      setEnrolled(baseline.enrolled);
+      setBase(baseline.base);
+      setEffectiveMonth(baseline.effectiveMonth);
+      setNote(baseline.note);
       setError("");
     },
     [],
@@ -132,6 +142,8 @@ export default function EmployeeInsuranceSettings({
       controller.abort();
     };
   }, [load, resetForm, userId, vi]);
+
+  useReportDirty(formOpen && (saving || formValuesChanged({ enrolled, base, effectiveMonth, note }, insuranceFormBaseline(current))), onDirtyChange);
 
   function openForm() {
     resetForm(current);

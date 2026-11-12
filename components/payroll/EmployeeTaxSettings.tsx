@@ -4,12 +4,27 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import type { PayrollTaxBurdenMode, PayrollTaxInsuranceDeductionMode, PayrollTaxMode, PayrollTaxSettingVersion } from "@/lib/payroll/tax";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
+import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 }
 
-export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistoryStateChange }: { userId: number; employeeName: string; vi: boolean; onHistoryStateChange?: (state: SettingHistoryState<PayrollTaxSettingVersion>) => void }) {
+// 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
+function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName: string) {
+  return {
+    taxMode: setting?.taxMode ?? "not_applicable",
+    dependentCount: String(setting?.dependentCount ?? 0),
+    burdenMode: setting?.burdenMode ?? "employee_deducted",
+    insuranceMode: setting?.insuranceDeductionMode ?? "none",
+    manualInsurance: String(setting?.manualInsuranceDeductionAmount ?? 0),
+    accountingName: setting?.accountingName ?? employeeName,
+    effectiveMonth: currentMonth(),
+    note: "",
+  };
+}
+
+export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistoryStateChange, onDirtyChange }: { userId: number; employeeName: string; vi: boolean; onHistoryStateChange?: (state: SettingHistoryState<PayrollTaxSettingVersion>) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const mounted = useRef(true);
   // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
   const reportHistoryRef = useRef(onHistoryStateChange);
@@ -31,14 +46,15 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   const [loaded, setLoaded] = useState(false);
 
   const resetForm = useCallback((setting: PayrollTaxSettingVersion | null) => {
-    setTaxMode(setting?.taxMode ?? "not_applicable");
-    setDependentCount(String(setting?.dependentCount ?? 0));
-    setBurdenMode(setting?.burdenMode ?? "employee_deducted");
-    setInsuranceMode(setting?.insuranceDeductionMode ?? "none");
-    setManualInsurance(String(setting?.manualInsuranceDeductionAmount ?? 0));
-    setAccountingName(setting?.accountingName ?? employeeName);
-    setEffectiveMonth(currentMonth());
-    setNote("");
+    const baseline = taxFormBaseline(setting, employeeName);
+    setTaxMode(baseline.taxMode);
+    setDependentCount(baseline.dependentCount);
+    setBurdenMode(baseline.burdenMode);
+    setInsuranceMode(baseline.insuranceMode);
+    setManualInsurance(baseline.manualInsurance);
+    setAccountingName(baseline.accountingName);
+    setEffectiveMonth(baseline.effectiveMonth);
+    setNote(baseline.note);
     setError("");
   }, [employeeName]);
 
@@ -74,6 +90,8 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
     void load(controller.signal);
     return () => { mounted.current = false; controller.abort(); };
   }, [load, resetForm]);
+
+  useReportDirty(formOpen && (saving || formValuesChanged({ taxMode, dependentCount, burdenMode, insuranceMode, manualInsurance, accountingName, effectiveMonth, note }, taxFormBaseline(current, employeeName))), onDirtyChange);
 
   async function submit(event: FormEvent) {
     event.preventDefault();

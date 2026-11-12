@@ -36,6 +36,7 @@ import EmployeePayrollSettingsPanel, { type EmployeePayrollPanelUser } from "@/c
 import type { MealAllowanceVersion } from "@/components/payroll/EmployeeMealAllowanceSettings";
 import { usePayrollContracts, type PayrollContractView, type PayrollContractsController } from "@/components/payroll/usePayrollContracts";
 import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
+import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 
 type UserRow = {
   id: number | string;
@@ -163,11 +164,14 @@ type PayrollFocusSection = "detail" | "payroll";
 /** 직원 목록 전체에서 급여·복리후생 패널은 한 번에 한 직원만 연다. */
 type PayrollSectionControl = {
   openUserId: string | null;
-  unsaved: boolean;
+  unsaved: PayrollUnsavedState;
+  /** 열린 급여 패널의 이탈 확인 문구(없으면 null). */
+  leaveMessage: string | null;
   initialFocusUserId: string | null;
   initialSection: PayrollFocusSection | null;
-  setOpen: (id: UserRow["id"], open: boolean) => void;
-  setUnsaved: (unsaved: boolean) => void;
+  /** 열린 패널을 닫게 되는 경우(접기·다른 직원 열기) 미저장 입력이 있으면 먼저 확인한다. 취소하면 false. */
+  setOpen: (id: UserRow["id"], open: boolean) => boolean;
+  setUnsaved: (state: PayrollUnsavedState) => void;
   onMealChanged: () => void;
 };
 
@@ -388,11 +392,15 @@ function UserCard({
   useEffect(() => {
     if (initialFocus) articleRef.current?.scrollIntoView({ block: "start" });
   }, [initialFocus]);
-  function hasUnsavedChanges() {
-    return userDraftChanged(user, draft) || levelDraftChanged(user, levelDraft, draft.hire_date) || (payrollOpen && payroll.unsaved);
+  function leaveMessage() {
+    const draftChanged = userDraftChanged(user, draft) || levelDraftChanged(user, levelDraft, draft.hire_date);
+    const payrollMessage = payrollOpen ? payroll.leaveMessage : null;
+    if (draftChanged && payrollMessage) return `${text.unsavedLeaveConfirm}\n\n${payrollMessage}`;
+    return payrollMessage ?? (draftChanged ? text.unsavedLeaveConfirm : null);
   }
   function openPayrollSettings() {
-    if (hasUnsavedChanges() && !window.confirm(text.unsavedLeaveConfirm)) return;
+    const message = leaveMessage();
+    if (message && !window.confirm(message)) return;
     // 뒤로가기로 돌아왔을 때 이 직원 상세(와 열려 있던 급여 영역)를 다시 열 수 있게 현재 위치를 기록한다.
     router.replace(`/admin/users?userId=${encodeURIComponent(String(user.id))}&section=${payrollOpen ? "payroll" : "detail"}`, { scroll: false });
     router.push(`/admin/payroll/settings?tab=employee&userId=${encodeURIComponent(String(user.id))}`);
@@ -402,8 +410,7 @@ function UserCard({
 
   function cancelEdit() {
     if (isSaving || savePending.current) return;
-    if (payrollOpen && payroll.unsaved && !window.confirm(text.unsavedLeaveConfirm)) return;
-    if (payrollOpen) payroll.setOpen(user.id, false);
+    if (payrollOpen && !payroll.setOpen(user.id, false)) return;
     setDraft(user);
     setLevelDraft(initialLevelPolicyDraft(user));
     setLevelModalOpen(false);
@@ -653,6 +660,8 @@ function UserCard({
                 savePending.current = true;
                 try {
                   if (await onSave(user, draft, levelDraft)) {
+                    // 급여·복리후생에 저장하지 않은 입력이 있으면 상세를 닫지 않아 입력을 보존한다.
+                    if (payrollOpen && hasPayrollUnsaved(payroll.unsaved)) return;
                     if (payrollOpen) payroll.setOpen(user.id, false);
                     setIsEditing(false);
                   }
@@ -745,7 +754,7 @@ function PayrollContractStatus({ user, draft, text, isSaving, contracts, showSum
 function PayrollBenefitsSection({ user, text, lang, open, onToggle, contracts, levelAction, isSaving, onUnsavedChange, onMealChanged, onOpenPayrollSettings }: {
   user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; open: boolean; onToggle: () => void;
   contracts: PayrollContractsController; levelAction: ReactNode; isSaving: boolean;
-  onUnsavedChange: (unsaved: boolean) => void; onMealChanged: () => void; onOpenPayrollSettings: () => void;
+  onUnsavedChange: (state: PayrollUnsavedState) => void; onMealChanged: () => void; onOpenPayrollSettings: () => void;
 }) {
   const panelId = useId();
   const lastMealHistory = useRef<string | null>(null);
@@ -1067,17 +1076,24 @@ export default function AdminUsersPage() {
     return { userId, section: userId ? (search.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null };
   });
   const [payrollOpenUserId, setPayrollOpenUserId] = useState<string | null>(initialFocus.section === "payroll" ? initialFocus.userId : null);
-  const [payrollUnsaved, setPayrollUnsaved] = useState(false);
+  const [payrollUnsaved, setPayrollUnsaved] = useState<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  const payrollLeave = payrollLeaveMessage(payrollUnsaved, lang === "vi");
+  // 새로고침·창 닫기와 메뉴 링크 이동에서도 급여 패널의 미저장 입력을 확인한다.
+  useLeaveGuard(payrollLeave);
   const refreshUsers = useCallback(() => setQueryAttempt(current => current + 1), []);
   const payrollControl: PayrollSectionControl = {
     openUserId: payrollOpenUserId,
     unsaved: payrollUnsaved,
+    leaveMessage: payrollLeave,
     initialFocusUserId: initialFocus.userId,
     initialSection: initialFocus.section,
     setOpen: (id, open) => {
       const key = String(id);
-      if (open && payrollOpenUserId !== null && payrollOpenUserId !== key && payrollUnsaved && !window.confirm(text.unsavedLeaveConfirm)) return;
+      // 지금 열린 패널이 닫히는 경우(같은 직원 접기, 다른 직원 열기)에만 확인한다.
+      const closesOpenPanel = payrollOpenUserId !== null && (open ? payrollOpenUserId !== key : payrollOpenUserId === key);
+      if (closesOpenPanel && payrollLeave && !window.confirm(payrollLeave)) return false;
       setPayrollOpenUserId(open ? key : current => (current === key ? null : current));
+      return true;
     },
     setUnsaved: setPayrollUnsaved,
     onMealChanged: refreshUsers,

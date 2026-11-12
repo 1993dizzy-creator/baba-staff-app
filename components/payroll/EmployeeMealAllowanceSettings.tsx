@@ -12,6 +12,7 @@ import {
 import { money } from "@/lib/payroll/ui-labels";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
+import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
 
 export type MealAllowanceVersion = {
   id: number;
@@ -31,6 +32,11 @@ type MealAllowanceState = {
   projectedMealAllowance: { amount: number; warningCode: "STANDARD_WORKDAYS_MISSING" | null };
 };
 
+// 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
+function mealFormBaseline(current: MealAllowanceVersion | null) {
+  return { isEligible: current?.isEligible ?? false, effectiveFrom: vietnamToday(), note: "" };
+}
+
 function vietnamToday() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
@@ -39,10 +45,13 @@ export default function EmployeeMealAllowanceSettings({
   userId,
   vi,
   onHistoryStateChange,
+  onDirtyChange,
 }: {
   userId: number;
   vi: boolean;
   onHistoryStateChange?: (state: SettingHistoryState<MealAllowanceVersion>) => void;
+  /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const mounted = useRef(true);
   // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
@@ -59,9 +68,10 @@ export default function EmployeeMealAllowanceSettings({
   const [blockedCode, setBlockedCode] = useState("");
 
   const resetForm = useCallback((current: MealAllowanceVersion | null) => {
-    setIsEligible(current?.isEligible ?? false);
-    setEffectiveFrom(vietnamToday());
-    setNote("");
+    const baseline = mealFormBaseline(current);
+    setIsEligible(baseline.isEligible);
+    setEffectiveFrom(baseline.effectiveFrom);
+    setNote(baseline.note);
     setError("");
     setBlockedCode("");
   }, []);
@@ -113,6 +123,8 @@ export default function EmployeeMealAllowanceSettings({
       controller.abort();
     };
   }, [load]);
+
+  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null))), onDirtyChange);
 
   function openForm() {
     resetForm(state?.current ?? null);

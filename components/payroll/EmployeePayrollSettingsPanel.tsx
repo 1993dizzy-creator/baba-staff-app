@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -36,6 +37,7 @@ import { contractSaveApplied, type SubmittedContractSave } from "@/lib/payroll/c
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
 import { isPayrollOwnerRole, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
+import { NO_PAYROLL_UNSAVED, readPendingContractSave, writePendingContractSave, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 
 export type EmployeePayrollPanelUser = {
   id: number;
@@ -138,8 +140,8 @@ export default function EmployeePayrollSettingsPanel({
   levelAction?: ReactNode;
   /** 계약·보험 첫 조회가 끝났는지(급여설정 화면의 선택 직원 스크롤용). */
   onSettledChange?: (settled: boolean, userId: number) => void;
-  /** 계약 등록·정정 창이 열려 있거나 저장 결과 확인 대기 중이면 true. */
-  onUnsavedChange?: (unsaved: boolean) => void;
+  /** 저장하지 않은 입력(계약·식대·개근·보험·세금)과 계약 저장 결과 확인 대기를 구분해 알린다. */
+  onUnsavedChange?: (state: PayrollUnsavedState) => void;
   onMealHistoryChange?: (state: SettingHistoryState<MealAllowanceVersion>) => void;
 }) {
   const l = lang;
@@ -151,7 +153,21 @@ export default function EmployeePayrollSettingsPanel({
   const [contractsReloading, setContractsReloading] = useState(false);
   const [notice, setNotice] = useState("");
   // 결과가 불확실한 계약 저장 요청. 반영 여부를 확인하기 전에는 같은 요청을 다시 보내지 않는다.
-  const [pendingContractSave, setPendingContractSave] = useState<SubmittedContractSave | null>(null);
+  // 직원별로 sessionStorage에도 남겨, 다른 화면·직원으로 갔다 와도 확인 전에는 새 저장을 막는다.
+  const [pendingContractSave, setPendingContractSaveState] = useState<SubmittedContractSave | null>(() => (typeof window === "undefined" ? null : readPendingContractSave(user.id)));
+  const setPendingContractSave = useCallback((submitted: SubmittedContractSave | null) => {
+    setPendingContractSaveState(submitted);
+    writePendingContractSave(user.id, submitted);
+  }, [user.id]);
+  // 계약 등록·정정 창을 열 때의 입력값(이후 실제로 바뀌었는지 판정용).
+  const [formBaseline, setFormBaseline] = useState("");
+  // 식대·개근·보험·세금 카드가 알려 준 미저장 입력.
+  const [cardDirty, setCardDirty] = useState<Record<"insurance" | "tax" | "meal" | "bonus", boolean>>({ insurance: false, tax: false, meal: false, bonus: false });
+  const cardDirtyReporters = useMemo(() => {
+    const reporter = (key: "insurance" | "tax" | "meal" | "bonus") => (dirty: boolean) =>
+      setCardDirty((previous) => (previous[key] === dirty ? previous : { ...previous, [key]: dirty }));
+    return { insurance: reporter("insurance"), tax: reporter("tax"), meal: reporter("meal"), bonus: reporter("bonus") };
+  }, []);
   const [form, setForm] = useState<FormState>(defaults);
   const [open, setOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "correct">("create");
@@ -213,9 +229,12 @@ export default function EmployeePayrollSettingsPanel({
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   const settled = !contractsLoading && !selectedInsuranceLoading;
   useEffect(() => { onSettledChange?.(settled, userId); }, [onSettledChange, settled, userId]);
-  const unsaved = open || pendingContractSave !== null;
-  useEffect(() => { onUnsavedChange?.(unsaved); }, [onUnsavedChange, unsaved]);
-  useEffect(() => () => { onUnsavedChange?.(false); }, [onUnsavedChange]);
+  // 창만 열고 바꾸지 않았으면 경고하지 않는다. 저장 중에는 결과가 오기 전이므로 미저장으로 본다.
+  const contractInputDirty = open && (saving || JSON.stringify(form) !== formBaseline || correctionReason.trim() !== "");
+  const unsavedInput = contractInputDirty || Object.values(cardDirty).some(Boolean);
+  const pendingVerification = pendingContractSave !== null;
+  useEffect(() => { onUnsavedChange?.({ input: unsavedInput, pendingVerification }); }, [onUnsavedChange, unsavedInput, pendingVerification]);
+  useEffect(() => () => { onUnsavedChange?.(NO_PAYROLL_UNSAVED); }, [onUnsavedChange]);
   const current = currentContract;
   // Same rule as the payroll engine: only monthly pay with the level raise enabled.
   const levelRaise = selected?.levelInfo.eligible
@@ -234,7 +253,9 @@ export default function EmployeePayrollSettingsPanel({
   function openForm() {
     if (pendingContractSave) return;
     const next = fromContract(current);
-    setForm(selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    const initialForm = selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next;
+    setForm(initialForm);
+    setFormBaseline(JSON.stringify(initialForm));
     setFormMode("create");
     setCorrectionTarget(null);
     setCorrectionReason("");
@@ -247,7 +268,9 @@ export default function EmployeePayrollSettingsPanel({
     const latest = contracts[0] ?? null;
     if (!latest) return;
     const next = { ...fromContract(latest), effectiveFrom: latest.effectiveFrom };
-    setForm(selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next);
+    const initialForm = selectedRequiresFixedMonthly ? { ...next, payType: "monthly", calculationBasis: "fixed_monthly", standardWorkdays: "26", standardHoursPerDay: "9" } : next;
+    setForm(initialForm);
+    setFormBaseline(JSON.stringify(initialForm));
     setFormMode("correct");
     setCorrectionTarget(latest);
     setCorrectionReason("");
@@ -485,6 +508,7 @@ export default function EmployeePayrollSettingsPanel({
           userId={selected.id}
           vi={vi}
           onLoadStateChange={handleInsuranceLoadStateChange}
+          onDirtyChange={cardDirtyReporters.insurance}
         />
       ) : (
         <aside style={s.directorNotice}>
@@ -497,14 +521,14 @@ export default function EmployeePayrollSettingsPanel({
       </div>
 
       <div id={anchor("tax")} style={s.anchorTarget}>
-        <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} onHistoryStateChange={setTaxHistoryState} />
+        <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} onHistoryStateChange={setTaxHistoryState} onDirtyChange={cardDirtyReporters.tax} />
       </div>
 
       <div id={anchor("meal")} style={s.anchorTarget}>
-        <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => { setMealHistoryState(state); onMealHistoryChange?.(state); }} />
+        <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => { setMealHistoryState(state); onMealHistoryChange?.(state); }} onDirtyChange={cardDirtyReporters.meal} />
       </div>
       <div id={anchor("bonus")} style={s.anchorTarget}>
-        <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={setBonusHistoryState} />
+        <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={setBonusHistoryState} onDirtyChange={cardDirtyReporters.bonus} />
       </div>
       {open && (
         <PayrollModal

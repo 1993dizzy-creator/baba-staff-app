@@ -94,10 +94,9 @@ test("employee selector has accessible selected styling and complete empty state
 
 test("employee insurance form is collapsed and resets from the current setting per employee", () => {
   assert.match(employeeInsurance, /const \[formOpen, setFormOpen\] = useState\(false\)/);
-  assert.match(employeeInsurance, /setEnrolled\(setting\?\.isEnrolled \?\? false\)/);
-  assert.match(employeeInsurance, /setBase\(String\(setting\?\.insuranceBaseAmount \?\? 0\)\)/);
-  assert.match(employeeInsurance, /setEffectiveMonth\(currentMonth\(\)\)/);
-  assert.match(employeeInsurance, /setNote\(""\)/);
+  // P0: the reset values live in insuranceFormBaseline (shared with the unsaved-input check); resetForm applies them.
+  assert.match(employeeInsurance, /return \{ enrolled: setting\?\.isEnrolled \?\? false, base: String\(setting\?\.insuranceBaseAmount \?\? 0\), effectiveMonth: currentMonth\(\), note: "" \};/);
+  assert.match(employeeInsurance, /const baseline = insuranceFormBaseline\(setting\);\n      setEnrolled\(baseline\.enrolled\);\n      setBase\(baseline\.base\);\n      setEffectiveMonth\(baseline\.effectiveMonth\);\n      setNote\(baseline\.note\);/);
   assert.match(employeeInsurance, /setFormOpen\(false\)/);
   assert.match(employeeInsurance, /resetForm\(null\)/);
   assert.match(employeeInsurance, /\[onLoadStateChange, resetForm, userId, vi\]/);

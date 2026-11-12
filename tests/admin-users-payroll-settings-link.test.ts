@@ -75,12 +75,14 @@ test("2차: the employee page mounts at most one collapsed payroll·benefits pan
 
 test("2차: two-way navigation keeps the selected employee and confirms before discarding unsaved edits", () => {
   assert.match(settings, /router\.push\(`\/admin\/users\?userId=\$\{id\}&section=payroll`\)/);
-  assert.match(settings, /if \(panelUnsaved && !window\.confirm\(leaveConfirmMessage\)\) return;/);
-  assert.match(settings, /if \(id !== userId && panelUnsaved && !window\.confirm\(leaveConfirmMessage\)\) return;/);
+  // P0: both exits go through confirmLeave(), which asks only when the panel has unsaved input or a pending save.
+  assert.match(settings, /function openEmployeeManagement\(id: number\) \{\n    if \(!confirmLeave\(\)\) return;/);
+  assert.match(settings, /const confirmLeave = \(\) => leaveMessage === null \|\| window\.confirm\(leaveMessage\);/);
   assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=\$\{payrollOpen \? "payroll" : "detail"\}`, \{ scroll: false \}\);/);
   assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
   assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
-  assert.match(panel, /const unsaved = open \|\| pendingContractSave !== null;/);
+  // P0: an open-but-unchanged form is no longer "unsaved"; pending verification is reported separately.
+  assert.match(panel, /const pendingVerification = pendingContractSave !== null;/);
   // Existing settings URLs keep working (no redirect away from the employee tab).
   assert.doesNotMatch(settings, /redirect\(|router\.replace\(`\/admin\/users/);
 });
@@ -94,7 +96,9 @@ test("contract/attendance mismatch reuses the payroll policy and only warns", ()
 test("payroll settings shortcut opens the existing employee tab with the same eligibility as its employee list", () => {
   assert.match(page, /router\.push\(`\/admin\/payroll\/settings\?tab=employee&userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}`\)/);
   assert.match(page, /user\.is_active === true && !user\.termination_date && isPayrollEligible\(user\)/);
-  assert.match(page, /hasUnsavedChanges\(\) && !window\.confirm\(text\.unsavedLeaveConfirm\)/);
+  // Unsaved employee edits (and, since P0, payroll input/pending saves) are confirmed before leaving.
+  assert.match(page, /const message = leaveMessage\(\);\n    if \(message && !window\.confirm\(message\)\) return;/);
+  assert.match(page, /return payrollMessage \?\? \(draftChanged \? text\.unsavedLeaveConfirm : null\);/);
   assert.match(settings, /const requestedUserIdParam = params\.get\("userId"\)/);
   assert.match(settings, /users\.some\(\(user\) => user\.id === requested\)/);
 });
@@ -104,4 +108,44 @@ test("new labels exist in KO and VI", () => {
     assert.equal((text.match(new RegExp(`\\b${key}:`, "g")) ?? []).length, 2, key);
   }
   assert.match(text, /근태 설정과 현재 급여계약이 다릅니다\. 급여설정에서 계약을 확인해야 합니다\./);
+});
+
+test("P0: each payroll setting card reports real unsaved input against the same baseline its form resets to", () => {
+  for (const [file, baseline] of [
+    ["EmployeeMealAllowanceSettings", "mealFormBaseline"],
+    ["EmployeeAttendanceBonusSettings", "bonusFormBaseline"],
+    ["EmployeeInsuranceSettings", "insuranceFormBaseline"],
+    ["EmployeeTaxSettings", "taxFormBaseline"],
+  ] as const) {
+    const source = read(`components/payroll/${file}.tsx`);
+    assert.ok(source.includes(`const baseline = ${baseline}(`), `${file}: resetForm uses the baseline`);
+    assert.match(source, new RegExp(`useReportDirty\\(formOpen && \\(saving \\|\\| formValuesChanged\\(\\{[^}]+\\}, ${baseline}\\(`), `${file}: dirty = open && (saving || changed)`);
+    assert.match(source, /onDirtyChange\?: \(dirty: boolean\) => void/, file);
+  }
+  const report = read("components/payroll/useReportDirty.ts");
+  assert.match(report, /useEffect\(\(\) => \(\) => \{ reportRef\.current\?\.\(false\); \}, \[\]\);/, "unmount clears the flag");
+});
+
+test("P0: the shared panel separates unsaved input from an unconfirmed contract save and keeps the latter per employee", () => {
+  assert.match(panel, /const contractInputDirty = open && \(saving \|\| JSON\.stringify\(form\) !== formBaseline \|\| correctionReason\.trim\(\) !== ""\);/);
+  for (const key of ["insurance", "tax", "meal", "bonus"]) assert.match(panel, new RegExp(`onDirtyChange=\\{cardDirtyReporters\\.${key}\\}`), key);
+  assert.match(panel, /onUnsavedChange\?\.\(\{ input: unsavedInput, pendingVerification \}\)/);
+  assert.match(panel, /useState<SubmittedContractSave \| null>\(\(\) => \(typeof window === "undefined" \? null : readPendingContractSave\(user\.id\)\)\)/);
+  assert.match(panel, /writePendingContractSave\(user\.id, submitted\);/);
+  // Existing duplicate-save protection is unchanged.
+  assert.match(panel, /if \(pendingContractSave\) return;\n    const correcting/);
+  assert.match(panel, /function openForm\(\) \{\n    if \(pendingContractSave\) return;/);
+});
+
+test("P0: both pages confirm before discarding payroll input, and guard reload/close and menu links without touching history", () => {
+  const unsaved = read("components/payroll/payrollUnsaved.ts");
+  assert.match(unsaved, /window\.addEventListener\("beforeunload", beforeUnload\)/);
+  assert.match(unsaved, /document\.addEventListener\("click", linkClick, true\)/);
+  assert.doesNotMatch(unsaved, /history\.(pushState|replaceState|go|back)/);
+  for (const source of [page, settings]) assert.match(source, /useLeaveGuard\(/);
+  assert.match(settings, /if \(tab !== activeTab && !confirmLeave\(\)\) return;/);
+  assert.match(settings, /if \(id !== userId && !confirmLeave\(\)\) return;/);
+  assert.match(page, /if \(closesOpenPanel && payrollLeave && !window\.confirm\(payrollLeave\)\) return false;/);
+  assert.match(page, /if \(payrollOpen && !payroll\.setOpen\(user\.id, false\)\) return;/);
+  assert.match(page, /if \(payrollOpen && hasPayrollUnsaved\(payroll\.unsaved\)\) return;/);
 });

@@ -13,6 +13,7 @@ import EmployeeNameWithLevel from "@/components/employee/EmployeeNameWithLevel";
 import PayrollCommonSettings from "@/components/payroll/PayrollCommonSettings";
 import EmployeePayrollSettingsPanel from "@/components/payroll/EmployeePayrollSettingsPanel";
 import { usePayrollContracts } from "@/components/payroll/usePayrollContracts";
+import { NO_PAYROLL_UNSAVED, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { resolveSettingsSummaryReference } from "@/lib/payroll/settings-summary";
 import { useLanguage } from "@/lib/language-context";
 import {
@@ -59,21 +60,24 @@ export default function PayrollSettingsPage() {
   const [query, setQuery] = useState("");
   // 선택 직원 패널의 첫 조회 완료 여부와 미확정 계약 편집(등록·정정 창, 저장 결과 확인 대기) 여부.
   const [panelSettled, setPanelSettled] = useState<{ userId: number; settled: boolean } | null>(null);
-  const [panelUnsaved, setPanelUnsaved] = useState(false);
+  const [panelUnsaved, setPanelUnsaved] = useState<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
   const employeeSettingsRef = useRef<HTMLDivElement>(null);
   const pendingScrollUserIdRef = useRef<number | null>(null);
   // 계약 조회는 선택 직원 1명만, 직원 탭에서만 한다(공용 훅: 직원 변경 시 이전 요청 중단·늦은 응답 무시).
   const contractsSource = usePayrollContracts(activeTab === "employee" ? userId : null);
-  const leaveConfirmMessage = vi
-    ? "Hợp đồng lương đang chỉnh sửa hoặc chưa xác nhận kết quả lưu. Vẫn chuyển đi?"
-    : "급여계약 편집 중이거나 저장 결과를 아직 확인하지 않았습니다. 이동할까요?";
+  // 선택 직원 패널의 미저장 입력·저장 결과 확인 대기. 없으면 null(경고 없음).
+  const leaveMessage = payrollLeaveMessage(panelUnsaved, vi);
+  const confirmLeave = () => leaveMessage === null || window.confirm(leaveMessage);
+  useLeaveGuard(leaveMessage);
   function changeTab(tab: "common" | "employee") {
+    // 공통 탭으로 가면 직원 패널이 사라지므로 미저장 입력을 먼저 확인한다.
+    if (tab !== activeTab && !confirmLeave()) return;
     const next = new URLSearchParams(params.toString());
     next.set("tab", tab);
     router.replace(`${pathname}?${next}`, { scroll: false });
   }
   function selectUser(id: number) {
-    if (id !== userId && panelUnsaved && !window.confirm(leaveConfirmMessage)) return;
+    if (id !== userId && !confirmLeave()) return;
     pendingScrollUserIdRef.current = id;
     setScrollRequestVersion((version) => version + 1);
     setEmployeeListOpen(false);
@@ -161,7 +165,7 @@ export default function PayrollSettingsPage() {
     return () => cancelAnimationFrame(frame);
   }, [employeeListOpen, scrollRequestVersion, selectedId, selectedPanelSettled]);
   function openEmployeeManagement(id: number) {
-    if (panelUnsaved && !window.confirm(leaveConfirmMessage)) return;
+    if (!confirmLeave()) return;
     // 직원관리에서 이 직원의 상세와 급여·복리후생 영역을 연다(뒤로가기로 이 화면에 돌아온다).
     router.push(`/admin/users?userId=${id}&section=payroll`);
   }
