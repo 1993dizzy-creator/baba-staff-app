@@ -1,0 +1,26 @@
+export const tablesText = {
+  ko: {
+    title: "매장현황", refresh: "새로고침", loading: "매장현황 확인 중…", failed: "현황을 확인할 수 없습니다. 다시 확인해 주세요.",
+    total: "전체 테이블", occupied: "사용 중", reserved: "예약", paid: "결제완료", free: "확인된 빈자리", unknown: "미확인",
+    bar: "BAR", floor1: "1층", floor2: "2층", updated: "주문 수집", catalogUpdated: "테이블 목록 수집", businessDate: "영업일",
+    noCatalog: "테이블 목록 확인 전입니다. 빈자리는 현장에서 확인해 주세요.", noArea: "확인된 테이블 목록 없음",
+    uncertain: "일부 현황 미확인 · 빈자리로 안내하지 마세요.", delayed: "주문 수집 지연·오류 · 현장에서 확인해 주세요.",
+    legendFree: "빈자리", pendingVerification: "예약·결제완료·빈자리는 확인 전입니다.",
+    unlinked: "테이블 미연결 주문", barUnlinked: "BAR · 연결 확인 필요", details: "테이블 상세", close: "닫기",
+    order: "주문", orders: "진행 주문", started: "주문 시작", collected: "마지막 수집", estimate: "주문 예상금액",
+    menu: "메뉴", quantity: "수량", price: "단가", amount: "합계", option: "옵션", canceled: "취소", detailsReview: "메뉴 상세 확인 필요",
+    noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
+  },
+  vi: {
+    title: "Tình hình cửa hàng", refresh: "Làm mới", loading: "Đang kiểm tra cửa hàng…", failed: "Chưa xác định được hiện trạng. Vui lòng thử lại.",
+    total: "Tổng số bàn", occupied: "Đang sử dụng", reserved: "Đặt trước", paid: "Đã thanh toán", free: "Bàn trống đã xác nhận", unknown: "Chưa rõ",
+    bar: "BAR", floor1: "Tầng 1", floor2: "Tầng 2", updated: "Thu thập đơn", catalogUpdated: "Thu thập danh sách bàn", businessDate: "Ngày kinh doanh",
+    noCatalog: "Chưa xác nhận danh sách bàn. Hãy kiểm tra bàn trống tại chỗ.", noArea: "Chưa có danh sách bàn đã xác nhận",
+    uncertain: "Một số bàn chưa rõ · Không hướng dẫn là bàn trống.", delayed: "Dữ liệu đơn chậm hoặc lỗi · Hãy kiểm tra tại chỗ.",
+    legendFree: "Bàn trống", pendingVerification: "Chưa xác nhận đặt trước, thanh toán và bàn trống.",
+    unlinked: "Đơn chưa liên kết bàn", barUnlinked: "BAR · Cần kiểm tra liên kết", details: "Chi tiết bàn", close: "Đóng",
+    order: "Đơn", orders: "Đơn đang mở", started: "Bắt đầu", collected: "Thu thập gần nhất", estimate: "Ước tính của đơn",
+    menu: "Món", quantity: "SL", price: "Đơn giá", amount: "Thành tiền", option: "Tùy chọn", canceled: "Đã hủy", detailsReview: "Cần kiểm tra chi tiết món",
+    noOrders: "Chưa có đơn đang mở được xác nhận · Không có nghĩa là bàn trống", noLines: "Chưa xác nhận chi tiết món", historical: "Theo lần thu thập gần nhất · Cần kiểm tra hiện trạng",
+  },
+} as const;
