@@ -129,22 +129,27 @@ test("users page: UserRow carries mealAllowanceEligible from the API response", 
   assert.match(usersPage, /mealAllowanceEligible: boolean;/);
 });
 
-test("users page: the 🍚 badge renders only when mealAllowanceEligible is true, and is placed next to the name/level, before the role text — not a new separate section", () => {
+// 2026-11 목록 카드 개편: 이름 옆의 직원 API 기준 🍚 배지를 없애고, 둘째 줄에 급여관리와 같은 판정의
+// 적용 아이콘(💯·🍚·🛡️·TNCN)을 보여 준다. 🍚는 급여관리 overview의 식대 대상(월 기준)에서 온다.
+test("users page: the name row no longer shows its own 🍚 badge; 🍚 comes from the payroll applicability icons in the second row", () => {
   const cardIndex = usersPage.indexOf("function UserCard(");
   const rowTitleIndex = usersPage.indexOf("styles.rowTitle", cardIndex);
-  const badgeIndex = usersPage.indexOf("user.mealAllowanceEligible ? (", cardIndex);
   const rowPositionIndex = usersPage.indexOf("styles.rowPosition", cardIndex);
-  assert.ok(rowTitleIndex > -1 && badgeIndex > -1 && rowPositionIndex > -1);
-  assert.ok(rowTitleIndex < badgeIndex && badgeIndex < rowPositionIndex, "badge must sit inside rowTitle, before the role text");
-  assert.match(usersPage, /🍚/);
+  assert.ok(rowTitleIndex > -1 && rowPositionIndex > rowTitleIndex);
+  assert.equal(usersPage.indexOf("user.mealAllowanceEligible ? (", cardIndex), -1, "no name-row meal badge");
+  assert.ok(usersPage.indexOf("styles.rowSub", cardIndex) > rowPositionIndex, "icons live in the second row");
+  assert.match(usersPage, /mealAllowanceEligible: mealUserIds\.has\(userId\)/);
+  const icons = read("lib/payroll/applicability-icons.ts");
+  assert.match(icons, /if \(badge\.key === "meal"\) icons\.push\(\{ key: "meal", symbol: "🍚", description: badge\.description \}\)/);
 });
 
-test("users page: badge carries a bilingual title/aria-label instead of being decoration-only", () => {
-  assert.match(usersPage, /title=\{text\.mealAllowanceEligibleBadge\} aria-label=\{text\.mealAllowanceEligibleBadge\}/);
+test("users page: every applicability icon carries a bilingual title/aria-label instead of being decoration-only", () => {
+  assert.match(usersPage, /title=\{icon\.description\} aria-label=\{icon\.description\}>\{icon\.symbol\}/);
 });
 
-test("users page: badge style stays compact (small font, no extra layout height) — does not introduce a bulky new block", () => {
-  assert.match(usersPage, /mealBadge: \{\s*fontSize: 12,\s*lineHeight: 1,\s*flexShrink: 0,\s*\}/);
+test("users page: the icon row stays compact (small font, same row as the work time) — does not introduce a bulky new block", () => {
+  assert.match(usersPage, /rowSub: \{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4, minWidth: 0 \}/);
+  assert.match(usersPage, /payrollIcon: \{ display: "inline-flex", alignItems: "center", color: "#475569", fontSize: 13, lineHeight: 1\.3 \}/);
 });
 
 test("admin-users text: bilingual label exists for the meal allowance badge tooltip, and never implies extra personal cash payout ('지급'/'nhận')", () => {

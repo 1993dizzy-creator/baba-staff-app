@@ -37,6 +37,8 @@ import type { MealAllowanceVersion } from "@/components/payroll/EmployeeMealAllo
 import { usePayrollContracts, type PayrollContractView, type PayrollContractsController } from "@/components/payroll/usePayrollContracts";
 import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
+import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
+import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
 
 type UserRow = {
   id: number | string;
@@ -173,7 +175,51 @@ type PayrollSectionControl = {
   setOpen: (id: UserRow["id"], open: boolean) => boolean;
   setUnsaved: (state: PayrollUnsavedState) => void;
   onMealChanged: () => void;
+  /** 목록 둘째 줄의 급여 적용 아이콘(급여관리 overview 1회 조회 결과). */
+  applicability: (id: UserRow["id"]) => PayrollIconsForUser;
 };
+
+/**
+ * 급여관리 overview(이번 베트남 월) 1회 조회에서 아이콘 판정에 필요한 값만 보관한다.
+ * 조회 전·실패는 "미적용"과 구분한다.
+ */
+type PayrollApplicabilityState =
+  | { status: "loading" }
+  | { status: "error" }
+  | {
+      status: "ready";
+      month: string;
+      future: boolean;
+      monthClosed: boolean;
+      mealUserIds: ReadonlySet<number>;
+      bonusUserIds: ReadonlySet<number>;
+      employees: ReadonlyMap<number, PayrollApplicabilityEmployee>;
+    };
+type PayrollIconsForUser =
+  | { status: "loading" | "error" }
+  | { status: "ready"; icons: PayrollApplicabilityIcon[] };
+
+function minimalPayrollApplicability(month: string, data: Record<string, unknown>): PayrollApplicabilityState {
+  const employees = new Map<number, PayrollApplicabilityEmployee>();
+  for (const raw of data.employees as Array<Record<string, unknown>>) {
+    const userId = Number(raw.userId);
+    const tax = raw.tax as { status?: unknown; taxMode?: unknown } | null | undefined;
+    const standing = raw.attendanceStanding as { perfectAttendanceCurrent?: unknown } | null | undefined;
+    const incentives = Array.isArray(raw.automaticIncentives) ? raw.automaticIncentives as Array<{ category?: unknown; sourceSnapshot?: Record<string, unknown> }> : [];
+    employees.set(userId, {
+      userId,
+      insuranceEnrolled: raw.insuranceEnrolled === true,
+      tax: tax ? { status: String(tax.status ?? ""), taxMode: tax.taxMode == null ? null : String(tax.taxMode) } : null,
+      attendanceStanding: standing ? { perfectAttendanceCurrent: standing.perfectAttendanceCurrent === true } : null,
+      automaticIncentives: incentives.map((item) => ({ category: String(item.category ?? ""), sourceSnapshot: { payrollMonth: item.sourceSnapshot?.payrollMonth } })),
+    });
+  }
+  const ids = (value: unknown) => new Set(Array.isArray(value) ? value.map(Number) : []);
+  return {
+    status: "ready", month, future: data.future === true, monthClosed: data.monthClosed === true,
+    mealUserIds: ids(data.mealAllowanceEligibleUserIds), bonusUserIds: ids(data.attendanceBonusEligibleUserIds), employees,
+  };
+}
 
 const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
 const partOptions = PART_VALUES;
@@ -377,7 +423,13 @@ function UserCard({
   const isAdminGroupUser = isOwnerGroupUser(user);
   const positionText = getEmployeeRoleLabel(user.role, lang);
   const nameText = `${displayName}${age ? ` (${age})` : ""}`;
-  const workTime = !isAdminGroupUser && !user.termination_date ? formatWorkTime(user) : "";
+  // 근무시간이 저장되지 않은 직원(근태 미사용 등)은 "---" 자리 표시 없이 비워 둔다.
+  const workTime = !isAdminGroupUser && !user.termination_date && (user.work_start_time || user.work_end_time) ? formatWorkTime(user) : "";
+  const applicability = payroll.applicability(user.id);
+  const applicabilityIcons = applicability.status === "ready" ? applicability.icons : [];
+  // 조회 전·실패 표시는 급여 대상 후보에게만 보여 준다(그 외 계정은 급여관리에도 아이콘이 없다).
+  const applicabilityPending = applicability.status !== "ready" && !user.is_system_account && isPayrollEligible(user);
+  const hasSecondRow = applicabilityIcons.length > 0 || applicabilityPending || Boolean(workTime) || Boolean(user.termination_date);
   const roleValue = isRoleOption(draft.role) ? draft.role : "staff";
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
   const hasLevelEditor = !user.is_system_account;
@@ -427,15 +479,10 @@ function UserCard({
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>
             <EmployeeNameWithLevel name={nameText} levelInfo={user.levelInfo} lang={lang} nameStyle={styles.rowName} showDisabledBadge />
-            {user.mealAllowanceEligible ? (
-              <span style={styles.mealBadge} title={text.mealAllowanceEligibleBadge} aria-label={text.mealAllowanceEligibleBadge}>🍚</span>
-            ) : null}
             <span style={styles.rowPosition}> · {positionText}</span>
           </span>
         </div>
         <div style={styles.badgeRow}>
-          {workTime ? <span style={styles.workTimeText}>{workTime}</span> : null}
-          {user.termination_date ? <span style={styles.lockedBadge}>{text.terminatedOn} {user.termination_date}</span> : null}
           {!user.is_system_account ? (
             <button
               type="button"
@@ -457,7 +504,21 @@ function UserCard({
         </div>
       </div>
 
-      {hasLevelEditor ? <LevelSummary user={user} text={text} /> : null}
+      {hasSecondRow ? (
+        <div style={styles.rowSub}>
+          <span style={styles.payrollIcons} role="group" aria-label={text.payrollIconsGroup}>
+            {applicabilityPending && applicability.status === "loading" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsLoading} aria-label={text.payrollIconsLoading}>…</span> : null}
+            {applicabilityPending && applicability.status === "error" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsUnavailable} aria-label={text.payrollIconsUnavailable}>{text.payrollIconsUnavailableShort}</span> : null}
+            {applicabilityIcons.map((icon) => (
+              <span key={icon.key} role={icon.key === "tax" ? undefined : "img"} style={icon.key === "tax" ? { ...styles.payrollIcon, ...styles.payrollTaxIcon } : styles.payrollIcon} title={icon.description} aria-label={icon.description}>{icon.symbol}</span>
+            ))}
+          </span>
+          {workTime || user.termination_date ? <span style={styles.rowSubRight}>
+            {workTime ? <span style={styles.workTimeText}>{workTime}</span> : null}
+            {user.termination_date ? <span style={styles.lockedBadge}>{text.terminatedOn} {user.termination_date}</span> : null}
+          </span> : null}
+        </div>
+      ) : null}
 
       {isEditing ? (
         <fieldset disabled={isSaving} style={styles.formGrid}>
@@ -601,6 +662,8 @@ function UserCard({
             <strong>{text.longTermLevel}</strong>
             <LevelDetails levelInfo={user.levelInfo} text={text} />
             {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
+            {/* 목록의 레벨 일정 줄을 없애면서, 그 줄에만 있던 월 기준 전환 안내를 이 영역(레벨 설정 버튼 옆)으로 옮긴다. 조건은 기존과 같다. */}
+            {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
             <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={() => setLevelModalOpen(true)}>{text.levelSettings}</button>
             {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
             {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
@@ -1011,30 +1074,6 @@ function LevelHistoryView({ history, currentInfo, terminationDate, pending, text
     </section>;
 }
 
-function LevelSummary({ user, text }: { user: UserRow; text: AdminUsersPageText }) {
-  const info = user.levelInfo;
-  if (!info.eligible || !info.displayLabel) {
-    const label = info.reason === "PROGRAM_DISABLED" ? text.levelProgramDisabled
-      : info.reason === "MISSING_BASE_DATE" ? text.levelBaseRequired
-      : info.reason === "ROLE_NOT_ELIGIBLE" ? text.levelRoleNotEligible
-      : info.reason === "BEFORE_BASE_DATE" ? text.levelBeforeBaseDate
-      : info.reason === "INVALID_DATE" ? text.levelInvalidDate : text.levelUnset;
-    return <div style={styles.levelSummary}>{label}</div>;
-  }
-  if (!isEmployeeLevelMonthBaseMode(info.baseDateSource)) {
-    return <div style={styles.levelSummary}>{text.levelMonthTransitionRequired}</div>;
-  }
-  const baseLabel = `${text.levelBaseMonth} ${info.baseMonth ?? info.baseDate?.slice(0, 7) ?? "-"}`;
-  const nextLabel = info.nextLevelDate
-    ? `${text.nextLevelShort} Lv.${Math.min(7, (info.level ?? 0) + 1)} ${info.nextLevelDate}`
-    : text.highestLevel;
-  return (
-    <div style={styles.levelSummary}>
-      <span>{baseLabel} · {nextLabel}</span>
-    </div>
-  );
-}
-
 /** Current policy stays compact; comparisons belong in the settings modal. */
 function LevelDetails({ levelInfo, text }: { levelInfo: EmployeeLevelInfo; text: AdminUsersPageText }) {
   if (!levelInfo.eligible) return null;
@@ -1068,6 +1107,7 @@ export default function AdminUsersPage() {
   const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
   const [queryError, setQueryError] = useState<"login" | "forbidden" | "fetch" | null>(null);
   const [queryAttempt, setQueryAttempt] = useState(0);
+  const [payrollApplicability, setPayrollApplicability] = useState<PayrollApplicabilityState>({ status: "loading" });
   // ?userId=&section= (급여설정의 "직원관리로 이동"·뒤로가기 복귀): 해당 직원 상세를 열어 둔다.
   const [initialFocus] = useState(() => {
     if (typeof window === "undefined") return { userId: null as string | null, section: null as PayrollFocusSection | null };
@@ -1097,6 +1137,10 @@ export default function AdminUsersPage() {
     },
     setUnsaved: setPayrollUnsaved,
     onMealChanged: refreshUsers,
+    applicability: (id) => payrollApplicability.status !== "ready" || !payrollIconsByUser
+      ? { status: payrollApplicability.status === "error" ? "error" : "loading" }
+      // 급여관리 overview에 없는 직원(급여 대상이 아닌 계정)은 급여관리 카드도 없으므로 아이콘이 없다.
+      : { status: "ready", icons: payrollIconsByUser.get(Number(id)) ?? [] },
   };
   const loadFailedTextRef = useRef(text.loadFailed);
   loadFailedTextRef.current = text.loadFailed;
@@ -1115,6 +1159,23 @@ export default function AdminUsersPage() {
     if (!checked || !canAccess) return;
 
     let cancelled = false;
+    const applicabilityController = new AbortController();
+
+    // 급여관리와 같은 판정을 위해 기존 overview API를 이번 베트남 월로 1회만 읽는다(직원별 요청 없음).
+    // 목록 조회가 끝난 뒤 시작해 목록 표시·병렬 prefetch를 늦추지 않는다.
+    async function fetchPayrollApplicability() {
+      const month = vietnamCurrentMonthStart().slice(0, 7);
+      setPayrollApplicability({ status: "loading" });
+      try {
+        const res = await attendanceFetch(`/api/admin/payroll/overview?month=${month}`, { cache: "no-store", signal: applicabilityController.signal });
+        const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+        if (cancelled) return;
+        if (!res.ok || !data || data.ok !== true || data.month !== month || !Array.isArray(data.employees)) throw new Error("PAYROLL_OVERVIEW_READ_FAILED");
+        setPayrollApplicability(minimalPayrollApplicability(month, data));
+      } catch {
+        if (!cancelled) setPayrollApplicability({ status: "error" });
+      }
+    }
 
     async function fetchUsers() {
       setIsLoading(true);
@@ -1137,6 +1198,7 @@ export default function AdminUsersPage() {
         if (!cancelled) {
           setUsers(result.users || []);
           setHasLoadedUsers(true);
+          void fetchPayrollApplicability();
         }
       } catch {
         if (!cancelled) {
@@ -1153,8 +1215,18 @@ export default function AdminUsersPage() {
 
     return () => {
       cancelled = true;
+      applicabilityController.abort();
     };
   }, [canAccess, checked, queryAttempt]);
+  const payrollIconsByUser = useMemo(() => {
+    if (payrollApplicability.status !== "ready") return null;
+    const { month, future, monthClosed, mealUserIds, bonusUserIds, employees } = payrollApplicability;
+    return new Map([...employees].map(([userId, employee]) => [userId, payrollApplicabilityIcons({
+      employee, month, future, monthClosed, lang,
+      attendanceBonusEligible: bonusUserIds.has(userId),
+      mealAllowanceEligible: mealUserIds.has(userId),
+    })]));
+  }, [lang, payrollApplicability]);
 
   const activeEmployeeCount = useMemo(
     () =>
@@ -1505,11 +1577,6 @@ const styles = {
     fontWeight: 700,
     color: "#6b7280",
   },
-  mealBadge: {
-    fontSize: 12,
-    lineHeight: 1,
-    flexShrink: 0,
-  },
   identity: {
     display: "flex",
     flexDirection: "column",
@@ -1534,6 +1601,12 @@ const styles = {
     flexShrink: 0,
     flexWrap: "wrap",
   },
+  rowSub: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4, minWidth: 0 },
+  payrollIcons: { display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: 4, minWidth: 0 },
+  payrollIcon: { display: "inline-flex", alignItems: "center", color: "#475569", fontSize: 13, lineHeight: 1.3 },
+  payrollTaxIcon: { fontSize: 11, fontWeight: 800 },
+  payrollIconsMuted: { color: "#9ca3af", fontSize: 11, fontWeight: 700, lineHeight: 1.3 },
+  rowSubRight: { display: "inline-flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 4, marginLeft: "auto", flexShrink: 0 },
   workTimeText: {
     fontSize: 11,
     fontWeight: 800,

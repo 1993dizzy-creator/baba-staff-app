@@ -193,8 +193,9 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   assert.match(page, /text\.nextLevelShort/);
   assert.match(page, /text\.highestLevel/);
   // Current details stay compact; salary comparisons live in the settings modal.
-  const summaryBody = page.slice(page.indexOf("function LevelSummary("), page.indexOf("function LevelDetails("));
-  assert.doesNotMatch(summaryBody, /cumulativeRaiseAmount/);
+  // 2026-11: the list card no longer renders a level schedule line (LevelSummary removed);
+  // the level badge stays and the schedule lives in the employee detail.
+  assert.doesNotMatch(page, /function LevelSummary\(|<LevelSummary /);
   const detailsBody = page.slice(page.indexOf("function LevelDetails("), page.indexOf("function Field("));
   assert.match(detailsBody, /levelInfo\.nextLevelDate/);
   assert.doesNotMatch(detailsBody, /cumulativeRaiseAmount/);

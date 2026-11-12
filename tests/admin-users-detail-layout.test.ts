@@ -100,7 +100,7 @@ for (const [name, page] of [
 }
 
 test("level modal initializes legacy employees with a month candidate and offers month bases only", () => {
-  const modal = listPage.slice(listPage.indexOf("function LevelSettingsModal("), listPage.indexOf("function LevelSummary("));
+  const modal = listPage.slice(listPage.indexOf("function LevelSettingsModal("), listPage.indexOf("function LevelHistoryView("));
   assert.match(modal, /const baseModeOptions = \["hire_month", "override_month"\] as const/);
   assert.match(modal, /employeeLevelMonthCandidate/);
   assert.doesNotMatch(modal, /text\.levelLegacyReadOnly/);
