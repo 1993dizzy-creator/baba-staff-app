@@ -168,9 +168,10 @@ type PayrollFocusSection = "detail" | "payroll";
 /** 직원 목록 전체에서 급여·복리후생 패널은 한 번에 한 직원만 연다. */
 type PayrollSectionControl = {
   openUserId: string | null;
-  unsaved: PayrollUnsavedState;
-  /** 열린 급여 패널의 이탈 확인 문구(없으면 null). */
-  leaveMessage: string | null;
+  /** 호출 시점의 최신 미저장 상태(패널이 알린 값을 ref로 즉시 반영). */
+  unsaved: () => PayrollUnsavedState;
+  /** 열린 급여 패널의 이탈 확인 문구(없으면 null). 호출 시점의 최신 미저장 상태로 만든다. */
+  leaveMessage: () => string | null;
   initialFocusUserId: string | null;
   initialSection: PayrollFocusSection | null;
   /** 열린 패널을 닫게 되는 경우(접기·다른 직원 열기) 미저장 입력이 있으면 먼저 확인한다. 취소하면 false. */
@@ -468,7 +469,7 @@ function UserCard({
   }, [initialFocus]);
   function leaveMessage() {
     const draftChanged = userDraftChanged(user, draft) || levelDraftChanged(user, levelDraft, draft.hire_date);
-    const payrollMessage = payrollOpen ? payroll.leaveMessage : null;
+    const payrollMessage = payrollOpen ? payroll.leaveMessage() : null;
     if (draftChanged && payrollMessage) return `${text.unsavedLeaveConfirm}\n\n${payrollMessage}`;
     return payrollMessage ?? (draftChanged ? text.unsavedLeaveConfirm : null);
   }
@@ -746,7 +747,7 @@ function UserCard({
                 try {
                   if (await onSave(user, draft, levelDraft)) {
                     // 급여·복리후생에 저장하지 않은 입력이 있으면 상세를 닫지 않아 입력을 보존한다.
-                    if (payrollOpen && hasPayrollUnsaved(payroll.unsaved)) return;
+                    if (payrollOpen && hasPayrollUnsaved(payroll.unsaved())) return;
                     if (payrollOpen) payroll.setOpen(user.id, false);
                     setIsEditing(false);
                   }
@@ -1227,22 +1228,30 @@ export default function AdminUsersPage() {
     return { userId, section: userId ? (search.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null };
   });
   const [payrollOpenUserId, setPayrollOpenUserId] = useState<string | null>(initialFocus.section === "payroll" ? initialFocus.userId : null);
-  const [payrollUnsaved, setPayrollUnsaved] = useState<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  const [payrollUnsaved, setPayrollUnsavedState] = useState<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  // 이탈 확인은 패널이 알린 최신 값(ref)으로 한다. 입력 직후의 Escape·닫기·이동도 다음 렌더를 기다리지 않고 판단한다.
+  const payrollUnsavedRef = useRef<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  const setPayrollUnsaved = useCallback((state: PayrollUnsavedState) => {
+    payrollUnsavedRef.current = state;
+    setPayrollUnsavedState(state);
+  }, []);
   const payrollLeave = payrollLeaveMessage(payrollUnsaved, lang === "vi");
+  const latestPayrollLeave = () => payrollLeaveMessage(payrollUnsavedRef.current, lang === "vi");
   // 새로고침·창 닫기와 메뉴 링크 이동에서도 급여 패널의 미저장 입력을 확인한다.
-  useLeaveGuard(payrollLeave);
+  useLeaveGuard(payrollLeave, latestPayrollLeave);
   const refreshUsers = useCallback(() => setQueryAttempt(current => current + 1), []);
   const payrollControl: PayrollSectionControl = {
     openUserId: payrollOpenUserId,
-    unsaved: payrollUnsaved,
-    leaveMessage: payrollLeave,
+    unsaved: () => payrollUnsavedRef.current,
+    leaveMessage: latestPayrollLeave,
     initialFocusUserId: initialFocus.userId,
     initialSection: initialFocus.section,
     setOpen: (id, open) => {
       const key = String(id);
       // 지금 열린 패널이 닫히는 경우(같은 직원 접기, 다른 직원 열기)에만 확인한다.
       const closesOpenPanel = payrollOpenUserId !== null && (open ? payrollOpenUserId !== key : payrollOpenUserId === key);
-      if (closesOpenPanel && payrollLeave && !window.confirm(payrollLeave)) return false;
+      const message = closesOpenPanel ? latestPayrollLeave() : null;
+      if (message && !window.confirm(message)) return false;
       setPayrollOpenUserId(open ? key : current => (current === key ? null : current));
       return true;
     },

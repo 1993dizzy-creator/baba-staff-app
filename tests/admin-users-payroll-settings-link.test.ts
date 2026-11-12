@@ -79,7 +79,9 @@ test("2차: two-way navigation keeps the selected employee and confirms before d
   assert.match(settings, /router\.push\(`\/admin\/users\?userId=\$\{id\}&section=payroll`\)/);
   // P0: both exits go through confirmLeave(), which asks only when the panel has unsaved input or a pending save.
   assert.match(settings, /function openEmployeeManagement\(id: number\) \{\n    if \(!confirmLeave\(\)\) return;/);
-  assert.match(settings, /const confirmLeave = \(\) => leaveMessage === null \|\| window\.confirm\(leaveMessage\);/);
+  // 즉시성: 이탈 확인은 패널이 알린 최신 값(ref)으로 만든 문구를 쓴다.
+  assert.match(settings, /const latestLeaveMessage = \(\) => payrollLeaveMessage\(panelUnsavedRef\.current, vi\);/);
+  assert.match(settings, /const confirmLeave = \(\) => \{\n    const message = latestLeaveMessage\(\);\n    return message === null \|\| window\.confirm\(message\);\n  \};/);
   assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=\$\{payrollOpen \? "payroll" : "detail"\}`, \{ scroll: false \}\);/);
   assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
   assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
@@ -125,13 +127,20 @@ test("P0: each payroll setting card reports real unsaved input against the same 
     assert.match(source, /onDirtyChange\?: \(dirty: boolean\) => void/, file);
   }
   const report = read("components/payroll/useReportDirty.ts");
-  assert.match(report, /useEffect\(\(\) => \(\) => \{ reportRef\.current\?\.\(false\); \}, \[\]\);/, "unmount clears the flag");
+  assert.match(report, /useLayoutEffect\(\(\) => \(\) => \{ reportRef\.current\?\.\(false\); \}, \[\]\);/, "unmount clears the flag");
+  // 즉시성: 입력 이벤트로 생긴 렌더의 커밋 단계에서 바로 알린다(passive effect를 기다리지 않음).
+  assert.match(report, /useLayoutEffect\(\(\) => \{ reportRef\.current\?\.\(dirty\); \}, \[dirty\]\);/);
+  assert.doesNotMatch(report, /useEffect/);
 });
 
 test("P0: the shared panel separates unsaved input from an unconfirmed contract save and keeps the latter per employee", () => {
   assert.match(panel, /const contractInputDirty = open && \(saving \|\| JSON\.stringify\(form\) !== formBaseline \|\| correctionReason\.trim\(\) !== ""\);/);
   for (const key of ["insurance", "tax", "meal", "bonus"]) assert.match(panel, new RegExp(`onDirtyChange=\\{cardDirtyReporters\\.${key}\\}`), key);
-  assert.match(panel, /onUnsavedChange\?\.\(\{ input: unsavedInput, pendingVerification \}\)/);
+  // 즉시성: 카드 보고와 계약 상태를 ref로 모아 바뀌는 즉시 상위에 알리고, 언마운트 후의 늦은 보고는 끊는다.
+  assert.match(panel, /input: contractUnsavedRef\.current\.input \|\| Object\.values\(cardDirtyRef\.current\)\.some\(Boolean\),\n\s+pendingVerification: contractUnsavedRef\.current\.pendingVerification,/);
+  assert.match(panel, /cardDirtyRef\.current\[key\] = dirty;\n\s+reportUnsaved\(\);/);
+  assert.match(panel, /useLayoutEffect\(\(\) => \{\n\s+contractUnsavedRef\.current = \{ input: contractInputDirty, pendingVerification \};\n\s+reportUnsaved\(\);/);
+  assert.match(panel, /onUnsavedChangeRef\.current = undefined;\n\s+onUnsavedChange\?\.\(NO_PAYROLL_UNSAVED\);/);
   assert.match(panel, /useState<SubmittedContractSave \| null>\(\(\) => \(typeof window === "undefined" \? null : readPendingContractSave\(user\.id\)\)\)/);
   assert.match(panel, /writePendingContractSave\(user\.id, submitted\);/);
   // Existing duplicate-save protection is unchanged.
@@ -147,7 +156,14 @@ test("P0: both pages confirm before discarding payroll input, and guard reload/c
   for (const source of [page, settings]) assert.match(source, /useLeaveGuard\(/);
   assert.match(settings, /if \(tab !== activeTab && !confirmLeave\(\)\) return;/);
   assert.match(settings, /if \(id !== userId && !confirmLeave\(\)\) return;/);
-  assert.match(page, /if \(closesOpenPanel && payrollLeave && !window\.confirm\(payrollLeave\)\) return false;/);
+  assert.match(page, /const message = closesOpenPanel \? latestPayrollLeave\(\) : null;\n\s+if \(message && !window\.confirm\(message\)\) return false;/);
+  // 즉시성: 두 화면 모두 최신 값(ref)을 읽고, 새로고침·메뉴 링크 가드도 이벤트 시점의 최신 문구를 쓴다.
+  assert.match(page, /payrollUnsavedRef\.current = state;\n\s+setPayrollUnsavedState\(state\);/);
+  assert.match(settings, /panelUnsavedRef\.current = state;\n\s+setPanelUnsavedState\(state\);/);
+  assert.match(page, /useLeaveGuard\(payrollLeave, latestPayrollLeave\);/);
+  assert.match(settings, /useLeaveGuard\(leaveMessage, latestLeaveMessage\);/);
+  assert.match(unsaved, /const currentMessage = \(\) => \(latestRef\.current \? latestRef\.current\(\) : messageRef\.current\);/);
+  assert.match(unsaved, /const beforeUnload = \(event: BeforeUnloadEvent\) => \{\n\s+if \(!currentMessage\(\)\) return;/);
   assert.match(page, /if \(payrollOpen && !payroll\.setOpen\(user\.id, false\)\) return;/);
-  assert.match(page, /if \(payrollOpen && hasPayrollUnsaved\(payroll\.unsaved\)\) return;/);
+  assert.match(page, /if \(payrollOpen && hasPayrollUnsaved\(payroll\.unsaved\(\)\)\) return;/);
 });

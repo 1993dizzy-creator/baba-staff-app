@@ -7,7 +7,9 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -161,13 +163,31 @@ export default function EmployeePayrollSettingsPanel({
   }, [user.id]);
   // 계약 등록·정정 창을 열 때의 입력값(이후 실제로 바뀌었는지 판정용).
   const [formBaseline, setFormBaseline] = useState("");
+  // 미저장 상태는 ref로 모아 바뀌는 즉시(카드·패널의 커밋 단계) 상위에 알린다. 상위는 이 값을 ref에 바로 기록하므로
+  // 입력 직후의 Escape·닫기·직원 변경·화면 이동도 최신 상태로 확인한다(후속 렌더·passive effect를 기다리지 않음).
   // 식대·개근·보험·세금 카드가 알려 준 미저장 입력.
-  const [cardDirty, setCardDirty] = useState<Record<"insurance" | "tax" | "meal" | "bonus", boolean>>({ insurance: false, tax: false, meal: false, bonus: false });
-  const cardDirtyReporters = useMemo(() => {
-    const reporter = (key: "insurance" | "tax" | "meal" | "bonus") => (dirty: boolean) =>
-      setCardDirty((previous) => (previous[key] === dirty ? previous : { ...previous, [key]: dirty }));
-    return { insurance: reporter("insurance"), tax: reporter("tax"), meal: reporter("meal"), bonus: reporter("bonus") };
+  const cardDirtyRef = useRef<Record<"insurance" | "tax" | "meal" | "bonus", boolean>>({ insurance: false, tax: false, meal: false, bonus: false });
+  // 계약 등록·정정 창의 미저장 입력과 저장 결과 확인 대기.
+  const contractUnsavedRef = useRef<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  const onUnsavedChangeRef = useRef(onUnsavedChange);
+  const reportedUnsavedRef = useRef<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
+  const reportUnsaved = useCallback(() => {
+    const next: PayrollUnsavedState = {
+      input: contractUnsavedRef.current.input || Object.values(cardDirtyRef.current).some(Boolean),
+      pendingVerification: contractUnsavedRef.current.pendingVerification,
+    };
+    const previous = reportedUnsavedRef.current;
+    if (previous.input === next.input && previous.pendingVerification === next.pendingVerification) return;
+    reportedUnsavedRef.current = next;
+    onUnsavedChangeRef.current?.(next);
   }, []);
+  const cardDirtyReporters = useMemo(() => {
+    const reporter = (key: "insurance" | "tax" | "meal" | "bonus") => (dirty: boolean) => {
+      cardDirtyRef.current[key] = dirty;
+      reportUnsaved();
+    };
+    return { insurance: reporter("insurance"), tax: reporter("tax"), meal: reporter("meal"), bonus: reporter("bonus") };
+  }, [reportUnsaved]);
   const [form, setForm] = useState<FormState>(defaults);
   const [open, setOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "correct">("create");
@@ -231,10 +251,21 @@ export default function EmployeePayrollSettingsPanel({
   useEffect(() => { onSettledChange?.(settled, userId); }, [onSettledChange, settled, userId]);
   // 창만 열고 바꾸지 않았으면 경고하지 않는다. 저장 중에는 결과가 오기 전이므로 미저장으로 본다.
   const contractInputDirty = open && (saving || JSON.stringify(form) !== formBaseline || correctionReason.trim() !== "");
-  const unsavedInput = contractInputDirty || Object.values(cardDirty).some(Boolean);
   const pendingVerification = pendingContractSave !== null;
-  useEffect(() => { onUnsavedChange?.({ input: unsavedInput, pendingVerification }); }, [onUnsavedChange, unsavedInput, pendingVerification]);
-  useEffect(() => () => { onUnsavedChange?.(NO_PAYROLL_UNSAVED); }, [onUnsavedChange]);
+  // 상위 콜백이 바뀌면 새 상위에 현재 상태를, 이전 상위(또는 언마운트 시)에는 "없음"을 알린다.
+  useLayoutEffect(() => {
+    onUnsavedChangeRef.current = onUnsavedChange;
+    onUnsavedChange?.(reportedUnsavedRef.current);
+    return () => {
+      // 언마운트 중 카드들이 뒤늦게 보내는 false 보고가 이전 상위에 다시 닿지 않게 끊는다.
+      onUnsavedChangeRef.current = undefined;
+      onUnsavedChange?.(NO_PAYROLL_UNSAVED);
+    };
+  }, [onUnsavedChange]);
+  useLayoutEffect(() => {
+    contractUnsavedRef.current = { input: contractInputDirty, pendingVerification };
+    reportUnsaved();
+  }, [contractInputDirty, pendingVerification, reportUnsaved]);
   const current = currentContract;
   // Same rule as the payroll engine: only monthly pay with the level raise enabled.
   const levelRaise = selected?.levelInfo.eligible

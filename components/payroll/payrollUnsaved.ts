@@ -59,19 +59,24 @@ export function writePendingContractSave(userId: number, submitted: SubmittedCon
 /**
  * 브라우저 새로고침·창 닫기(beforeunload)와 화면 안의 일반 링크 클릭(메뉴 등)에서 확인을 받는다.
  * 히스토리를 조작하지 않으므로 브라우저 뒤로가기는 가로채지 않는다.
+ * latestMessage를 주면 이벤트 시점에 최신 문구를 읽고 리스너를 화면이 열려 있는 동안 유지한다
+ * (입력 직후의 이탈도 렌더·effect 반영을 기다리지 않고 판단). 확인할 것이 없으면 아무것도 막지 않는다.
  */
-export function useLeaveGuard(message: string | null) {
+export function useLeaveGuard(message: string | null, latestMessage?: () => string | null) {
   const messageRef = useRef(message);
-  useEffect(() => { messageRef.current = message; });
-  const active = message !== null;
+  const latestRef = useRef(latestMessage);
+  useEffect(() => { messageRef.current = message; latestRef.current = latestMessage; });
+  const active = message !== null || latestMessage !== undefined;
   useEffect(() => {
     if (!active) return;
+    const currentMessage = () => (latestRef.current ? latestRef.current() : messageRef.current);
     const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!currentMessage()) return;
       event.preventDefault();
       event.returnValue = "";
     };
     const linkClick = (event: MouseEvent) => {
-      const current = messageRef.current;
+      const current = currentMessage();
       if (!current || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
       if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
