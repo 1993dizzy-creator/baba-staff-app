@@ -13,6 +13,7 @@ import { money } from "@/lib/payroll/ui-labels";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
+import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 export type MealAllowanceVersion = {
   id: number;
@@ -33,8 +34,9 @@ type MealAllowanceState = {
 };
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-function mealFormBaseline(current: MealAllowanceVersion | null) {
-  return { isEligible: current?.isEligible ?? false, effectiveFrom: vietnamToday(), note: "" };
+// intent: 스위치로 연 모달의 목표 상태(없으면 현재 상태).
+function mealFormBaseline(current: MealAllowanceVersion | null, intent: boolean | null = null) {
+  return { isEligible: intent ?? current?.isEligible ?? false, effectiveFrom: vietnamToday(), note: "" };
 }
 
 function vietnamToday() {
@@ -46,20 +48,30 @@ export default function EmployeeMealAllowanceSettings({
   vi,
   onHistoryStateChange,
   onDirtyChange,
+  formRequest,
+  onFormFinish,
 }: {
   userId: number;
   vi: boolean;
   onHistoryStateChange?: (state: SettingHistoryState<MealAllowanceVersion>) => void;
   /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 enable 값으로 미리 채운다(그 값이 미저장 판정 기준). */
+  formRequest?: PayrollSettingFormRequest | null;
+  /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
+  onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
   const mounted = useRef(true);
+  // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
+  const formRequestRef = useRef(formRequest ?? null);
+  const autoOpenedRef = useRef(false);
   // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
   const reportHistoryRef = useRef(onHistoryStateChange);
   useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
 
   const [state, setState] = useState<MealAllowanceState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [isEligible, setIsEligible] = useState(false);
   const [effectiveFrom, setEffectiveFrom] = useState(vietnamToday);
   const [note, setNote] = useState("");
@@ -67,8 +79,8 @@ export default function EmployeeMealAllowanceSettings({
   const [error, setError] = useState("");
   const [blockedCode, setBlockedCode] = useState("");
 
-  const resetForm = useCallback((current: MealAllowanceVersion | null) => {
-    const baseline = mealFormBaseline(current);
+  const resetForm = useCallback((current: MealAllowanceVersion | null, intent: boolean | null = null) => {
+    const baseline = mealFormBaseline(current, intent);
     setIsEligible(baseline.isEligible);
     setEffectiveFrom(baseline.effectiveFrom);
     setNote(baseline.note);
@@ -101,7 +113,17 @@ export default function EmployeeMealAllowanceSettings({
           projectedMealAllowance: data.projectedMealAllowance ?? { amount: 0, warningCode: null },
         };
         setState(next);
-        resetForm(next.current);
+        const request = formRequestRef.current;
+        if (request && !autoOpenedRef.current) {
+          autoOpenedRef.current = true;
+          // 근태 미사용이면 대상으로 바꿀 수 없으므로(기존 검증) 목표 상태를 미리 채우지 않는다.
+          const intent = request.enable === true && !next.attendanceTrackingEnabled ? null : request.enable;
+          resetForm(next.current, intent);
+          setFormIntent(intent);
+          setFormOpen(true);
+        } else {
+          resetForm(next.current);
+        }
         reportHistoryRef.current?.({ status: "ready", history: next.history });
       } catch (loadError: unknown) {
         if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
@@ -124,10 +146,11 @@ export default function EmployeeMealAllowanceSettings({
     };
   }, [load]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null, formIntent))), onDirtyChange);
 
   function openForm() {
     resetForm(state?.current ?? null);
+    setFormIntent(null);
     setFormOpen(true);
   }
 
@@ -155,11 +178,13 @@ export default function EmployeeMealAllowanceSettings({
     await load();
     if (!mounted.current) return;
     setFormOpen(false);
+    setFormIntent(null);
+    onFormFinish?.("saved");
   }
 
   if (!state) {
     return (
-      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi}>
+      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi} defaultOpen={Boolean(formRequest)}>
         {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
       </EmployeeSettingCard>
     );
@@ -168,7 +193,7 @@ export default function EmployeeMealAllowanceSettings({
   const disabledByAttendanceTracking = !state.attendanceTrackingEnabled;
 
   return (
-    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi}>
+    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)}>
       <div style={s.head}>
         <div>
           <p style={s.help}>
@@ -265,6 +290,8 @@ export default function EmployeeMealAllowanceSettings({
               onClick={() => {
                 setFormOpen(false);
                 resetForm(state.current);
+                setFormIntent(null);
+                onFormFinish?.("cancelled");
               }}
             >
               {vi ? "Hủy" : "취소"}

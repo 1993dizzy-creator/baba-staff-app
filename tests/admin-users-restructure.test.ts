@@ -22,14 +22,14 @@ test("part groups collapse: owner/inactive closed by default, user choice kept a
   assert.match(page, /users\.filter\(\(user\) => getActiveUserGroup\(user\) === groupKey\)/);
 });
 
-test("detail: work·pay holds attendance, contract, level, payroll·benefits and the payroll exception in that order", () => {
-  const start = page.indexOf('<SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>');
+test("detail: work·pay holds attendance, 💰 contract, 🎁 benefits (level first) and the payroll exception in that order", () => {
+  const start = page.indexOf('<CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>');
   const end = page.indexOf('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>');
   const work = page.slice(start, end);
-  const order = ["label={text.attendanceTracking}", "<PayrollContractStatus", '<SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>', "<PayrollBenefitsSection", "{text.payrollException}</SubsectionTitle>"].map((needle) => work.indexOf(needle));
-  assert.ok(order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), String(order));
-  // payroll·benefits renders as a subsection (no separate top card)
-  assert.match(page, /return <div style=\{styles\.subsection\}>\n\s+<div style=\{styles\.sectionHead\}>\n\s+<SubsectionTitle emoji="💳">\{text\.payrollBenefits\}<\/SubsectionTitle>/);
+  const order = ["label={text.attendanceTracking}", "<PayrollContractStatus", '<SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>', 'emoji="📈"', "BENEFIT_ROWS.map", "{text.payrollException}</SubsectionTitle>"].map((needle) => work.indexOf(needle));
+  assert.ok(start > 0 && order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), String(order));
+  // the contract is a subsection with its own 계약 관리 entry (no switch)
+  assert.match(page, /return <div style=\{styles\.subsection\}>\n\s+<div style=\{styles\.sectionHead\}>\n\s+<SubsectionTitle emoji="💰">\{text\.payrollContract\}<\/SubsectionTitle>/);
 });
 
 test("app access explains when login is blocked by the employment status (server needs is_active and app_login_enabled)", () => {
@@ -42,7 +42,8 @@ test("app access explains when login is blocked by the employment status (server
 });
 
 test("rehire stays available for terminated, inactive employees inside the basic card", () => {
-  const basic = page.slice(page.indexOf('<SectionTitle emoji="🪪">{text.basicInfo}</SectionTitle>'), page.indexOf('<SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>'));
+  const basic = page.slice(page.indexOf('<CollapsibleSection tone="basic" emoji="🪪" title={text.basicInfo} open={basicOpen} onToggle={() => setBasicOpen((current) => !current)}>'), page.indexOf('<CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>'));
+  assert.ok(basic.length > 0);
   assert.match(basic, /\{user\.is_active === false && user\.termination_date \? \(\n\s+<div style=\{styles\.rehireBox\}>/);
   assert.match(basic, /onClick=\{\(\)=>onRehire\(user,rehireDate,rehireLevelEnabled,rehireLevelEnabled\?true:null\)\}/);
 });

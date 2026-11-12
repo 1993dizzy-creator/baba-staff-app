@@ -5,15 +5,20 @@ import type { PayrollTaxBurdenMode, PayrollTaxInsuranceDeductionMode, PayrollTax
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
+import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
 }
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName: string) {
+// intent: 스위치로 연 모달의 목표 상태(true = 거주자 누진세 적용, false = 미적용, null = 현재 방식).
+function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName: string, intent: boolean | null = null): {
+  taxMode: PayrollTaxMode; dependentCount: string; burdenMode: PayrollTaxBurdenMode; insuranceMode: PayrollTaxInsuranceDeductionMode;
+  manualInsurance: string; accountingName: string; effectiveMonth: string; note: string;
+} {
   return {
-    taxMode: setting?.taxMode ?? "not_applicable",
+    taxMode: intent === true ? "resident_progressive" : intent === false ? "not_applicable" : setting?.taxMode ?? "not_applicable",
     dependentCount: String(setting?.dependentCount ?? 0),
     burdenMode: setting?.burdenMode ?? "employee_deducted",
     insuranceMode: setting?.insuranceDeductionMode ?? "none",
@@ -24,8 +29,17 @@ function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName:
   };
 }
 
-export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistoryStateChange, onDirtyChange }: { userId: number; employeeName: string; vi: boolean; onHistoryStateChange?: (state: SettingHistoryState<PayrollTaxSettingVersion>) => void; onDirtyChange?: (dirty: boolean) => void }) {
+export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistoryStateChange, onDirtyChange, formRequest, onFormFinish }: {
+  userId: number; employeeName: string; vi: boolean; onHistoryStateChange?: (state: SettingHistoryState<PayrollTaxSettingVersion>) => void; onDirtyChange?: (dirty: boolean) => void;
+  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 enable 값으로 미리 채운다(그 값이 미저장 판정 기준). */
+  formRequest?: PayrollSettingFormRequest | null;
+  /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
+  onFormFinish?: (result: PayrollSettingFormResult) => void;
+}) {
   const mounted = useRef(true);
+  // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
+  const formRequestRef = useRef(formRequest ?? null);
+  const autoOpenedRef = useRef(false);
   // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
   const reportHistoryRef = useRef(onHistoryStateChange);
   useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
@@ -33,6 +47,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   const [history, setHistory] = useState<PayrollTaxSettingVersion[]>([]);
   const [current, setCurrent] = useState<PayrollTaxSettingVersion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [taxMode, setTaxMode] = useState<PayrollTaxMode>("not_applicable");
   const [dependentCount, setDependentCount] = useState("0");
   const [burdenMode, setBurdenMode] = useState<PayrollTaxBurdenMode>("employee_deducted");
@@ -45,8 +60,8 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
 
-  const resetForm = useCallback((setting: PayrollTaxSettingVersion | null) => {
-    const baseline = taxFormBaseline(setting, employeeName);
+  const resetForm = useCallback((setting: PayrollTaxSettingVersion | null, intent: boolean | null = null) => {
+    const baseline = taxFormBaseline(setting, employeeName, intent);
     setTaxMode(baseline.taxMode);
     setDependentCount(baseline.dependentCount);
     setBurdenMode(baseline.burdenMode);
@@ -69,7 +84,15 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
       setHistory(data.history ?? []);
       setCurrent(nextCurrent);
       setLoaded(true);
-      resetForm(nextCurrent);
+      const request = formRequestRef.current;
+      if (request && !autoOpenedRef.current) {
+        autoOpenedRef.current = true;
+        resetForm(nextCurrent, request.enable);
+        setFormIntent(request.enable);
+        setFormOpen(true);
+      } else {
+        resetForm(nextCurrent);
+      }
       reportHistoryRef.current?.({ status: "ready", history: data.history ?? [] });
     } catch (loadError) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
@@ -91,7 +114,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
     return () => { mounted.current = false; controller.abort(); };
   }, [load, resetForm]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ taxMode, dependentCount, burdenMode, insuranceMode, manualInsurance, accountingName, effectiveMonth, note }, taxFormBaseline(current, employeeName))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ taxMode, dependentCount, burdenMode, insuranceMode, manualInsurance, accountingName, effectiveMonth, note }, taxFormBaseline(current, employeeName, formIntent))), onDirtyChange);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -120,7 +143,11 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
         throw new Error(data?.code ?? "SAVE_FAILED");
       }
       await load();
-      if (mounted.current) setFormOpen(false);
+      if (mounted.current) {
+        setFormOpen(false);
+        setFormIntent(null);
+        onFormFinish?.("saved");
+      }
     } catch (saveError) {
       if (!mounted.current) return;
       const locked = saveError instanceof Error && saveError.message === "PAYROLL_TAX_SETTING_LOCKED_FOR_PAID_EMPLOYEE";
@@ -136,10 +163,10 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
     ? vi ? "Lũy tiến từng phần" : "거주자 누진세"
     : vi ? "Không áp dụng TNCN" : "TNCN 미적용";
 
-  return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi}>
+  return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi} defaultOpen={Boolean(formRequest)}>
     <div style={s.head}>
       <p style={s.help}>{vi ? "Lưu từng phiên bản theo tháng áp dụng; tên kế toán không thay đổi danh tính nhân viên." : "적용 월별 새 revision으로 저장하며 회계 명의는 직원 identity를 변경하지 않습니다."}</p>
-      <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
+      <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormIntent(null); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
     </div>
     {current ? <div style={s.current}>
       <Summary label={vi ? "Nhân viên" : "직원"} value={employeeName} />
@@ -160,7 +187,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
       </> : null}
       <Field label={vi ? "Tháng bắt đầu áp dụng" : "적용 시작월"}><input style={s.input} type="month" required value={effectiveMonth} onChange={(event) => setEffectiveMonth(event.target.value)} /></Field>
       <Field label={vi ? "Ghi chú / lý do thay đổi" : "메모 / 변경 사유"}><textarea style={s.textarea} required value={note} onChange={(event) => setNote(event.target.value)} /></Field>
-      <div style={s.actions}><button type="button" style={s.secondary} onClick={() => { setFormOpen(false); resetForm(current); }}>{vi ? "Hủy" : "취소"}</button><button style={s.primary} disabled={saving}>{saving ? vi ? "Đang lưu…" : "저장 중…" : vi ? "Lưu phiên bản mới" : "새 revision 저장"}</button></div>
+      <div style={s.actions}><button type="button" style={s.secondary} onClick={() => { setFormOpen(false); resetForm(current); setFormIntent(null); onFormFinish?.("cancelled"); }}>{vi ? "Hủy" : "취소"}</button><button style={s.primary} disabled={saving}>{saving ? vi ? "Đang lưu…" : "저장 중…" : vi ? "Lưu phiên bản mới" : "새 revision 저장"}</button></div>
     </form> : null}
     {error ? <p role="alert" style={s.error}>{error}</p> : null}
     <details style={s.details}><summary>{vi ? `Lịch sử ${history.length} mục` : `설정 이력 ${history.length}건`}</summary>{history.map((item) => <article style={s.history} key={item.id}><b>{item.effectiveMonth.slice(0, 7)} · #{item.revision}</b><span>{item.taxMode} · {item.burdenMode} · {item.accountingName ?? "—"}</span>{item.note ? <small>{item.note}</small> : null}</article>)}</details>

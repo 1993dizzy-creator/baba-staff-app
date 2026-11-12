@@ -16,6 +16,7 @@ import {
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
+import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 export type AttendanceBonusEligibilityHistoryVersion = EligibilityVersion;
 type EligibilityVersion = {
@@ -57,8 +58,9 @@ function formatVnd(amount: number) {
 }
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-function bonusFormBaseline(current: EligibilityVersion | null) {
-  return { isEligible: current?.isEligible ?? false, effectiveMonth: currentMonth(), note: "" };
+// intent: 스위치로 연 모달의 목표 상태(없으면 현재 상태).
+function bonusFormBaseline(current: EligibilityVersion | null, intent: boolean | null = null) {
+  return { isEligible: intent ?? current?.isEligible ?? false, effectiveMonth: currentMonth(), note: "" };
 }
 
 export default function EmployeeAttendanceBonusSettings({
@@ -66,28 +68,38 @@ export default function EmployeeAttendanceBonusSettings({
   vi,
   onHistoryStateChange,
   onDirtyChange,
+  formRequest,
+  onFormFinish,
 }: {
   userId: number;
   vi: boolean;
   onHistoryStateChange?: (state: SettingHistoryState<EligibilityVersion>) => void;
   /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 enable 값으로 미리 채운다(그 값이 미저장 판정 기준). */
+  formRequest?: PayrollSettingFormRequest | null;
+  /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
+  onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
   const mounted = useRef(true);
+  // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
+  const formRequestRef = useRef(formRequest ?? null);
+  const autoOpenedRef = useRef(false);
   // 급여설정 요약에 이미 조회한 이력을 전달한다(추가 조회 없음). ref로 보관해 조회 의존성에 넣지 않는다.
   const reportHistoryRef = useRef(onHistoryStateChange);
   useEffect(() => { reportHistoryRef.current = onHistoryStateChange; });
 
   const [state, setState] = useState<AttendanceBonusState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [isEligible, setEligible] = useState(false);
   const [effectiveMonth, setEffectiveMonth] = useState(currentMonth);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const resetForm = useCallback((current: EligibilityVersion | null) => {
-    const baseline = bonusFormBaseline(current);
+  const resetForm = useCallback((current: EligibilityVersion | null, intent: boolean | null = null) => {
+    const baseline = bonusFormBaseline(current, intent);
     setEligible(baseline.isEligible);
     setEffectiveMonth(baseline.effectiveMonth);
     setNote(baseline.note);
@@ -126,7 +138,17 @@ export default function EmployeeAttendanceBonusSettings({
         standing: summaryData.summaries?.find((item: { userId: number }) => item.userId === userId) ?? null,
       };
       setState(next);
-      resetForm(next.current);
+      const request = formRequestRef.current;
+      if (request && !autoOpenedRef.current) {
+        autoOpenedRef.current = true;
+        // 근태 미사용이면 대상으로 바꿀 수 없으므로(기존 검증) 목표 상태를 미리 채우지 않는다.
+        const intent = request.enable === true && !next.attendanceTrackingEnabled ? null : request.enable;
+        resetForm(next.current, intent);
+        setFormIntent(intent);
+        setFormOpen(true);
+      } else {
+        resetForm(next.current);
+      }
       reportHistoryRef.current?.({ status: "ready", history: next.history });
     } catch (loadError: unknown) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
@@ -147,10 +169,11 @@ export default function EmployeeAttendanceBonusSettings({
     };
   }, [load]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveMonth, note }, bonusFormBaseline(state?.current ?? null))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveMonth, note }, bonusFormBaseline(state?.current ?? null, formIntent))), onDirtyChange);
 
   function openForm() {
     resetForm(state?.current ?? null);
+    setFormIntent(null);
     setFormOpen(true);
   }
 
@@ -181,11 +204,13 @@ export default function EmployeeAttendanceBonusSettings({
     await load();
     if (!mounted.current) return;
     setFormOpen(false);
+    setFormIntent(null);
+    onFormFinish?.("saved");
   }
 
   if (!state) {
     return (
-      <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={null} vi={vi}>
+      <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={null} vi={vi} defaultOpen={Boolean(formRequest)}>
         {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
       </EmployeeSettingCard>
     );
@@ -213,7 +238,7 @@ export default function EmployeeAttendanceBonusSettings({
   });
 
   return (
-    <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={eligible} vi={vi}>
+    <EmployeeSettingCard title={vi ? "✨ Thưởng chuyên cần" : "✨ 개근 보너스"} applied={eligible} vi={vi} defaultOpen={Boolean(formRequest)}>
       <div style={s.head}>
         <div>
           <p style={s.help}>
@@ -269,7 +294,7 @@ export default function EmployeeAttendanceBonusSettings({
           </label>
           {error ? <p role="alert" style={s.error}>{error}</p> : null}
           <div style={s.actions}>
-            <button type="button" style={s.secondary} onClick={() => { setFormOpen(false); resetForm(state.current); }}>
+            <button type="button" style={s.secondary} onClick={() => { setFormOpen(false); resetForm(state.current); setFormIntent(null); onFormFinish?.("cancelled"); }}>
               {vi ? "Hủy" : "취소"}
             </button>
             <button style={s.button} disabled={saving}>

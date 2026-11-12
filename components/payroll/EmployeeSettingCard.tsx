@@ -7,13 +7,16 @@ export default function EmployeeSettingCard({
   applied,
   vi,
   children,
+  defaultOpen = false,
 }: {
   title: string;
   applied: boolean | null;
   vi: boolean;
   children: ReactNode;
+  /** 설정 하나만 여는 모달(/admin/users)에서는 펼친 상태로 시작한다. */
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const status = applied === null ? null : applied
     ? vi ? "Áp dụng" : "적용"
     : vi ? "Không áp dụng" : "미적용";

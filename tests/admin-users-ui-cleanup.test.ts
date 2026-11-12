@@ -23,13 +23,16 @@ test("A: total hours use the payroll schedule rule (midnight wrap, no break) and
 });
 
 test("B: detail cards carry an emoji header and a light tint; inputs stay white (3 top cards since the 2026-11 restructure)", () => {
-  for (const [tone, emoji, label] of [["basic", "🪪", "basicInfo"], ["workPay", "⏰", "workPayInfo"], ["appAccess", "🔐", "appAccess"]]) {
-    assert.ok(page.includes(`<section style={sectionStyle("${tone}")}>`), tone);
-    assert.ok(page.includes(`<SectionTitle emoji="${emoji}">{text.${label}}</SectionTitle>`), label);
+  // 4차: 기본정보·근무·급여 are collapsible cards (same tint + emoji header); 앱 접근 stays a plain card
+  for (const [tone, emoji, label] of [["basic", "🪪", "basicInfo"], ["workPay", "⏰", "workPayInfo"]]) {
+    assert.ok(page.includes(`<CollapsibleSection tone="${tone}" emoji="${emoji}" title={text.${label}}`), label);
   }
-  // level and payroll·benefits are subsections of work·pay, not top cards
-  assert.ok(page.includes('<SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>'));
-  assert.ok(page.includes('<SubsectionTitle emoji="💳">{text.payrollBenefits}</SubsectionTitle>'));
+  assert.ok(page.includes('<section style={sectionStyle("appAccess")}>'));
+  assert.ok(page.includes('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>'));
+  assert.match(page, /return <section style=\{sectionStyle\(tone\)\}>\n\s+<button type="button" aria-expanded=\{open\} aria-controls=\{open \? bodyId : undefined\} onClick=\{onToggle\} style=\{styles\.sectionToggle\}>\n\s+<SectionTitle emoji=\{emoji\}>\{title\}<\/SectionTitle>/);
+  // contract and benefits are subsections of work·pay, not top cards
+  assert.ok(page.includes('<SubsectionTitle emoji="💰">{text.payrollContract}</SubsectionTitle>'));
+  assert.ok(page.includes('<SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>'));
   assert.doesNotMatch(page, /sectionStyle\("(level|payroll|advanced)"\)/);
   assert.match(page, /\.\.\.ui\.input,\n\s+\/\/[^\n]*\n\s+background: "#fff",/);
 });
@@ -38,18 +41,18 @@ test("C: the work·pay card no longer has its own 급여설정 shortcut; the pay
   const status = page.slice(page.indexOf("function PayrollContractStatus("), page.indexOf("// 직원 상세 카드별 은은한 배경색"));
   assert.doesNotMatch(status, /managePayrollSettings|onOpenPayrollSettings|payrollLinkButton/);
   assert.match(status, /text\.payrollContractMismatch/);
-  assert.match(status, /text\.payrollContractCurrent/);
-  const sheetSection = page.slice(page.indexOf("function PayrollBenefitsSection("), page.indexOf("function Toggle("));
+  assert.match(status, /text\.payrollContract\}/);
+  const sheetSection = page.slice(page.indexOf("function PayrollSettingSheet("), page.indexOf("function Toggle("));
   assert.match(sheetSection, /onClick=\{onOpenPayrollSettings\}>\{text\.managePayrollSettings\} →<\/button>/);
 });
 
-test("D: payroll·benefits opens a dedicated sheet; closing goes through the unsaved-input guard; nested dialogs keep Escape", () => {
-  assert.match(page, /onOpen=\{\(\) => payroll\.setOpen\(user\.id, true\)\}\n\s+onClose=\{\(\) => payroll\.setOpen\(user\.id, false\)\}/);
-  const sheet = page.slice(page.indexOf("function PayrollSheet("), page.indexOf("function PayrollBenefitsSection("));
+test("D (4차): contract and each benefit open their own sheet; closing goes through the unsaved-input guard; nested dialogs keep Escape", () => {
+  assert.match(page, /onClose=\{\(\) => \{ payroll\.setOpen\(user\.id, false\); \}\}/);
+  // a finished setting form (saved or cancelled) closes without asking — nothing is left to lose
+  assert.match(page, /finish: \(id\) => \{\n\s+const key = String\(id\);\n\s+setPayrollSheet\(\(current\) => \(current\?\.userId === key \? null : current\)\);/);
+  const sheet = page.slice(page.indexOf("function PayrollSheet("), page.indexOf("const SHEET_TITLES"));
   assert.match(sheet, /role="dialog" aria-modal="true" aria-labelledby=\{titleId\}/);
-  // 안쪽 계약 창·레벨 설정 dialog가 열려 있으면 시트는 Escape를 무시한다(최상단 모달 판정은 useModalFocusTrap).
   assert.match(sheet, /if \(!isTopModal\(sheetRef\.current\)\) return;/);
   assert.match(sheet, /if \(event\.target === event\.currentTarget\) onClose\(\);/);
   assert.match(sheet, /document\.body\.style\.overflow = previousOverflow;/);
-  assert.match(page, /aria-haspopup="dialog" aria-expanded=\{open\}/);
 });

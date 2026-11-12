@@ -13,7 +13,9 @@ const meal = read("components/payroll/EmployeeMealAllowanceSettings.tsx");
 const attendanceBonus = read("components/payroll/EmployeeAttendanceBonusSettings.tsx");
 
 test("four employee setting cards default collapsed and expose compact localized status headers", () => {
-  assert.match(card, /useState\(false\)/);
+  // collapsed by default (defaultOpen is only set by the /admin/users one-setting modal)
+  assert.match(card, /defaultOpen = false,/);
+  assert.match(card, /useState\(defaultOpen\)/);
   assert.match(card, /aria-expanded=\{open\}/);
   assert.match(card, /onClick=\{\(\) => setOpen/);
   assert.match(card, /open \? <div style=\{s\.body\}>\{children\}<\/div> : null/);

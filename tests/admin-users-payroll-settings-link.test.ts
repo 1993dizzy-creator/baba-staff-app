@@ -12,7 +12,7 @@ const hook = read("components/payroll/usePayrollContracts.ts");
 
 test("employee detail: attendance and the payroll exception live in work·pay, app login in app access; no advanced card", () => {
   // 2026-11 restructure: three top cards (기본정보 · 근무·급여 · 앱 접근); the 고급 관리 card is gone.
-  const work = page.indexOf('<SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>');
+  const work = page.indexOf('<CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>');
   const access = page.indexOf('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>');
   assert.ok(work > 0 && access > work);
   assert.ok(page.indexOf('label={text.attendanceTracking}') > work && page.indexOf('label={text.attendanceTracking}') < access);
@@ -45,13 +45,15 @@ test("current payroll contract is read per employee only when the detail is open
   // 2차: the employee page no longer fetches contracts itself; the card owns one shared hook instance.
   assert.equal((page.match(/\/api\/admin\/payroll\/contracts\?userId=/g) ?? []).length, 0);
   assert.equal((hook.match(/fetch\(`\/api\/admin\/payroll\/contracts\?userId=/g) ?? []).length, 1);
-  assert.match(page, /const contracts = usePayrollContracts\(isEditing \? Number\(user\.id\) : null, \{ refreshOnReturn: true \}\);/);
+  // 2026-11 4차: read once 근무·급여 has been expanded (collapsed detail reads nothing)
+  assert.match(page, /const contracts = usePayrollContracts\(isEditing && workVisited \? Number\(user\.id\) : null, \{ refreshOnReturn: true \}\);/);
   assert.match(hook, /if \(!refreshOnReturn \|\| !userId\) return;/);
   assert.match(hook, /document\.addEventListener\("visibilitychange", refresh\)/);
   assert.match(hook, /window\.addEventListener\("pageshow", restored\)/);
   // Read failure and "no contract" are different states.
   assert.match(page, /contracts\.loadFailed \? <span style=\{styles\.contractError\}>\{text\.payrollContractLoadFailed\}/);
-  assert.match(page, /current \? payrollContractLabel\(current, text\) : text\.payrollContractNone/);
+  // 4차: 1~2 lines (label, base salary · start month) or 미설정
+  assert.match(page, /: current \? <>\n\s+<strong style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\}<\/strong>[\s\S]*?<\/> : <strong style=\{styles\.contractPrimary\}>\{text\.payrollContractNone\}<\/strong>\}/);
 });
 
 test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contract editor exists only in the shared panel", () => {
@@ -72,15 +74,17 @@ test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contra
   assert.match(settings, /const contractsSource = usePayrollContracts\(activeTab === "employee" \? userId : null\);/);
 });
 
-test("2차: the employee page mounts at most one payroll·benefits panel (now in a dedicated sheet), only for payroll-manageable employees", () => {
-  assert.match(page, /const payrollOpen = isEditing && payroll\.openUserId === String\(user\.id\);/);
-  // The card keeps a short summary + "관리"; the shared panel mounts only inside the open sheet.
-  assert.match(page, /\{open && typeof document !== "undefined" \? \(\s*<PayrollSheet[\s\S]*?<EmployeePayrollSettingsPanel/);
-  assert.match(page, /\{canManageUserPayroll\(user\) \? \(\s*<PayrollBenefitsSection/);
+test("2차/4차: the employee page mounts at most one payroll sheet (contract only or one setting), only for payroll-manageable employees", () => {
+  assert.match(page, /const sheetView = isEditing && payroll\.openUserId === String\(user\.id\) \? payroll\.openView : null;/);
+  // The shared panel mounts only inside the open sheet, cut to that view (contract or one setting card).
+  assert.match(page, /\{sheetView && typeof document !== "undefined" \? \(\s*<PayrollSettingSheet/);
+  assert.match(page, /<PayrollSheet[\s\S]*?<EmployeePayrollSettingsPanel[\s\S]*?only=\{view\}/);
+  assert.match(page, /onManage=\{\(\) => openSheet\("contract"\)\}/);
+  assert.match(page, /\{canManagePayroll \? BENEFIT_ROWS\.map/);
   assert.match(page, /showIdentity=\{false\}/);
   assert.match(page, /anchorPrefix=\{`user-\$\{user\.id\}-`\}/);
-  // One contract read is shared by the work·pay summary line and the sheet's panel (C: no shortcut button there).
-  assert.match(page, /<PayrollContractStatus user=\{user\} draft=\{draft\} text=\{text\} contracts=\{contracts\} \/>/);
+  // One contract read is shared by the 💰 summary and the contract sheet's panel (no shortcut button in work·pay).
+  assert.match(page, /<PayrollContractStatus user=\{user\} draft=\{draft\} text=\{text\} contracts=\{contracts\} canManage=\{canManagePayroll\}/);
   assert.match(page, /contracts=\{contracts\}[\s\S]*contracts=\{contracts\}/);
 });
 
@@ -91,11 +95,14 @@ test("2차: two-way navigation keeps the selected employee and confirms before d
   // 즉시성: 이탈 확인은 패널이 알린 최신 값(ref)으로 만든 문구를 쓴다.
   assert.match(settings, /const latestLeaveMessage = \(\) => payrollLeaveMessage\(panelUnsavedRef\.current, vi\);/);
   assert.match(settings, /const confirmLeave = \(\) => \{\n    const message = latestLeaveMessage\(\);\n    return message === null \|\| window\.confirm\(message\);\n  \};/);
-  assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=\$\{payrollOpen \? "payroll" : "detail"\}`, \{ scroll: false \}\);/);
+  // return point: the detail with 근무·급여 open, and the sheet that was open (?sheet=)
+  assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=payroll\$\{sheetView \? `&sheet=\$\{sheetView\}` : ""\}`, \{ scroll: false \}\);/);
+  assert.match(page, /const \[workOpen, setWorkOpen\] = useState\(initialFocus === "payroll"\);/);
   assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
   assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
   // P0: an open-but-unchanged form is no longer "unsaved"; pending verification is reported separately.
-  assert.match(panel, /const pendingVerification = pendingContractSave !== null;/);
+  // 4차: a one-setting modal (no contract shown) does not report the contract pending state as its own leave reason
+  assert.match(panel, /const showsContract = !only \|\| only === "contract";\n\s+const pendingVerification = showsContract && pendingContractSave !== null;/);
   // Existing settings URLs keep working (no redirect away from the employee tab).
   assert.doesNotMatch(settings, /redirect\(|router\.replace\(`\/admin\/users/);
 });

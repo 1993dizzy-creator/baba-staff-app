@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { calculateCombinedSalary, type CompensationContract } from "@/lib/payroll/compensation";
 import type { buildEmployeeLevelHistory } from "@/lib/employee-level/history";
@@ -32,10 +32,12 @@ import { addCalendarMonthsClamped, calculateEmployeeLevel } from "@/lib/employee
 import { hireMonthBase } from "@/lib/employee-level/month";
 import { employeeLevelMonthCandidate } from "@/lib/employee-level/month-transition";
 import { isPayrollEligible, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
-import EmployeePayrollSettingsPanel, { type EmployeePayrollPanelUser } from "@/components/payroll/EmployeePayrollSettingsPanel";
-import type { MealAllowanceVersion } from "@/components/payroll/EmployeeMealAllowanceSettings";
+import EmployeePayrollSettingsPanel, { isDirectorManagedInsurance, type EmployeePayrollPanelOnly, type EmployeePayrollPanelUser } from "@/components/payroll/EmployeePayrollSettingsPanel";
 import { usePayrollContracts, type PayrollContractView, type PayrollContractsController } from "@/components/payroll/usePayrollContracts";
-import { resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
+import { resolveSettingsSummaryReference } from "@/lib/payroll/settings-summary";
+import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
+import { useEmployeeBenefitStatus, type BenefitKey, type BenefitSchedule, type BenefitStatus } from "@/components/payroll/useEmployeeBenefitStatus";
+import { money } from "@/lib/payroll/ui-labels";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { isTopModal, useModalFocusTrap } from "@/components/payroll/useModalFocusTrap";
 import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
@@ -165,17 +167,28 @@ type UsersResponse = {
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
 
 type PayrollFocusSection = "detail" | "payroll";
-/** 직원 목록 전체에서 급여·복리후생 패널은 한 번에 한 직원만 연다. */
+/** 근무·급여에서 여는 모달: 급여계약 전용 또는 복리후생 설정 하나. */
+type PayrollSheetView = EmployeePayrollPanelOnly;
+const PAYROLL_SHEET_VIEWS: readonly PayrollSheetView[] = ["contract", "insurance", "tax", "meal", "bonus"];
+type PayrollSheetState = { userId: string; view: PayrollSheetView; request: PayrollSettingFormRequest | null };
+/** 직원 목록 전체에서 급여 모달(계약·복리후생 설정)은 한 번에 하나만 연다. */
 type PayrollSectionControl = {
   openUserId: string | null;
+  openView: PayrollSheetView | null;
+  /** 스위치로 연 경우의 목표 상태(상세 설정이면 null). */
+  openRequest: PayrollSettingFormRequest | null;
+  /** 급여설정에서 돌아올 때 다시 열 모달(?sheet=). */
+  initialView: PayrollSheetView | null;
   /** 호출 시점의 최신 미저장 상태(패널이 알린 값을 ref로 즉시 반영). */
   unsaved: () => PayrollUnsavedState;
   /** 열린 급여 패널의 이탈 확인 문구(없으면 null). 호출 시점의 최신 미저장 상태로 만든다. */
   leaveMessage: () => string | null;
   initialFocusUserId: string | null;
   initialSection: PayrollFocusSection | null;
-  /** 열린 패널을 닫게 되는 경우(접기·다른 직원 열기) 미저장 입력이 있으면 먼저 확인한다. 취소하면 false. */
-  setOpen: (id: UserRow["id"], open: boolean) => boolean;
+  /** 열린 모달을 닫게 되는 경우 미저장 입력이 있으면 먼저 확인한다. 취소하면 false. */
+  setOpen: (id: UserRow["id"], open: boolean, view?: PayrollSheetView, request?: PayrollSettingFormRequest | null) => boolean;
+  /** 설정 모달의 폼이 저장 완료·취소로 끝났을 때 확인 없이 닫는다(남은 입력이 없다). */
+  finish: (id: UserRow["id"]) => void;
   setUnsaved: (state: PayrollUnsavedState) => void;
   onMealChanged: () => void;
   /** 목록 둘째 줄의 급여 적용 아이콘(급여관리 overview 1회 조회 결과). */
@@ -433,6 +446,12 @@ function UserCard({
   const [rehireDate, setRehireDate] = useState("");
   const [rehireLevelEnabled, setRehireLevelEnabled] = useState(true);
   const [levelDraft, setLevelDraft] = useState<LevelPolicyDraft>(() => initialLevelPolicyDraft(user));
+  // 상세를 새로 열면 기본정보·근무·급여는 접혀 있다. 급여설정에서 돌아온 직원은 근무·급여를 펼쳐 둔다.
+  // 접기는 표시만 바꾼다(입력값은 draft에 남고, 저장·취소·DB 쓰기가 아니다).
+  const [basicOpen, setBasicOpen] = useState(false);
+  const [workOpen, setWorkOpen] = useState(initialFocus === "payroll");
+  // 근무·급여를 한 번 펼친 뒤에만 이 직원의 계약·복리후생 상태를 조회한다(다시 접어도 결과는 유지).
+  const [workVisited, setWorkVisited] = useState(initialFocus === "payroll");
 
   const displayName = user.name || user.full_name || user.username;
   const isMasterUser = user.role === "master";
@@ -460,10 +479,28 @@ function UserCard({
   const openLevelModal = (event: { currentTarget: HTMLElement }) => { levelOpenerRef.current = event.currentTarget; setLevelModalOpen(true); };
   // 열린 modal <dialog> 동안 바깥 요소는 inert라 focus가 무시되므로, dialog가 닫혀 DOM에서 빠진 뒤 포커스를 옮긴다.
   const focusLevelOpener = () => { window.setTimeout(() => { const opener = levelOpenerRef.current; (opener?.isConnected ? opener : levelButtonRef.current)?.focus(); }, 0); };
-  const payrollOpen = isEditing && payroll.openUserId === String(user.id);
-  // 직원 상세를 연 경우에만 이 직원 1명의 계약을 조회한다(목록 전체 조회 없음). 한 줄 요약과
-  // 급여·복리후생 패널이 이 결과를 함께 쓴다. 다른 화면에서 돌아오면 다시 조회한다.
-  const contracts = usePayrollContracts(isEditing ? Number(user.id) : null, { refreshOnReturn: true });
+  const sheetView = isEditing && payroll.openUserId === String(user.id) ? payroll.openView : null;
+  const payrollOpen = sheetView !== null;
+  const canManagePayroll = canManageUserPayroll(user);
+  // 근무·급여를 펼친 직원 1명의 계약만 조회한다(목록 전체 조회 없음). 계약 요약과 계약 모달이 이 결과를 함께 쓰고,
+  // 다른 화면에서 돌아오면 다시 조회한다.
+  const contracts = usePayrollContracts(isEditing && workVisited ? Number(user.id) : null, { refreshOnReturn: true });
+  // 복리후생 스위치 4개의 실제 적용 상태(기존 설정 GET 4회, 이 직원만). 레벨은 levelProgramPolicy로 판정한다.
+  const benefits = useEmployeeBenefitStatus(isEditing && workVisited && canManagePayroll ? Number(user.id) : null);
+  function toggleWork() {
+    setWorkOpen((current) => !current);
+    setWorkVisited(true);
+  }
+  function openSheet(view: PayrollSheetView, request: PayrollSettingFormRequest | null = null) {
+    payroll.setOpen(user.id, true, view, request);
+  }
+  function finishSetting(view: PayrollSheetView, result: PayrollSettingFormResult) {
+    payroll.finish(user.id);
+    if (result !== "saved" || view === "contract") return;
+    // 저장 후 실제 정책을 다시 읽어 스위치를 맞춘다. 식대는 목록의 식대 아이콘도 맞춘다(기존 동작).
+    benefits.reload(view);
+    if (view === "meal") payroll.onMealChanged();
+  }
   useEffect(() => {
     if (initialFocus) articleRef.current?.scrollIntoView({ block: "start" });
   }, [initialFocus]);
@@ -477,7 +514,7 @@ function UserCard({
     const message = leaveMessage();
     if (message && !window.confirm(message)) return;
     // 뒤로가기로 돌아왔을 때 이 직원 상세(와 열려 있던 급여 영역)를 다시 열 수 있게 현재 위치를 기록한다.
-    router.replace(`/admin/users?userId=${encodeURIComponent(String(user.id))}&section=${payrollOpen ? "payroll" : "detail"}`, { scroll: false });
+    router.replace(`/admin/users?userId=${encodeURIComponent(String(user.id))}&section=payroll${sheetView ? `&sheet=${sheetView}` : ""}`, { scroll: false });
     router.push(`/admin/payroll/settings?tab=employee&userId=${encodeURIComponent(String(user.id))}`);
   }
   // 재직 상태(is_active)는 일반 토글로 바꾸지 않는다. 다음 두 경우에만 명시적으로 복구한다.
@@ -521,6 +558,8 @@ function UserCard({
                 if (!isEditing) {
                   setDraft(user);
                   setLevelDraft(initialLevelPolicyDraft(user));
+                  setBasicOpen(false);
+                  setWorkOpen(false);
                 }
                 setIsEditing((current) => !current);
               }}
@@ -549,8 +588,7 @@ function UserCard({
         <fieldset disabled={isSaving} style={styles.formGrid}>
           {!isMasterUser ? (
             <>
-          <section style={sectionStyle("basic")}>
-          <SectionTitle emoji="🪪">{text.basicInfo}</SectionTitle>
+          <CollapsibleSection tone="basic" emoji="🪪" title={text.basicInfo} open={basicOpen} onToggle={() => setBasicOpen((current) => !current)}>
           <div style={styles.fieldRow2}>
             <Field label={text.name}>
               <input
@@ -670,11 +708,10 @@ function UserCard({
               </div> : null}
             </div>
           ) : null}
-          </section>
+          </CollapsibleSection>
             </>
           ) : null}
-          <section style={sectionStyle("workPay")}>
-            <SectionTitle emoji="⏰">{text.workPayInfo}</SectionTitle>
+          <CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>
             {!isMasterUser ? <>
               <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
               {draft.attendance_tracking_enabled !== false ? (
@@ -699,41 +736,59 @@ function UserCard({
               ) : null}
               <span style={styles.modalHint}>{text.attendancePayrollHelp}</span>
             </> : null}
-            <PayrollContractStatus user={user} draft={draft} text={text} contracts={contracts} />
-          {hasLevelEditor ? <div style={styles.subsection}>
-            <SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>
-            <LevelDetails levelInfo={user.levelInfo} text={text} />
-            {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.fieldNotice}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
-            {/* 목록의 레벨 일정 줄을 없애면서, 그 줄에만 있던 월 기준 전환 안내를 이 영역(레벨 설정 버튼 옆)으로 옮긴다. 조건은 기존과 같다. */}
-            {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
-            <button ref={levelButtonRef} type="button" style={styles.secondaryButton} disabled={isSaving || Boolean(user.termination_date)} onClick={openLevelModal}>{text.levelSettings}</button>
-            {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
-            {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)}</span> : null}
-          </div> : null}
-          {canManageUserPayroll(user) ? (
-            <PayrollBenefitsSection
-              user={user}
+            <PayrollContractStatus user={user} draft={draft} text={text} contracts={contracts} canManage={canManagePayroll} isSaving={isSaving} onManage={() => openSheet("contract")} />
+          {hasLevelEditor || canManagePayroll ? <div style={styles.subsection}>
+            <SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>
+            {hasLevelEditor ? <BenefitRow
+              emoji="📈"
+              title={text.longTermLevel}
               text={text}
-              lang={lang}
-              open={payrollOpen}
-              onOpen={() => payroll.setOpen(user.id, true)}
-              onClose={() => payroll.setOpen(user.id, false)}
-              applicability={applicability}
-              contracts={contracts}
-              isSaving={isSaving}
-              levelAction={hasLevelEditor ? <button type="button" style={styles.payrollLinkButton} disabled={isSaving || Boolean(user.termination_date)} onClick={openLevelModal}>{text.levelSettings}</button> : null}
-              onUnsavedChange={payroll.setUnsaved}
-              onMealChanged={payroll.onMealChanged}
-              onOpenPayrollSettings={openPayrollSettings}
-            />
-          ) : null}
+              status={levelBenefitStatus(user)}
+              detail={levelBenefitDetail(user, text)}
+              disabled={isSaving || Boolean(user.termination_date)}
+              detailButtonRef={levelButtonRef}
+              onSwitch={openLevelModal}
+              onDetail={openLevelModal}
+              notes={<>
+                {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.modalMuted}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
+                {/* 목록의 레벨 일정 줄에만 있던 월 기준 전환 안내(조건은 기존과 같다). */}
+                {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
+                {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
+                {/* 레벨 모달의 '적용'은 아직 저장이 아니다. 저장 전에는 스위치가 현재 정책을 그대로 보여 준다. */}
+                {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span role="status" style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)} · {text.levelPendingSave}<br />{text.levelPendingSaveHelp}</span> : null}
+              </>}
+            /> : null}
+            {canManagePayroll ? BENEFIT_ROWS.map((row) => {
+              const status = benefits.status(row.key);
+              const director = row.key === "insurance" && isDirectorManagedInsurance(user.username);
+              // 근태 미사용 직원은 식대·개근을 켤 수 없다(기존 서버 검증과 같다). 끄기·상세 설정은 가능하다.
+              const needsAttendance = (row.key === "meal" || row.key === "bonus") && status.state === "ready" && !status.on && status.attendanceTrackingEnabled === false;
+              return <BenefitRow
+                key={row.key}
+                emoji={row.emoji}
+                title={text[row.title]}
+                text={text}
+                status={director ? { state: "ready", on: false, configured: false, since: null, scheduled: null } : status}
+                detail={director ? text.insuranceDirectorManaged : benefitDetail(row.key, status, text)}
+                disabled={isSaving || director}
+                switchDisabled={needsAttendance}
+                onSwitch={() => openSheet(row.key, { enable: !(status.state === "ready" && status.on) })}
+                onDetail={() => openSheet(row.key)}
+                onRetry={() => benefits.reload(row.key)}
+                notes={<>
+                  {needsAttendance ? <span style={styles.modalMuted}>{text.requiresAttendance}</span> : null}
+                  {row.key === "bonus" ? <span style={styles.modalMuted}>{text.bonusSwitchHelp}</span> : null}
+                </>}
+              />;
+            }) : null}
+          </div> : null}
           {/* 급여 대상 예외: 기존 허용 대상(owner/master 등 사장 그룹)에게만, 기존 저장 조건 그대로. */}
           {isAdminGroupUser && !user.is_system_account ? <div style={styles.subsection}>
             <SubsectionTitle emoji="⚙️">{text.payrollException}</SubsectionTitle>
             <Toggle label={text.payrollEligibleOverride} checked={draft.payroll_eligible_override === true} onChange={value => update("payroll_eligible_override", value ? true : null)} />
             <span style={styles.modalHint}>{text.payrollEligibleOverrideHelp}</span>
           </div> : null}
-          </section>
+          </CollapsibleSection>
           {!isMasterUser ? <section style={sectionStyle("appAccess")}>
             <SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>
             <Toggle label={text.appLoginAllowed} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
@@ -774,6 +829,21 @@ function UserCard({
           </div>
         </fieldset>
       ) : null}
+      {sheetView && typeof document !== "undefined" ? (
+        <PayrollSettingSheet
+          user={user}
+          text={text}
+          lang={lang}
+          view={sheetView}
+          request={payroll.openRequest}
+          contracts={contracts}
+          isSaving={isSaving}
+          onClose={() => { payroll.setOpen(user.id, false); }}
+          onFinish={(result) => finishSetting(sheetView, result)}
+          onUnsavedChange={payroll.setUnsaved}
+          onOpenPayrollSettings={openPayrollSettings}
+        />
+      ) : null}
       {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); focusLevelOpener(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); focusLevelOpener(); }} /> : null}
     </article>
   );
@@ -806,26 +876,143 @@ function userDraftChanged(user: UserRow, draft: UserRow) {
   return EDITABLE_USER_KEYS.some(key => (draft[key] ?? null) !== (user[key] ?? null));
 }
 
-/** 현재 급여계약 한 줄 요약. 계약 조회는 카드가 소유한 usePayrollContracts 결과를 받아 쓴다(별도 조회 없음). */
-function PayrollContractStatus({ user, draft, text, contracts }: {
+/**
+ * 💰 현재 급여계약 1~2줄 요약과 "계약 관리"(급여계약 전용 모달). 계약 조회는 카드가 소유한 usePayrollContracts 결과를
+ * 받아 쓴다(별도 조회 없음). 급여계약은 단순 ON/OFF가 아니므로 스위치로 표현하지 않는다.
+ */
+function PayrollContractStatus({ user, draft, text, contracts, canManage, isSaving, onManage }: {
   user: UserRow; draft: UserRow; text: AdminUsersPageText; contracts: PayrollContractsController;
+  canManage: boolean; isSaving: boolean; onManage: () => void;
 }) {
-  const canOpenPayrollSettings = canManageUserPayroll(user);
   const ready = !contracts.loading && !contracts.loadFailed;
   const current = ready ? contracts.current : null;
   const mismatch = current !== null
     && requiresFixedMonthlyContract(draft.role, draft.attendance_tracking_enabled !== false) !== (current.calculationBasis === "fixed_monthly");
-  return <>
-    <div style={styles.statusRow} aria-live="polite">
-      <span style={styles.fieldLabel}>{text.payrollContractCurrent}</span>
+  return <div style={styles.subsection}>
+    <div style={styles.sectionHead}>
+      <SubsectionTitle emoji="💰">{text.payrollContract}</SubsectionTitle>
+      {canManage ? <button type="button" aria-haspopup="dialog" disabled={isSaving} onClick={onManage} style={styles.payrollOpenButton}>{text.contractManage}</button> : null}
+    </div>
+    <div style={styles.contractLines} aria-live="polite">
       {contracts.loading ? <span style={styles.modalMuted}>{text.payrollContractLoading}</span>
         : contracts.loadFailed ? <span style={styles.contractError}>{text.payrollContractLoadFailed} <button type="button" style={styles.inlineEditButton} onClick={contracts.reload}>{text.retry}</button></span>
-        : <strong style={styles.contractValue}>{current ? payrollContractLabel(current, text) : text.payrollContractNone}</strong>}
+        : current ? <>
+          <strong style={styles.contractPrimary}>{payrollContractLabel(current, text)}</strong>
+          <span style={styles.contractMeta}>{text.contractBaseSalary} {money(current.baseSalary)} · {text.contractEffectiveMonth} {current.effectiveFrom.slice(0, 7)}</span>
+        </> : <strong style={styles.contractPrimary}>{text.payrollContractNone}</strong>}
     </div>
     {ready && contracts.scheduled ? <span style={styles.modalMuted}>{text.payrollContractScheduled} {contracts.scheduled.effectiveFrom} · {payrollContractLabel(contracts.scheduled, text)}</span> : null}
     {mismatch ? <span role="status" style={styles.fieldNotice}>{text.payrollContractMismatch}</span> : null}
-    {canOpenPayrollSettings ? null : <span style={styles.modalMuted}>{text.payrollSettingsUnavailable}</span>}
-  </>;
+    {canManage || user.is_system_account ? null : <span style={styles.modalMuted}>{text.payrollSettingsUnavailable}</span>}
+  </div>;
+}
+
+type BenefitRowKey = Exclude<PayrollSheetView, "contract">;
+const BENEFIT_ROWS: readonly { key: BenefitRowKey & BenefitKey; emoji: string; title: "benefitMeal" | "benefitBonus" | "benefitInsurance" | "benefitTax" }[] = [
+  { key: "meal", emoji: "🍚", title: "benefitMeal" },
+  { key: "bonus", emoji: "💯", title: "benefitBonus" },
+  { key: "insurance", emoji: "🛡️", title: "benefitInsurance" },
+  { key: "tax", emoji: "🧾", title: "benefitTax" },
+];
+
+function scheduleText(scheduled: BenefitSchedule | null, text: AdminUsersPageText) {
+  return scheduled ? `${scheduled.on ? text.scheduledOn : text.scheduledOff} ${scheduled.from}` : "";
+}
+
+/** 스위치 옆 한 줄 상태(조회 결과 그대로). 조회 중·실패는 BenefitRow가 따로 표시한다. */
+function benefitDetail(key: BenefitKey, status: BenefitStatus, text: AdminUsersPageText) {
+  if (status.state !== "ready") return "";
+  const since = status.since ? ` · ${status.since}~` : "";
+  const parts: string[] = [];
+  if (key === "meal" || key === "bonus") parts.push(`${status.on ? text.benefitEligible : text.benefitIneligible}${status.on ? since : ""}`);
+  else if (key === "insurance") parts.push(!status.configured ? text.insuranceUnset : status.on ? `${text.insuranceEnrolled} · ${text.insuranceBase} ${money(status.insuranceBaseAmount)}` : text.insuranceNotEnrolled);
+  else parts.push(!status.configured ? text.taxUnset : `${status.on ? text.taxResident : text.taxNotApplicable}${status.on && status.requiresReview ? ` · ${text.taxReview}` : ""}`);
+  const scheduled = scheduleText(status.scheduled, text);
+  if (scheduled) parts.push(scheduled);
+  return parts.join(" · ");
+}
+
+/** 장기근무 레벨 스위치: 실제 적용 중인 정책(levelProgramPolicy) 기준. 예약 변경은 따로 표시한다. */
+function levelBenefitStatus(user: UserRow): Extract<BenefitStatus, { state: "ready" }> {
+  const policy = user.levelProgramPolicy;
+  const on = currentPolicyEnabled(user);
+  const scheduled = policy?.hasScheduledChange && policy.nextEnabled !== policy.currentEnabled ? { on: policy.nextEnabled, from: policy.nextEffectiveFrom.slice(0, 7) } : null;
+  return { state: "ready", on, configured: true, since: null, scheduled };
+}
+function levelBenefitDetail(user: UserRow, text: AdminUsersPageText) {
+  const status = levelBenefitStatus(user);
+  const levelInfo = user.levelInfo;
+  const current = !status.on ? text.benefitNotApplied
+    : levelInfo.eligible && levelInfo.displayLabel ? [`${text.currentLevel} ${levelInfo.displayLabel}`, isEmployeeLevelMonthBaseMode(levelInfo.baseDateSource) ? `${text.nextLevel} ${levelInfo.nextLevelDate ?? text.highestLevel}` : ""].filter(Boolean).join(" · ")
+    : text.benefitApplied;
+  const scheduled = scheduleText(status.scheduled, text);
+  return [current, scheduled].filter(Boolean).join(" · ");
+}
+
+/**
+ * 복리후생 항목 한 줄: 항목명·현재 상태(누르면 상세 설정) + 슬라이딩 스위치.
+ * 스위치는 저장하지 않는다. 누르면 그 설정의 모달을 열고(목표 상태를 미리 채움), 저장 후 다시 조회한 실제 상태만 표시한다.
+ * 조회 중·실패에는 OFF로 단정하지 않고 상태 확인 중/조회 실패와 재조회를 보여 준다.
+ */
+function BenefitRow({ emoji, title, text, status, detail, disabled, switchDisabled, detailButtonRef, onSwitch, onDetail, onRetry, notes }: {
+  emoji: string; title: string; text: AdminUsersPageText; status: BenefitStatus; detail: string;
+  disabled: boolean; switchDisabled?: boolean; detailButtonRef?: Ref<HTMLButtonElement>;
+  onSwitch: (event: MouseEvent<HTMLButtonElement>) => void; onDetail: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void; notes?: ReactNode;
+}) {
+  const detailId = useId();
+  const ready = status.state === "ready";
+  const on = ready && status.on;
+  return <div style={styles.benefitItem}>
+    <div style={styles.benefitRow}>
+      <button ref={detailButtonRef} type="button" aria-haspopup="dialog" disabled={disabled || !ready} onClick={onDetail} style={styles.benefitInfo}>
+        <span style={styles.benefitTitle}><span aria-hidden="true">{emoji}</span>{title}</span>
+        <span id={detailId} style={styles.benefitDetail}>
+          {status.state === "loading" ? text.statusChecking : status.state === "error" ? text.statusLoadFailed : detail}
+          {ready ? <span style={styles.benefitDetailLink}> · {text.detailSettings} ›</span> : null}
+        </span>
+      </button>
+      {status.state === "error" ? (
+        <button type="button" style={styles.benefitRetry} onClick={onRetry}>{text.retry}</button>
+      ) : (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={title}
+          aria-describedby={detailId}
+          aria-busy={status.state === "loading" || undefined}
+          disabled={disabled || !ready || switchDisabled}
+          onClick={onSwitch}
+          style={styles.switchButton}
+        >
+          <span style={styles.switchText}>{status.state === "loading" ? "…" : on ? "ON" : "OFF"}</span>
+          <SwitchTrack on={on} />
+        </button>
+      )}
+    </div>
+    {notes}
+  </div>;
+}
+
+/** 둥근 트랙과 원형 손잡이(색 + ON/OFF 글자 + aria-checked로 상태를 함께 전달). */
+function SwitchTrack({ on }: { on: boolean }) {
+  return <span aria-hidden="true" style={{ ...styles.switchTrack, ...(on ? styles.switchTrackOn : null) }}>
+    <span style={{ ...styles.switchKnob, ...(on ? styles.switchKnobOn : null) }} />
+  </span>;
+}
+
+/** 기본정보·근무·급여 카드: 헤더 전체가 펼치기/접기 버튼. 내용은 펼쳤을 때만 렌더링한다(값은 draft에 남는다). */
+function CollapsibleSection({ tone, emoji, title, open, onToggle, children }: {
+  tone: keyof typeof SECTION_TONES; emoji: string; title: string; open: boolean; onToggle: () => void; children: ReactNode;
+}) {
+  const bodyId = useId();
+  return <section style={sectionStyle(tone)}>
+    <button type="button" aria-expanded={open} aria-controls={open ? bodyId : undefined} onClick={onToggle} style={styles.sectionToggle}>
+      <SectionTitle emoji={emoji}>{title}</SectionTitle>
+      <span aria-hidden="true" style={{ ...styles.groupChevron, transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+    </button>
+    {open ? <div id={bodyId} style={styles.sectionBody}>{children}</div> : null}
+  </section>;
 }
 
 // 직원 상세 카드별 은은한 배경색(입력창·버튼은 흰 바탕/기존 색 유지).
@@ -899,81 +1086,63 @@ function PayrollSheet({ title, closeLabel, onClose, children, footer }: {
   );
 }
 
+const SHEET_TITLES: Record<PayrollSheetView, { emoji: string; title: "payrollContract" | "benefitMeal" | "benefitBonus" | "benefitInsurance" | "benefitTax" }> = {
+  contract: { emoji: "💰", title: "payrollContract" },
+  meal: { emoji: "🍚", title: "benefitMeal" },
+  bonus: { emoji: "💯", title: "benefitBonus" },
+  insurance: { emoji: "🛡️", title: "benefitInsurance" },
+  tax: { emoji: "🧾", title: "benefitTax" },
+};
+
 /**
- * 직원 상세의 "급여·복리후생" 카드. 카드에는 이번 달 적용 아이콘 요약과 "관리" 버튼만 두고,
- * 관리를 누르면 전용 시트에서 공용 패널(급여설정 직원 탭과 같은 EmployeePayrollSettingsPanel)을 연다.
- * 시트는 한 번에 한 직원만 열리며, 계약은 카드의 usePayrollContracts를 공유한다.
+ * 근무·급여의 모달: 급여계약 전용(계약 요약·등록·정정·이력·저장 확인 대기) 또는 복리후생 설정 하나.
+ * 급여설정 직원 탭과 같은 EmployeePayrollSettingsPanel을 only로 잘라 써서 저장 로직·검증·미저장 보호(P0)·
+ * 저장 확인 대기·중복 저장 차단이 그대로 적용된다. 보험·세금·식대·개근 카드는 계약 모달에 나오지 않고,
+ * 설정 모달에는 그 설정 카드 하나만 마운트·조회된다. 계약은 카드의 usePayrollContracts를 공유한다.
  */
-function PayrollBenefitsSection({ user, text, lang, open, onOpen, onClose, applicability, contracts, levelAction, isSaving, onUnsavedChange, onMealChanged, onOpenPayrollSettings }: {
-  user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; open: boolean; onOpen: () => void; onClose: () => boolean;
-  applicability: PayrollIconsForUser;
-  contracts: PayrollContractsController; levelAction: ReactNode; isSaving: boolean;
-  onUnsavedChange: (state: PayrollUnsavedState) => void; onMealChanged: () => void; onOpenPayrollSettings: () => void;
+function PayrollSettingSheet({ user, text, lang, view, request, contracts, isSaving, onClose, onFinish, onUnsavedChange, onOpenPayrollSettings }: {
+  user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; view: PayrollSheetView; request: PayrollSettingFormRequest | null;
+  contracts: PayrollContractsController; isSaving: boolean; onClose: () => void; onFinish: (result: PayrollSettingFormResult) => void;
+  onUnsavedChange: (state: PayrollUnsavedState) => void; onOpenPayrollSettings: () => void;
 }) {
-  const openButtonRef = useRef<HTMLButtonElement>(null);
-  const wasOpen = useRef(open);
-  const lastMealHistory = useRef<string | null>(null);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const panelUser = useMemo<EmployeePayrollPanelUser>(() => ({
     id: Number(user.id), name: user.name || user.full_name, username: user.username, role: user.role,
     attendanceTrackingEnabled: user.attendance_tracking_enabled !== false, levelInfo: user.levelInfo,
   }), [user]);
-  // 시트를 닫으면 "관리" 버튼으로 포커스를 돌려준다.
-  useEffect(() => {
-    if (wasOpen.current && !open) openButtonRef.current?.focus();
-    wasOpen.current = open;
-  }, [open]);
-  // 식대 대상 저장 후 이력이 바뀌면 목록의 식대 아이콘을 맞추기 위해 직원 목록을 다시 조회한다.
-  const handleMealHistory = useCallback((state: SettingHistoryState<MealAllowanceVersion>) => {
-    if (state.status !== "ready") return;
-    const serialized = JSON.stringify(state.history);
-    if (lastMealHistory.current !== null && lastMealHistory.current !== serialized) onMealChanged();
-    lastMealHistory.current = serialized;
-  }, [onMealChanged]);
   const name = user.name || user.full_name || user.username;
-  const readyIcons = applicability.status === "ready" ? applicability.icons : null;
-  return <div style={styles.subsection}>
-    <div style={styles.sectionHead}>
-      <SubsectionTitle emoji="💳">{text.payrollBenefits}</SubsectionTitle>
-      <button ref={openButtonRef} type="button" aria-haspopup="dialog" aria-expanded={open} disabled={isSaving} onClick={onOpen} style={styles.payrollOpenButton}>{text.payrollManage}</button>
-    </div>
-    <div style={styles.statusRow}>
-      <span style={styles.fieldLabel}>{text.payrollIconsGroup}</span>
-      <span style={styles.payrollIcons} role="group" aria-label={text.payrollIconsGroup}>
-        {applicability.status === "loading" ? <span style={styles.payrollIconsMuted} role="status">{text.payrollIconsLoading}</span>
-          : applicability.status === "error" ? <span style={styles.payrollIconsMuted} role="status" title={text.payrollIconsUnavailable}>{text.payrollIconsUnavailableShort}</span>
-          : readyIcons?.length ? <PayrollIconList icons={readyIcons} />
-          : <span style={styles.payrollIconsMuted}>{text.payrollIconsNone}</span>}
-      </span>
-    </div>
-    {open && typeof document !== "undefined" ? (
-      <PayrollSheet
-        title={`${text.payrollBenefits} · ${name}`}
-        closeLabel={text.close}
-        onClose={() => { onClose(); }}
-        footer={<>
-          <button type="button" style={styles.secondaryButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
-          <button type="button" style={styles.primaryButton} onClick={() => { onClose(); }}>{text.close}</button>
-        </>}
-      >
-        <EmployeePayrollSettingsPanel
-          user={panelUser}
-          lang={lang}
-          contracts={contracts}
-          summaryReference={resolveSettingsSummaryReference(null, today)}
-          showIdentity={false}
-          anchorPrefix={`user-${user.id}-`}
-          levelAction={levelAction}
-          onUnsavedChange={onUnsavedChange}
-          onMealHistoryChange={handleMealHistory}
-        />
-      </PayrollSheet>
-    ) : null}
-  </div>;
+  const meta = SHEET_TITLES[view];
+  return <PayrollSheet
+    title={`${meta.emoji} ${text[meta.title]} · ${name}`}
+    closeLabel={text.close}
+    onClose={onClose}
+    footer={<>
+      <button type="button" style={styles.secondaryButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
+      <button type="button" style={styles.primaryButton} onClick={onClose}>{text.close}</button>
+    </>}
+  >
+    <EmployeePayrollSettingsPanel
+      user={panelUser}
+      lang={lang}
+      contracts={contracts}
+      summaryReference={resolveSettingsSummaryReference(null, today)}
+      showIdentity={false}
+      anchorPrefix={`user-${user.id}-`}
+      only={view}
+      // 상세 설정(또는 급여설정에서 돌아와 다시 연 경우)은 현재 값으로 폼을 연다(목표 상태 없음).
+      formRequest={view === "contract" ? undefined : request ?? { enable: null }}
+      onFormFinish={view === "contract" ? undefined : onFinish}
+      onUnsavedChange={onUnsavedChange}
+    />
+  </PayrollSheet>;
 }
 
+/** 근태 기록·앱 로그인·급여 대상 예외 토글: 기능·저장 정책은 그대로, 모양만 슬라이딩 스위치로 통일한다. */
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
-  return <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} style={{ ...(checked ? styles.segmentActive : styles.segment), ...styles.toggle }}><span>{label}</span><strong>{checked ? "ON" : "OFF"}</strong></button>;
+  return <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} style={styles.toggleRow}>
+    <span style={styles.toggleLabel}>{label}</span>
+    <span style={styles.switchControl}><strong style={styles.switchText}>{checked ? "ON" : "OFF"}</strong><SwitchTrack on={checked} /></span>
+  </button>;
 }
 
 function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
@@ -991,6 +1160,8 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
     };
   });
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // 직원 상세에서 바로 열어도(급여 시트 없이) Tab/Shift+Tab이 이 창 안에서만 돈다(최상단 모달 판정은 열린 dialog 우선).
+  useModalFocusTrap(dialogRef);
   type HistoryResponse = { ok: boolean; history?: ReturnType<typeof buildEmployeeLevelHistory>;
     adminChanges?: { id: number; action: string; createdAt: string }[];
     contracts?: (CompensationContract & { effectiveFrom: string; effectiveTo: string | null })[] };
@@ -1192,16 +1363,6 @@ function LevelHistoryView({ history, currentInfo, terminationDate, pending, text
 }
 
 /** Current policy stays compact; comparisons belong in the settings modal. */
-function LevelDetails({ levelInfo, text }: { levelInfo: EmployeeLevelInfo; text: AdminUsersPageText }) {
-  if (!levelInfo.eligible) return null;
-  return (
-    <div style={styles.levelSummary}>
-      <span>{text.currentLevel} {levelInfo.displayLabel}</span>
-      {isEmployeeLevelMonthBaseMode(levelInfo.baseDateSource) ? <span>{text.nextLevel} {levelInfo.nextLevelDate ?? text.highestLevel}</span> : null}
-    </div>
-  );
-}
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={styles.field}>
@@ -1227,12 +1388,17 @@ export default function AdminUsersPage() {
   const [payrollApplicability, setPayrollApplicability] = useState<PayrollApplicabilityState>({ status: "loading" });
   // ?userId=&section= (급여설정의 "직원관리로 이동"·뒤로가기 복귀): 해당 직원 상세를 열어 둔다.
   const [initialFocus] = useState(() => {
-    if (typeof window === "undefined") return { userId: null as string | null, section: null as PayrollFocusSection | null };
+    if (typeof window === "undefined") return { userId: null as string | null, section: null as PayrollFocusSection | null, view: null as PayrollSheetView | null };
     const search = new URLSearchParams(window.location.search);
     const userId = search.get("userId");
-    return { userId, section: userId ? (search.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null };
+    const sheet = search.get("sheet");
+    const view = PAYROLL_SHEET_VIEWS.find((candidate) => candidate === sheet) ?? null;
+    return { userId, section: userId ? (search.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null, view };
   });
-  const [payrollOpenUserId, setPayrollOpenUserId] = useState<string | null>(initialFocus.section === "payroll" ? initialFocus.userId : null);
+  // 급여설정에서 ?sheet=로 돌아오면 그 모달을 다시 연다(계약 또는 설정 하나). 없으면 근무·급여만 펼친다.
+  const [payrollSheet, setPayrollSheet] = useState<PayrollSheetState | null>(() => (
+    initialFocus.section === "payroll" && initialFocus.userId && initialFocus.view ? { userId: initialFocus.userId, view: initialFocus.view, request: null } : null
+  ));
   const [payrollUnsaved, setPayrollUnsavedState] = useState<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
   // 이탈 확인은 패널이 알린 최신 값(ref)으로 한다. 입력 직후의 Escape·닫기·이동도 다음 렌더를 기다리지 않고 판단한다.
   const payrollUnsavedRef = useRef<PayrollUnsavedState>(NO_PAYROLL_UNSAVED);
@@ -1246,19 +1412,26 @@ export default function AdminUsersPage() {
   useLeaveGuard(payrollLeave, latestPayrollLeave);
   const refreshUsers = useCallback(() => setQueryAttempt(current => current + 1), []);
   const payrollControl: PayrollSectionControl = {
-    openUserId: payrollOpenUserId,
+    openUserId: payrollSheet?.userId ?? null,
+    openView: payrollSheet?.view ?? null,
+    openRequest: payrollSheet?.request ?? null,
+    initialView: initialFocus.view,
     unsaved: () => payrollUnsavedRef.current,
     leaveMessage: latestPayrollLeave,
     initialFocusUserId: initialFocus.userId,
     initialSection: initialFocus.section,
-    setOpen: (id, open) => {
+    setOpen: (id, open, view = "contract", request = null) => {
       const key = String(id);
-      // 지금 열린 패널이 닫히는 경우(같은 직원 접기, 다른 직원 열기)에만 확인한다.
-      const closesOpenPanel = payrollOpenUserId !== null && (open ? payrollOpenUserId !== key : payrollOpenUserId === key);
+      // 지금 열린 모달이 닫히는 경우(닫기, 다른 모달·직원으로 바꾸기)에만 확인한다.
+      const closesOpenPanel = payrollSheet !== null && (open ? payrollSheet.userId !== key || payrollSheet.view !== view : payrollSheet.userId === key);
       const message = closesOpenPanel ? latestPayrollLeave() : null;
       if (message && !window.confirm(message)) return false;
-      setPayrollOpenUserId(open ? key : current => (current === key ? null : current));
+      setPayrollSheet(open ? { userId: key, view, request } : current => (current?.userId === key ? null : current));
       return true;
+    },
+    finish: (id) => {
+      const key = String(id);
+      setPayrollSheet((current) => (current?.userId === key ? null : current));
     },
     setUnsaved: setPayrollUnsaved,
     onMealChanged: refreshUsers,
@@ -1845,6 +2018,27 @@ const styles = {
   sheetTitle: { minWidth: 0, fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
   sheetBody: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: 12, background: "#f9fafb" },
   sheetFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
+  sectionToggle: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 44, margin: "-4px 0", padding: "4px 0", border: "none", background: "transparent", color: "inherit", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
+  sectionBody: { display: "grid", gap: 8, minWidth: 0 },
+  contractLines: { display: "grid", gap: 2, minWidth: 0 },
+  contractPrimary: { fontSize: 13, fontWeight: 800, color: "#111827", overflowWrap: "anywhere" },
+  contractMeta: { fontSize: 12, color: "#374151", overflowWrap: "anywhere" },
+  benefitItem: { display: "grid", gap: 4, minWidth: 0 },
+  benefitRow: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, padding: "4px 4px 4px 10px", border: "1px solid #e0f2fe", borderRadius: 10, background: "#fff" },
+  benefitInfo: { flex: 1, minWidth: 0, minHeight: 44, display: "grid", alignContent: "center", gap: 1, padding: "4px 0", border: "none", background: "transparent", color: "#111827", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
+  benefitTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, minWidth: 0, overflowWrap: "anywhere" },
+  benefitDetail: { fontSize: 11, color: "#4b5563", lineHeight: 1.4, overflowWrap: "anywhere" },
+  benefitDetailLink: { color: "#2563eb", fontWeight: 700, whiteSpace: "nowrap" },
+  benefitRetry: { flexShrink: 0, minHeight: 44, padding: "0 12px", border: "1px solid #fca5a5", borderRadius: 999, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  switchButton: { flexShrink: 0, minWidth: 44, minHeight: 44, display: "inline-flex", alignItems: "center", gap: 6, padding: "0 6px", border: "none", borderRadius: 999, background: "transparent", color: "#111827", fontFamily: "inherit", cursor: "pointer" },
+  switchControl: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 },
+  switchText: { minWidth: 26, fontSize: 11, fontWeight: 900, textAlign: "right", color: "#374151" },
+  switchTrack: { position: "relative", display: "inline-block", flexShrink: 0, width: 44, height: 24, borderRadius: 999, background: "#d1d5db", transition: "background-color 0.18s ease" },
+  switchTrackOn: { background: "#16a34a" },
+  switchKnob: { position: "absolute", top: 2, left: 2, width: 20, height: 20, borderRadius: 999, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.3)", transition: "transform 0.18s ease" },
+  switchKnobOn: { transform: "translateX(20px)" },
+  toggleRow: { width: "100%", minHeight: 44, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 8px 6px 12px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#fff", color: "#111827", fontFamily: "inherit", fontSize: 13, fontWeight: 800, textAlign: "left", cursor: "pointer" },
+  toggleLabel: { minWidth: 0, overflowWrap: "anywhere" },
   subsection: { display: "grid", gap: 8, paddingTop: 10, marginTop: 2, borderTop: "1px solid #bae6fd", minWidth: 0 },
   subsectionTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#0f172a" },
   statusActions: { display: "inline-flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, minWidth: 0 },

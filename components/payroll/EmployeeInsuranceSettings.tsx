@@ -14,6 +14,7 @@ import type { PayrollInsuranceSettingVersion } from "@/lib/payroll/insurance";
 import { formatInsuranceNote } from "@/lib/payroll/insurance-note";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
 import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
+import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 function currentMonth() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -34,8 +35,11 @@ export type EmployeeInsuranceLoadState = {
 };
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-function insuranceFormBaseline(setting: PayrollInsuranceSettingVersion | null) {
-  return { enrolled: setting?.isEnrolled ?? false, base: String(setting?.insuranceBaseAmount ?? 0), effectiveMonth: currentMonth(), note: "" };
+// intent: 스위치로 연 모달의 목표 가입 상태(없으면 현재 상태). 가입으로 채울 때 기준급여가 없으면 폼의 기존 기본값을 쓴다.
+function insuranceFormBaseline(setting: PayrollInsuranceSettingVersion | null, intent: boolean | null = null) {
+  const enrolled = intent ?? setting?.isEnrolled ?? false;
+  const base = setting?.insuranceBaseAmount ?? 0;
+  return { enrolled, base: String(intent === true && base < 1 ? 5000000 : base), effectiveMonth: currentMonth(), note: "" };
 }
 
 export default function EmployeeInsuranceSettings({
@@ -43,18 +47,28 @@ export default function EmployeeInsuranceSettings({
   vi,
   onLoadStateChange,
   onDirtyChange,
+  formRequest,
+  onFormFinish,
 }: {
   userId: number;
   vi: boolean;
   onLoadStateChange?: (userId: number, state: EmployeeInsuranceLoadState) => void;
   /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 enable 값으로 미리 채운다(그 값이 미저장 판정 기준). */
+  formRequest?: PayrollSettingFormRequest | null;
+  /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
+  onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
   const mounted = useRef(true);
+  // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
+  const formRequestRef = useRef(formRequest ?? null);
+  const autoOpenedRef = useRef(false);
   const [history, setHistory] = useState<PayrollInsuranceSettingVersion[]>([]);
   const [current, setCurrent] =
     useState<PayrollInsuranceSettingVersion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [enrolled, setEnrolled] = useState(false);
   const [base, setBase] = useState("0");
   const [effectiveMonth, setEffectiveMonth] = useState(currentMonth);
@@ -64,8 +78,8 @@ export default function EmployeeInsuranceSettings({
   const [loaded, setLoaded] = useState(false);
 
   const resetForm = useCallback(
-    (setting: PayrollInsuranceSettingVersion | null) => {
-      const baseline = insuranceFormBaseline(setting);
+    (setting: PayrollInsuranceSettingVersion | null, intent: boolean | null = null) => {
+      const baseline = insuranceFormBaseline(setting, intent);
       setEnrolled(baseline.enrolled);
       setBase(baseline.base);
       setEffectiveMonth(baseline.effectiveMonth);
@@ -99,7 +113,15 @@ export default function EmployeeInsuranceSettings({
         const nextCurrent = data.current ?? null;
         setHistory(data.history ?? []);
         setCurrent(nextCurrent);
-        resetForm(nextCurrent);
+        const request = formRequestRef.current;
+        if (request && !autoOpenedRef.current) {
+          autoOpenedRef.current = true;
+          resetForm(nextCurrent, request.enable);
+          setFormIntent(request.enable);
+          setFormOpen(true);
+        } else {
+          resetForm(nextCurrent);
+        }
         onLoadStateChange?.(userId, { current: nextCurrent, history: data.history ?? [], error: false, loading: false });
         setLoaded(true);
       } catch (loadError: unknown) {
@@ -143,10 +165,11 @@ export default function EmployeeInsuranceSettings({
     };
   }, [load, resetForm, userId, vi]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ enrolled, base, effectiveMonth, note }, insuranceFormBaseline(current))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ enrolled, base, effectiveMonth, note }, insuranceFormBaseline(current, formIntent))), onDirtyChange);
 
   function openForm() {
     resetForm(current);
+    setFormIntent(null);
     setFormOpen(true);
   }
 
@@ -179,10 +202,12 @@ export default function EmployeeInsuranceSettings({
     await load();
     if (!mounted.current) return;
     setFormOpen(false);
+    setFormIntent(null);
+    onFormFinish?.("saved");
   }
 
   return (
-    <EmployeeSettingCard title={vi ? "Bảo hiểm nhân viên" : "직원 보험"} applied={loaded ? current?.isEnrolled === true : null} vi={vi}>
+    <EmployeeSettingCard title={vi ? "Bảo hiểm nhân viên" : "직원 보험"} applied={loaded ? current?.isEnrolled === true : null} vi={vi} defaultOpen={Boolean(formRequest)}>
       <div style={s.head}>
         <div>
           <p style={s.help}>
@@ -279,6 +304,8 @@ export default function EmployeeInsuranceSettings({
               onClick={() => {
                 setFormOpen(false);
                 resetForm(current);
+                setFormIntent(null);
+                onFormFinish?.("cancelled");
               }}
             >
               {vi ? "Hủy" : "취소"}

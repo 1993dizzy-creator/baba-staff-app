@@ -196,7 +196,8 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   // 2026-11: the list card no longer renders a level schedule line (LevelSummary removed);
   // the level badge stays and the schedule lives in the employee detail.
   assert.doesNotMatch(page, /function LevelSummary\(|<LevelSummary /);
-  const detailsBody = page.slice(page.indexOf("function LevelDetails("), page.indexOf("function Field("));
+  // 2026-11 4차: the level details are the 📈 benefit row's one-line status (LevelDetails folded into levelBenefitDetail).
+  const detailsBody = page.slice(page.indexOf("function levelBenefitDetail("), page.indexOf("function BenefitRow("));
   assert.match(detailsBody, /levelInfo\.nextLevelDate/);
   assert.doesNotMatch(detailsBody, /cumulativeRaiseAmount/);
 });

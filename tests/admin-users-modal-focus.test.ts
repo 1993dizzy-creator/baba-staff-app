@@ -28,7 +28,7 @@ test("PayrollModal and the payroll sheet use the trap; Escape only closes the to
   assert.match(modal, /const sectionRef=useRef<HTMLElement>\(null\);useModalFocusTrap\(sectionRef\);const closeRef/);
   assert.match(modal, /if\(e\.key==="Escape"&&isTopModal\(sectionRef\.current\)\)onCloseRef\.current\(\)/);
   assert.match(modal, /<section ref=\{sectionRef\} role="dialog" aria-modal="true"/);
-  const sheet = page.slice(page.indexOf("function PayrollSheet("), page.indexOf("function PayrollBenefitsSection("));
+  const sheet = page.slice(page.indexOf("function PayrollSheet("), page.indexOf("const SHEET_TITLES"));
   // registered before the close button takes focus so the opener (관리) is remembered
   assert.ok(sheet.indexOf("useModalFocusTrap(sheetRef);") < sheet.indexOf("closeRef.current?.focus();"));
   assert.match(sheet, /if \(!isTopModal\(sheetRef\.current\)\) return;\n\s+onCloseRef\.current\(\);/);
@@ -37,6 +37,9 @@ test("PayrollModal and the payroll sheet use the trap; Escape only closes the to
 test("level settings dialog returns focus to the button that opened it (detail card or payroll sheet) after it closes", () => {
   assert.match(page, /const openLevelModal = \(event: \{ currentTarget: HTMLElement \}\) => \{ levelOpenerRef\.current = event\.currentTarget; setLevelModalOpen\(true\); \};/);
   assert.match(page, /window\.setTimeout\(\(\) => \{ const opener = levelOpenerRef\.current; \(opener\?\.isConnected \? opener : levelButtonRef\.current\)\?\.focus\(\); \}, 0\);/);
-  assert.equal(page.match(/onClick=\{openLevelModal\}>\{text\.levelSettings\}<\/button>/g)?.length, 2);
+  // 2026-11 4차: the level dialog opens from the 📈 benefit row (switch or 상세 설정); either one is the opener.
+  assert.match(page, /detailButtonRef=\{levelButtonRef\}\n\s+onSwitch=\{openLevelModal\}\n\s+onDetail=\{openLevelModal\}/);
+  // the level <dialog> also traps Tab when opened directly from the detail (no payroll sheet)
+  assert.match(page, /const dialogRef = useRef<HTMLDialogElement>\(null\);\n[^\n]*\n\s+useModalFocusTrap\(dialogRef\);/);
   assert.match(page, /onCancel=\{\(\) => \{ setLevelModalOpen\(false\); focusLevelOpener\(\); \}\}/);
 });
