@@ -2,8 +2,10 @@
 --   .eq("payment_status", 3).or("item_id.in.(...),item_code.in.(...)")
 -- item_code is already indexed (idx_pos_sales_receipt_lines_item_code); item_id was not,
 -- so the OR could not use a bitmap index path. Partial on payment_status = 3 to keep it small.
--- Plain CREATE INDEX (migrations run in a transaction, CONCURRENTLY is not allowed);
--- the table is ~32k rows, and the lock wait is bounded so POS sync writes are never queued long.
+-- Plain CREATE INDEX (migrations run in a transaction, CONCURRENTLY is not allowed).
+-- Plain CREATE INDEX may temporarily block POS sync writes.
+-- Lock acquisition wait is bounded to 5s;
+-- index creation statement is bounded to 60s.
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
 
