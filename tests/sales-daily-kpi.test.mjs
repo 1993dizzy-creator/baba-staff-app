@@ -121,12 +121,19 @@ for (const lang of ['ko', 'vi']) {
     const partial = renderDailySales(response(openKpi([...orders(), order(9, { Status: 7 })])), { lang });
     assert.ok(dailyCards(partial).includes(t.compactPartial));
     assert.ok(dailyCards(partial).includes(t.currentAverageUnavailable));
+    const partialNotice = partial.match(/<section role="status"[^>]*>.*?<\/section>/g)?.find(section => section.includes(t.openOrdersIncomplete));
+    assert.ok(partialNotice);
+    assert.match(partialNotice, /background:#f9fafb/);
+    assert.match(partialNotice, /color:#4b5563/);
+    assert.ok(!partialNotice.includes('#fffbeb'));
+    assert.ok(partialNotice.includes(t.lastCheckedAt));
     for (const status of ['not_enabled', 'unavailable', 'stale', 'incomplete']) {
       const unavailable = renderDailySales(response({ ...openKpi(), status }), { lang });
       assert.match(dailyCards(unavailable), /1\.300\.000/);
       assert.ok(dailyCards(unavailable).includes(t.paidOnly));
       assert.ok(unavailable.includes(t.overallScaleUnavailable));
       assert.ok(dailyCards(unavailable).includes(t.currentAverageUnavailable));
+      assert.match(unavailable, /<section role="alert"[^>]*background:#fffbeb/);
     }
     const menus = renderDailySales(response(openKpi([order(12, { TotalAmount: 200000 }, [line(1), line(2), line(3, { Status: 6 })])])), { lang });
     assert.ok(menus.includes(t.menuCountUnavailable));

@@ -39,7 +39,7 @@ export default function OpenOrdersPanel({ data, text, active = true }: {
       <span>{checkedLine}</span>
     </section>;
   }
-  return <section role={data.complete ? "status" : "alert"} style={data.complete ? note : warningCard}>
+  return <section role="status" style={data.complete ? note : partialCard}>
     {!data.complete ? <strong>{text.openOrdersIncomplete}</strong> : null}
     {data.detailWarnings && data.detailWarnings.length > 0 ? <span>{text.openOrdersDetailWarning}</span> : null}
     <span>{checkedLine} · {text.openOrdersNote}</span>
@@ -47,4 +47,5 @@ export default function OpenOrdersPanel({ data, text, active = true }: {
 }
 
 const note: CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, lineHeight: 1.45, color: "#6b7280", overflowWrap: "anywhere" };
+const partialCard: CSSProperties = { ...note, padding: "8px 10px", borderRadius: 12, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#4b5563" };
 const warningCard: CSSProperties = { ...note, padding: "10px 12px", borderRadius: 12, border: "1px solid #fcd34d", background: "#fffbeb", color: "#92400e", fontWeight: 600 };

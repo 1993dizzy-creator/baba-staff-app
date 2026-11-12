@@ -44,7 +44,7 @@ function fixture() {
     if (p === '/api/admin/sales/close-status') return { ok: true, businessDate: date, currentTotals: { total: 0, cash: 0, transfer: 0, card: 0, other: 0 },
       currentFingerprint: 'a'.repeat(64), sourceValid: true, latestClose: null, latestFinalCheck: null, drift: false, delta: null,
       canClose: pending(date).count === 0, canReclose: false, needsOwnerReview: false, monthClosed: false, finalCheckPending: false,
-      closeEligibilityReason: pending(date).count ? 'pending_payment' : 'eligible', closeAt: null,
+      closeEligibilityReason: pending(date).count ? 'pending_payment' : 'eligible', closeAt: null, businessPhase: 'past',
       finalSync: { runId: null, lastSyncedAt: null, cutoffAt: date + 'T03:00:00+07:00', eligible: false },
       ledgerProjection: { status: 'not_closed', total: 0 }, pendingPayments: pending(date), pendingHoldDates: [OTHER_HELD, HELD] };
     if (p === '/api/admin/sales/receipts') return { ok: true, businessDate: date, receipts: [...receipts.values()].map(listItem) };
@@ -92,14 +92,14 @@ test('pending payment KO/VI x PC/mobile: held date, close banner, badge, button 
       // ④ Default date stays on the held day; existing close panel carries the hold details.
       await page.goto(base + '/admin/sales');
       await page.waitForURL(/businessDate=2026-10-20/);
-      const summary = page.locator('strong', { hasText: `${close.pendingTitle} 2${close.pendingCount} · ` });
+      const summary = page.locator('strong', { hasText: `${close.pendingTitle} 2${close.pendingCount}` });
       await summary.waitFor();
-      assert.match((await summary.innerText()).replace(/\s/g, ' '), /1\.744\.000 ₫$/);
+      assert.equal(await summary.innerText(), `${close.pendingTitle} 2${close.pendingCount}`);
       assert.equal(await page.locator('input[type=date]').inputValue(), HELD);
       assert.equal(await page.getByRole('button', { name: close.close, exact: true }).isDisabled(), true);
       // One-line summary: no receipt numbers, per-receipt amounts, long guidance or second link.
       for (const gone of ['2601007063', '2601007064', close.pendingBlocked]) assert.equal(await page.getByText(gone).count(), 0, name + ' ' + gone);
-      const go = page.getByRole('link', { name: close.pendingGo + ' →' });
+      const go = page.getByRole('link', { name: close.pendingGo, exact: true });
       assert.equal(await go.getAttribute('href'), `/admin/sales/receipts?businessDate=${HELD}`);
       const banner = page.locator('[role=alert]', { has: summary });
       const [bannerBox, summaryBox, goBox] = [await banner.boundingBox(), await summary.boundingBox(), await go.boundingBox()];
