@@ -55,10 +55,15 @@ test("a switch never saves: it opens that setting's modal with the intent; savin
   const tile = page.slice(page.indexOf("function BenefitTile("), page.indexOf("/** 둥근 트랙과 원형 손잡이"));
   assert.match(tile, /return <div style=\{\{ \.\.\.styles\.benefitTile/);
   assert.match(tile, /role="switch"\n\s+aria-checked=\{on\}\n\s+aria-label=\{title\}/);
-  assert.match(tile, /<span style=\{styles\.switchText\}>\{loading \? "…" : on \? "ON" : "OFF"\}<\/span>\n\s+<SwitchTrack on=\{on\} \/>/);
+  assert.match(tile, /<span style=\{\{ \.\.\.styles\.switchText, \.\.\.styles\.switchTextCompact \}\}>\{loading \? "…" : on \? "ON" : "OFF"\}<\/span>\n\s+<SwitchTrack on=\{on\} compact \/>/);
   assert.match(page, /switchButton: \{ flexShrink: 0, minWidth: 44, minHeight: 44,/);
   assert.match(page, /benefitTileInfo: \{ minWidth: 0, minHeight: 44,/);
   assert.match(page, /switchKnobOn: \{ transform: "translateX\(20px\)" \}/);
+  // compact tiles: visually smaller track, one-line short names (full name kept as the accessible name)
+  assert.match(page, /switchKnobOnCompact: \{ transform: "translateX\(16px\)" \}/);
+  assert.match(page, /benefitTileName: \{ minWidth: 0, whiteSpace: "nowrap" \}/);
+  assert.match(tile, /aria-label=\{title\} aria-describedby=\{stateId\}/);
+  assert.match(tile, /\{shortTitle \?\? title\}/);
 });
 
 test("setting cards: modal mode opens the form once after load, prefilled with the intent as its unsaved baseline; cancel/save report back", () => {

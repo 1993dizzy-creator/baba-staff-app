@@ -763,6 +763,7 @@ function UserCard({
                   key={row.key}
                   emoji={row.emoji}
                   title={text[row.title]}
+                  shortTitle={text[row.tile]}
                   text={text}
                   status={status}
                   stateLabel={director ? text.benefitCommonManaged : benefitUnsetLabel(row.key, status, text)}
@@ -932,11 +933,12 @@ function PayrollContractStatus({ user, text, lang, contracts, canManage, isSavin
 }
 
 type BenefitRowKey = Exclude<PayrollSheetView, "contract">;
-const BENEFIT_ROWS: readonly { key: BenefitRowKey & BenefitKey; emoji: string; title: "benefitMeal" | "benefitBonus" | "benefitInsurance" | "benefitTax" }[] = [
-  { key: "meal", emoji: "🍚", title: "benefitMeal" },
-  { key: "bonus", emoji: "💯", title: "benefitBonus" },
-  { key: "insurance", emoji: "🛡️", title: "benefitInsurance" },
-  { key: "tax", emoji: "🧾", title: "benefitTax" },
+// tile: 타일에 한 줄로 보이는 짧은 이름(전체 이름은 접근성 이름·모달 제목에 그대로 쓴다).
+const BENEFIT_ROWS: readonly { key: BenefitRowKey & BenefitKey; emoji: string; title: "benefitMeal" | "benefitBonus" | "benefitInsurance" | "benefitTax"; tile: "benefitMeal" | "benefitBonusTile" | "benefitInsurance" | "benefitTaxTile" }[] = [
+  { key: "meal", emoji: "🍚", title: "benefitMeal", tile: "benefitMeal" },
+  { key: "bonus", emoji: "💯", title: "benefitBonus", tile: "benefitBonusTile" },
+  { key: "insurance", emoji: "🛡️", title: "benefitInsurance", tile: "benefitInsurance" },
+  { key: "tax", emoji: "🧾", title: "benefitTax", tile: "benefitTaxTile" },
 ];
 
 /** 보험·TNCN은 적용 버전이 없으면 OFF가 아니라 "미설정"으로 표시한다(식대·개근은 버전 없음 = 미대상 OFF). */
@@ -959,8 +961,8 @@ function levelBenefitStatus(user: UserRow): Extract<BenefitStatus, { state: "rea
  *   모달 저장 후 다시 조회한 실제 상태만 표시한다(예약 변경은 현재 상태 + 적용/해제 예정).
  * 조회 중·조회 실패·공통 관리(권한 없음)는 OFF 스위치로 표시하지 않는다(확인 중 / 조회 실패+재조회 / 상태 글자).
  */
-function BenefitTile({ emoji, title, text, status, stateLabel, disabled, switchDisabled, wide, infoButtonRef, onSwitch, onDetail, onRetry }: {
-  emoji: string; title: string; text: AdminUsersPageText; status: BenefitStatus; stateLabel?: string;
+function BenefitTile({ emoji, title, shortTitle, text, status, stateLabel, disabled, switchDisabled, wide, infoButtonRef, onSwitch, onDetail, onRetry }: {
+  emoji: string; title: string; shortTitle?: string; text: AdminUsersPageText; status: BenefitStatus; stateLabel?: string;
   disabled: boolean; switchDisabled?: boolean; wide?: boolean; infoButtonRef?: Ref<HTMLButtonElement>;
   onSwitch: (event: MouseEvent<HTMLButtonElement>) => void; onDetail: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void;
 }) {
@@ -975,10 +977,10 @@ function BenefitTile({ emoji, title, text, status, stateLabel, disabled, switchD
   const labelOnly = ready && stateLabel !== undefined && !unset;
   const tone = failed ? styles.benefitTileError : on && !labelOnly ? styles.benefitTileOn : styles.benefitTileOff;
   return <div style={{ ...styles.benefitTile, ...tone, ...(wide ? styles.benefitTileWide : null) }}>
-    <button ref={infoButtonRef} type="button" aria-haspopup="dialog" aria-describedby={stateId} disabled={disabled || !ready} onClick={onDetail} style={styles.benefitTileInfo}>
-      <span aria-hidden="true" style={styles.benefitTileEmoji}>{emoji}</span><span style={styles.benefitTileName}>{title}</span>
+    <button ref={infoButtonRef} type="button" aria-haspopup="dialog" aria-label={title} aria-describedby={stateId} disabled={disabled || !ready} onClick={onDetail} style={{ ...styles.benefitTileInfo, ...(wide ? styles.benefitTileInfoWide : null) }}>
+      <span aria-hidden="true" style={styles.benefitTileEmoji}>{emoji}</span><span style={styles.benefitTileName}>{shortTitle ?? title}</span>
     </button>
-    <div style={styles.benefitTileFoot}>
+    <div style={{ ...styles.benefitTileFoot, ...(wide ? styles.benefitTileFootWide : null) }}>
       <span id={stateId} style={styles.benefitTileState}>
         {loading ? <span style={styles.benefitTileNote}>{text.statusChecking}</span> : null}
         {failed ? <span style={{ ...styles.benefitTileNote, ...styles.benefitTileNoteError }}>{text.statusLoadFailed}</span> : null}
@@ -1000,8 +1002,8 @@ function BenefitTile({ emoji, title, text, status, stateLabel, disabled, switchD
           onClick={onSwitch}
           style={styles.switchButton}
         >
-          <span style={styles.switchText}>{loading ? "…" : on ? "ON" : "OFF"}</span>
-          <SwitchTrack on={on} />
+          <span style={{ ...styles.switchText, ...styles.switchTextCompact }}>{loading ? "…" : on ? "ON" : "OFF"}</span>
+          <SwitchTrack on={on} compact />
         </button>
       )}
     </div>
@@ -1009,9 +1011,10 @@ function BenefitTile({ emoji, title, text, status, stateLabel, disabled, switchD
 }
 
 /** 둥근 트랙과 원형 손잡이(색 + ON/OFF 글자 + aria-checked로 상태를 함께 전달). */
-function SwitchTrack({ on }: { on: boolean }) {
-  return <span aria-hidden="true" style={{ ...styles.switchTrack, ...(on ? styles.switchTrackOn : null) }}>
-    <span style={{ ...styles.switchKnob, ...(on ? styles.switchKnobOn : null) }} />
+/** compact: 복리후생 타일용으로 시각 크기만 조금 줄인다(누름 영역은 버튼이 44px 이상 유지). */
+function SwitchTrack({ on, compact }: { on: boolean; compact?: boolean }) {
+  return <span aria-hidden="true" style={{ ...styles.switchTrack, ...(compact ? styles.switchTrackCompact : null), ...(on ? styles.switchTrackOn : null) }}>
+    <span style={{ ...styles.switchKnob, ...(compact ? styles.switchKnobCompact : null), ...(on ? (compact ? styles.switchKnobOnCompact : styles.switchKnobOn) : null) }} />
   </span>;
 }
 
@@ -2044,28 +2047,36 @@ const styles = {
   contractLines: { display: "grid", gap: 2, minWidth: 0 },
   contractPrimary: { fontSize: 13, fontWeight: 800, color: "#111827", overflowWrap: "anywhere" },
   contractMeta: { fontSize: 12, color: "#374151", overflowWrap: "anywhere" },
-  benefitGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, minWidth: 0 },
-  benefitTile: { minWidth: 0, display: "grid", alignContent: "space-between", gap: 2, padding: "4px 6px 4px 10px", borderWidth: 1, borderStyle: "solid", borderRadius: 12, color: "#111827" },
-  benefitTileWide: { gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  // 컴팩트 타일: 보이는 높이는 낮게(일반 ≈70px, 레벨 ≈50px), 이름 버튼·스위치의 실제 누름 영역은 음수 여백으로
+  // 타일 안쪽 여백까지 넓혀 44px 이상을 유지한다.
+  benefitGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, minWidth: 0 },
+  benefitTile: { minWidth: 0, display: "grid", alignContent: "space-between", gap: 2, padding: 8, borderWidth: 1, borderStyle: "solid", borderRadius: 10, color: "#111827" },
+  benefitTileWide: { gridColumn: "1 / -1", minHeight: 50, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   benefitTileOn: { background: "#f0fdf4", borderColor: "#bbf7d0" },
   benefitTileOff: { background: "#f8fafc", borderColor: "#e2e8f0" },
   benefitTileError: { background: "#fff", borderColor: "#fca5a5" },
-  benefitTileInfo: { minWidth: 0, minHeight: 44, display: "flex", alignItems: "center", gap: 6, padding: "4px 0", border: "none", background: "transparent", color: "#111827", fontFamily: "inherit", fontSize: 13, fontWeight: 800, lineHeight: 1.3, textAlign: "left", cursor: "pointer" },
-  benefitTileEmoji: { flexShrink: 0, fontSize: 18, lineHeight: 1 },
-  benefitTileName: { minWidth: 0, overflowWrap: "anywhere" },
-  benefitTileFoot: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, minWidth: 0 },
+  benefitTileInfo: { minWidth: 0, minHeight: 44, margin: "-8px -8px -12px", display: "flex", alignItems: "center", gap: 5, padding: "12px 8px", border: "none", borderRadius: 10, background: "transparent", color: "#111827", fontFamily: "inherit", fontSize: 12, fontWeight: 800, lineHeight: "20px", textAlign: "left", cursor: "pointer" },
+  benefitTileInfoWide: { flex: "1 1 auto", margin: "-8px 0 -8px -8px" },
+  benefitTileEmoji: { flexShrink: 0, fontSize: 16, lineHeight: 1 },
+  benefitTileName: { minWidth: 0, whiteSpace: "nowrap" },
+  benefitTileFoot: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0 4px", minWidth: 0 },
+  benefitTileFootWide: { flexWrap: "nowrap", flexShrink: 0 },
   benefitTileState: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4, minWidth: 0 },
-  benefitTileNote: { fontSize: 11, fontWeight: 800, color: "#4b5563", overflowWrap: "anywhere" },
+  benefitTileNote: { fontSize: 10, fontWeight: 800, color: "#4b5563", overflowWrap: "anywhere" },
   benefitTileNoteError: { color: "#b91c1c" },
   benefitTileSchedule: { fontSize: 10, fontWeight: 800, color: "#92400e", overflowWrap: "anywhere" },
-  benefitRetry: { flexShrink: 0, minHeight: 44, marginLeft: "auto", padding: "0 12px", border: "1px solid #fca5a5", borderRadius: 999, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800, cursor: "pointer" },
-  switchButton: { flexShrink: 0, minWidth: 44, minHeight: 44, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 4px", border: "none", borderRadius: 999, background: "transparent", color: "#111827", fontFamily: "inherit", cursor: "pointer" },
+  benefitRetry: { flexShrink: 0, minHeight: 44, margin: "-10px -8px -8px auto", padding: "0 12px", border: "none", borderRadius: 999, background: "transparent", color: "#b91c1c", fontSize: 11, fontWeight: 800, textDecoration: "underline", cursor: "pointer" },
+  switchButton: { flexShrink: 0, minWidth: 44, minHeight: 44, margin: "-10px -8px -8px auto", display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 4, padding: "0 8px 0 0", border: "none", borderRadius: 999, background: "transparent", color: "#111827", fontFamily: "inherit", cursor: "pointer" },
   switchControl: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 },
   switchText: { minWidth: 26, fontSize: 11, fontWeight: 900, textAlign: "right", color: "#374151" },
   switchTrack: { position: "relative", display: "inline-block", flexShrink: 0, width: 44, height: 24, borderRadius: 999, background: "#d1d5db", transition: "background-color 0.18s ease" },
   switchTrackOn: { background: "#16a34a" },
   switchKnob: { position: "absolute", top: 2, left: 2, width: 20, height: 20, borderRadius: 999, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.3)", transition: "transform 0.18s ease" },
   switchKnobOn: { transform: "translateX(20px)" },
+  switchTextCompact: { minWidth: 22 },
+  switchTrackCompact: { width: 38, height: 22 },
+  switchKnobCompact: { width: 18, height: 18 },
+  switchKnobOnCompact: { transform: "translateX(16px)" },
   toggleRow: { width: "100%", minHeight: 44, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 8px 6px 12px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#fff", color: "#111827", fontFamily: "inherit", fontSize: 13, fontWeight: 800, textAlign: "left", cursor: "pointer" },
   toggleLabel: { minWidth: 0, overflowWrap: "anywhere" },
   subsection: { display: "grid", gap: 8, paddingTop: 10, marginTop: 2, borderTop: "1px solid #bae6fd", minWidth: 0 },
