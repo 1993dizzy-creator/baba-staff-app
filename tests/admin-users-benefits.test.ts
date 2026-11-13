@@ -38,23 +38,27 @@ test("status reads are lazy, per employee, abortable, and a failure is never sho
   assert.match(page, /const benefits = useEmployeeBenefitStatus\(isEditing && workVisited && canManagePayroll \? Number\(user\.id\) : null\);/);
   assert.match(hook, /const stale = \(\) => signal\?\.aborted \|\| userIdRef\.current !== id;/);
   assert.match(hook, /return \(\) => controller\.abort\(\);/);
-  // 5차 tile: a failure shows 조회 실패 and the tile re-reads; loading is disabled (never OFF)
-  assert.match(page, /const label = stateLabel \?\? \(status\.state === "loading" \? text\.statusChecking : failed \? text\.statusLoadFailed : on \? "ON" : "OFF"\);/);
-  assert.match(page, /onClick=\{failed \? \(\) => onRetry\?\.\(\) : onOpen\}/);
-  assert.match(page, /disabled=\{disabled \|\| status\.state === "loading" \|\| \(failed && !onRetry\)\}/);
-  assert.match(page, /aria-busy=\{status\.state === "loading" \|\| undefined\}/);
+  // tile: a failure replaces the switch with 조회 실패 + retry; loading disables the switch (never a false OFF)
+  assert.match(page, /\{failed \? \(\n\s+<button type="button" style=\{styles\.benefitRetry\} onClick=\{onRetry\}>\{text\.retry\}<\/button>\n\s+\) : labelOnly \? null : \(/);
+  assert.match(page, /disabled=\{disabled \|\| !ready \|\| switchDisabled\}/);
+  assert.match(page, /aria-busy=\{loading \|\| undefined\}/);
 });
 
 test("a switch never saves: it opens that setting's modal with the intent; saving uses the card's existing API, then re-reads", () => {
-  // 5차: OFF opens with the enable proposal; ON opens the current values (turning OFF is done inside the modal)
-  assert.match(page, /onOpen=\{\(\) => openSheet\(row\.key, \{ enable: status\.state === "ready" && status\.on \? null : true \}\)\}/);
+  // switch = the opposite state as intent; icon/name = the current values
+  assert.match(page, /onSwitch=\{\(\) => openSheet\(row\.key, \{ enable: !on \}\)\}/);
+  assert.match(page, /onDetail=\{\(\) => openSheet\(row\.key\)\}/);
   assert.doesNotMatch(page, /fetch\([^)]*(meal-allowance|attendance-bonus|insurance|tax-settings)[^)]*method/, "no setting writes from the employee page");
   assert.match(page, /benefits\.reload\(view\);\n\s+if \(view === "meal"\) payroll\.onMealChanged\(\);/);
-  // the tile is one button (no nested switch) with ON/OFF text (not colour only) and a ≥44px target
+  // the tile is a plain container with sibling buttons (name, switch or retry); the switch is a real switch
+  // with ON/OFF text (not colour only), a sliding track/knob and a 44px target
   const tile = page.slice(page.indexOf("function BenefitTile("), page.indexOf("/** 둥근 트랙과 원형 손잡이"));
-  assert.equal((tile.match(/<button/g) ?? []).length, 1);
-  assert.doesNotMatch(tile, /role="switch"/);
-  assert.match(page, /benefitTile: \{ minWidth: 0, minHeight: 64,/);
+  assert.match(tile, /return <div style=\{\{ \.\.\.styles\.benefitTile/);
+  assert.match(tile, /role="switch"\n\s+aria-checked=\{on\}\n\s+aria-label=\{title\}/);
+  assert.match(tile, /<span style=\{styles\.switchText\}>\{loading \? "…" : on \? "ON" : "OFF"\}<\/span>\n\s+<SwitchTrack on=\{on\} \/>/);
+  assert.match(page, /switchButton: \{ flexShrink: 0, minWidth: 44, minHeight: 44,/);
+  assert.match(page, /benefitTileInfo: \{ minWidth: 0, minHeight: 44,/);
+  assert.match(page, /switchKnobOn: \{ transform: "translateX\(20px\)" \}/);
 });
 
 test("setting cards: modal mode opens the form once after load, prefilled with the intent as its unsaved baseline; cancel/save report back", () => {

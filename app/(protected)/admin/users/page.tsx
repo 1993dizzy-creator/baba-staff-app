@@ -748,12 +748,17 @@ function UserCard({
                 text={text}
                 status={levelBenefitStatus(user)}
                 disabled={isSaving || Boolean(user.termination_date)}
-                buttonRef={levelButtonRef}
-                onOpen={openLevelModal}
+                infoButtonRef={levelButtonRef}
+                // 레벨은 기존 레벨 설정 창 하나로 편집·켜기/끄기를 한다(적용은 상세 저장 때 반영).
+                onSwitch={openLevelModal}
+                onDetail={openLevelModal}
               /> : null}
               {canManagePayroll ? BENEFIT_ROWS.map((row) => {
                 const status = benefits.status(row.key);
                 const director = row.key === "insurance" && isDirectorManagedInsurance(user.username);
+                const on = status.state === "ready" && status.on;
+                // 근태 미사용 직원은 식대·개근을 켤 수 없다(기존 서버 검증과 같다). 아이콘·이름으로 상세 확인·해제는 가능하다.
+                const needsAttendance = (row.key === "meal" || row.key === "bonus") && status.state === "ready" && !status.on && status.attendanceTrackingEnabled === false;
                 return <BenefitTile
                   key={row.key}
                   emoji={row.emoji}
@@ -762,9 +767,10 @@ function UserCard({
                   status={status}
                   stateLabel={director ? text.benefitCommonManaged : benefitUnsetLabel(row.key, status, text)}
                   disabled={isSaving || director}
-                  // OFF(미설정 포함)는 적용 제안으로, ON은 현재 값 그대로 연다. 해제·세부값 변경은 모달 안에서 한다.
-                  // 근태 미사용 직원의 식대·개근 적용 제안은 카드가 기존대로 무시한다(서버 검증도 그대로).
-                  onOpen={() => openSheet(row.key, { enable: status.state === "ready" && status.on ? null : true })}
+                  switchDisabled={needsAttendance}
+                  // 스위치: 반대 상태로 바꾸려는 모달(목표 상태를 미리 채움). 아이콘·이름: 현재 상태 그대로 편집 모달.
+                  onSwitch={() => openSheet(row.key, { enable: !on })}
+                  onDetail={() => openSheet(row.key)}
                   onRetry={() => benefits.reload(row.key)}
                 />;
               }) : null}
@@ -947,36 +953,59 @@ function levelBenefitStatus(user: UserRow): Extract<BenefitStatus, { state: "rea
 }
 
 /**
- * 복리후생 타일 하나 = 버튼 하나(중첩 버튼 없음): 아이콘·항목명·현재 적용 상태(ON/OFF)와 예약 표시만 보여 준다.
- * 누르면 그 설정의 모달을 연다. 타일은 저장하지 않으며, 저장 후 다시 조회한 실제 상태만 표시한다.
- * 조회 중에는 비활성, 조회 실패는 OFF로 단정하지 않고 "조회 실패"로 표시하며 누르면 다시 조회한다.
+ * 복리후생 타일: 일반 컨테이너 안에 형제 버튼 두 개(중첩 버튼 없음).
+ * - 아이콘·이름 버튼: 현재 상태 그대로 그 설정의 편집 모달을 연다.
+ * - 슬라이딩 스위치(role=switch): 반대 상태로 바꾸려는 모달을 연다. 스위치는 저장하지 않으며,
+ *   모달 저장 후 다시 조회한 실제 상태만 표시한다(예약 변경은 현재 상태 + 적용/해제 예정).
+ * 조회 중·조회 실패·공통 관리(권한 없음)는 OFF 스위치로 표시하지 않는다(확인 중 / 조회 실패+재조회 / 상태 글자).
  */
-function BenefitTile({ emoji, title, text, status, stateLabel, disabled, wide, buttonRef, onOpen, onRetry }: {
+function BenefitTile({ emoji, title, text, status, stateLabel, disabled, switchDisabled, wide, infoButtonRef, onSwitch, onDetail, onRetry }: {
   emoji: string; title: string; text: AdminUsersPageText; status: BenefitStatus; stateLabel?: string;
-  disabled: boolean; wide?: boolean; buttonRef?: Ref<HTMLButtonElement>;
-  onOpen: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void;
+  disabled: boolean; switchDisabled?: boolean; wide?: boolean; infoButtonRef?: Ref<HTMLButtonElement>;
+  onSwitch: (event: MouseEvent<HTMLButtonElement>) => void; onDetail: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void;
 }) {
+  const stateId = useId();
   const ready = status.state === "ready";
   const failed = status.state === "error";
-  const on = ready && status.on && stateLabel === undefined;
-  const label = stateLabel ?? (status.state === "loading" ? text.statusChecking : failed ? text.statusLoadFailed : on ? "ON" : "OFF");
+  const loading = status.state === "loading";
+  const on = ready && status.on;
   const scheduled = ready ? status.scheduled : null;
-  const tone = failed ? styles.benefitTileError : on ? styles.benefitTileOn : styles.benefitTileOff;
-  return <button
-    ref={buttonRef}
-    type="button"
-    aria-haspopup={failed ? undefined : "dialog"}
-    aria-busy={status.state === "loading" || undefined}
-    disabled={disabled || status.state === "loading" || (failed && !onRetry)}
-    onClick={failed ? () => onRetry?.() : onOpen}
-    style={{ ...styles.benefitTile, ...tone, ...(wide ? styles.benefitTileWide : null) }}
-  >
-    <span style={styles.benefitTileTitle}><span aria-hidden="true" style={styles.benefitTileEmoji}>{emoji}</span><span style={styles.benefitTileName}>{title}</span></span>
-    <span style={styles.benefitTileState}>
-      <span style={{ ...styles.benefitTilePill, ...(failed ? styles.benefitTilePillError : on ? styles.benefitTilePillOn : null) }}>{label}{failed ? ` · ${text.retry}` : ""}</span>
-      {scheduled ? <span style={styles.benefitTileSchedule}>{scheduled.on ? text.scheduledOn : text.scheduledOff} {scheduled.from}</span> : null}
-    </span>
-  </button>;
+  const unset = ready && stateLabel === text.benefitUnset;
+  // 공통 관리 등 스위치 대신 상태 글자만 보여 주는 경우(미설정은 OFF 스위치 + 미설정 표시)
+  const labelOnly = ready && stateLabel !== undefined && !unset;
+  const tone = failed ? styles.benefitTileError : on && !labelOnly ? styles.benefitTileOn : styles.benefitTileOff;
+  return <div style={{ ...styles.benefitTile, ...tone, ...(wide ? styles.benefitTileWide : null) }}>
+    <button ref={infoButtonRef} type="button" aria-haspopup="dialog" aria-describedby={stateId} disabled={disabled || !ready} onClick={onDetail} style={styles.benefitTileInfo}>
+      <span aria-hidden="true" style={styles.benefitTileEmoji}>{emoji}</span><span style={styles.benefitTileName}>{title}</span>
+    </button>
+    <div style={styles.benefitTileFoot}>
+      <span id={stateId} style={styles.benefitTileState}>
+        {loading ? <span style={styles.benefitTileNote}>{text.statusChecking}</span> : null}
+        {failed ? <span style={{ ...styles.benefitTileNote, ...styles.benefitTileNoteError }}>{text.statusLoadFailed}</span> : null}
+        {labelOnly ? <span style={styles.benefitTileNote}>{stateLabel}</span> : null}
+        {unset ? <span style={styles.benefitTileNote}>{stateLabel}</span> : null}
+        {scheduled ? <span style={styles.benefitTileSchedule}>{scheduled.on ? text.scheduledOn : text.scheduledOff} {scheduled.from}</span> : null}
+      </span>
+      {failed ? (
+        <button type="button" style={styles.benefitRetry} onClick={onRetry}>{text.retry}</button>
+      ) : labelOnly ? null : (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={title}
+          aria-describedby={stateId}
+          aria-busy={loading || undefined}
+          disabled={disabled || !ready || switchDisabled}
+          onClick={onSwitch}
+          style={styles.switchButton}
+        >
+          <span style={styles.switchText}>{loading ? "…" : on ? "ON" : "OFF"}</span>
+          <SwitchTrack on={on} />
+        </button>
+      )}
+    </div>
+  </div>;
 }
 
 /** 둥근 트랙과 원형 손잡이(색 + ON/OFF 글자 + aria-checked로 상태를 함께 전달). */
@@ -2016,19 +2045,21 @@ const styles = {
   contractPrimary: { fontSize: 13, fontWeight: 800, color: "#111827", overflowWrap: "anywhere" },
   contractMeta: { fontSize: 12, color: "#374151", overflowWrap: "anywhere" },
   benefitGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, minWidth: 0 },
-  benefitTile: { minWidth: 0, minHeight: 64, display: "grid", alignContent: "space-between", gap: 6, padding: "10px 12px", borderWidth: 1, borderStyle: "solid", borderRadius: 12, color: "#111827", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
-  benefitTileWide: { gridColumn: "1 / -1" },
+  benefitTile: { minWidth: 0, display: "grid", alignContent: "space-between", gap: 2, padding: "4px 6px 4px 10px", borderWidth: 1, borderStyle: "solid", borderRadius: 12, color: "#111827" },
+  benefitTileWide: { gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   benefitTileOn: { background: "#f0fdf4", borderColor: "#bbf7d0" },
   benefitTileOff: { background: "#f8fafc", borderColor: "#e2e8f0" },
   benefitTileError: { background: "#fff", borderColor: "#fca5a5" },
-  benefitTileTitle: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 13, fontWeight: 800, lineHeight: 1.3 },
+  benefitTileInfo: { minWidth: 0, minHeight: 44, display: "flex", alignItems: "center", gap: 6, padding: "4px 0", border: "none", background: "transparent", color: "#111827", fontFamily: "inherit", fontSize: 13, fontWeight: 800, lineHeight: 1.3, textAlign: "left", cursor: "pointer" },
   benefitTileEmoji: { flexShrink: 0, fontSize: 18, lineHeight: 1 },
   benefitTileName: { minWidth: 0, overflowWrap: "anywhere" },
+  benefitTileFoot: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, minWidth: 0 },
   benefitTileState: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4, minWidth: 0 },
-  benefitTilePill: { borderRadius: 999, padding: "2px 8px", background: "#e5e7eb", color: "#374151", fontSize: 11, fontWeight: 900, overflowWrap: "anywhere" },
-  benefitTilePillOn: { background: "#dcfce7", color: "#166534" },
-  benefitTilePillError: { background: "#fef2f2", color: "#b91c1c" },
+  benefitTileNote: { fontSize: 11, fontWeight: 800, color: "#4b5563", overflowWrap: "anywhere" },
+  benefitTileNoteError: { color: "#b91c1c" },
   benefitTileSchedule: { fontSize: 10, fontWeight: 800, color: "#92400e", overflowWrap: "anywhere" },
+  benefitRetry: { flexShrink: 0, minHeight: 44, marginLeft: "auto", padding: "0 12px", border: "1px solid #fca5a5", borderRadius: 999, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  switchButton: { flexShrink: 0, minWidth: 44, minHeight: 44, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "0 4px", border: "none", borderRadius: 999, background: "transparent", color: "#111827", fontFamily: "inherit", cursor: "pointer" },
   switchControl: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 },
   switchText: { minWidth: 26, fontSize: 11, fontWeight: 900, textAlign: "right", color: "#374151" },
   switchTrack: { position: "relative", display: "inline-block", flexShrink: 0, width: 44, height: 24, borderRadius: 999, background: "#d1d5db", transition: "background-color 0.18s ease" },

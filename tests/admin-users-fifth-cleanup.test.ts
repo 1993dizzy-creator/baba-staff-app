@@ -59,13 +59,18 @@ test("5차 C: contract summary = type · current combined salary from the payrol
   assert.match(page, /\{ready && contracts\.scheduled \? <span style=\{styles\.modalMuted\}>\{text\.payrollContractScheduled\}/);
 });
 
-test("5차 D: five tiles, one button each, opening the existing setting modals (never saving)", () => {
+test("5차 D (switch restore): five tiles with a real switch each, opening the existing setting modals (never saving)", () => {
   const block = page.slice(page.indexOf("<div style={styles.benefitGrid}>"), page.indexOf("{/* 급여 대상 예외"));
   assert.equal((block.match(/<BenefitTile/g) ?? []).length, 2, "level tile + mapped 4");
   assert.match(block, /wide\n\s+emoji="📈"/);
-  assert.match(block, /onOpen=\{openLevelModal\}/);
+  assert.match(block, /onSwitch=\{openLevelModal\}\n\s+onDetail=\{openLevelModal\}/);
+  assert.match(block, /switchDisabled=\{needsAttendance\}/);
   assert.match(block, /stateLabel=\{director \? text\.benefitCommonManaged : benefitUnsetLabel\(row\.key, status, text\)\}/);
   assert.doesNotMatch(block, /bonusSwitchHelp|requiresAttendance|detailSettings|levelBaseMonth/);
   assert.match(page, /benefitGrid: \{ display: "grid", gridTemplateColumns: "repeat\(2, minmax\(0, 1fr\)\)"/);
-  assert.match(page, /benefitTileWide: \{ gridColumn: "1 \/ -1" \}/);
+  assert.match(page, /benefitTileWide: \{ gridColumn: "1 \/ -1",/);
+  // no nested buttons: the switch and the name button are siblings inside a <div>
+  const tile = page.slice(page.indexOf("function BenefitTile("), page.indexOf("/** 둥근 트랙과 원형 손잡이"));
+  assert.equal((tile.match(/<button/g) ?? []).length, 3, "name, retry, switch (retry and switch are alternatives)");
+  assert.equal((tile.match(/<\/button>/g) ?? []).length, 3);
 });

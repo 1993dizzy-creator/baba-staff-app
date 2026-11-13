@@ -37,8 +37,8 @@ test("PayrollModal and the payroll sheet use the trap; Escape only closes the to
 test("level settings dialog returns focus to the button that opened it (detail card or payroll sheet) after it closes", () => {
   assert.match(page, /const openLevelModal = \(event: \{ currentTarget: HTMLElement \}\) => \{ levelOpenerRef\.current = event\.currentTarget; setLevelModalOpen\(true\); \};/);
   assert.match(page, /window\.setTimeout\(\(\) => \{ const opener = levelOpenerRef\.current; \(opener\?\.isConnected \? opener : levelButtonRef\.current\)\?\.focus\(\); \}, 0\);/);
-  // 2026-11 5차: the level dialog opens from the 📈 benefit tile (one button); that tile is the opener.
-  assert.match(page, /buttonRef=\{levelButtonRef\}\n\s+onOpen=\{openLevelModal\}/);
+  // 2026-11 switch restore: the level dialog opens from the 📈 tile's name or its switch; either one is the opener.
+  assert.match(page, /infoButtonRef=\{levelButtonRef\}\n[^\n]*\n\s+onSwitch=\{openLevelModal\}\n\s+onDetail=\{openLevelModal\}/);
   // the level <dialog> also traps Tab when opened directly from the detail (no payroll sheet)
   assert.match(page, /const dialogRef = useRef<HTMLDialogElement>\(null\);\n[^\n]*\n\s+useModalFocusTrap\(dialogRef\);/);
   assert.match(page, /onCancel=\{\(\) => \{ setLevelModalOpen\(false\); focusLevelOpener\(\); \}\}/);
