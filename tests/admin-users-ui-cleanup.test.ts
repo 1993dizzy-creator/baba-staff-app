@@ -37,14 +37,16 @@ test("B: detail cards carry an emoji header and a light tint; inputs stay white 
   assert.match(page, /\.\.\.ui\.input,\n\s+\/\/[^\n]*\n\s+background: "#fff",/);
 });
 
-test("C: the work·pay card no longer has its own 급여설정 shortcut; the payroll sheet keeps one", () => {
+test("C: neither the work·pay card nor the payroll sheet has a 급여설정 shortcut; the sheet footer is 닫기 only", () => {
   const status = page.slice(page.indexOf("function PayrollContractStatus("), page.indexOf("// 직원 상세 카드별 은은한 배경색"));
   assert.doesNotMatch(status, /managePayrollSettings|onOpenPayrollSettings|payrollLinkButton/);
   // 5차: the contract summary no longer carries the attendance mismatch notice (it moved under the attendance switch).
   assert.doesNotMatch(status, /payrollContractMismatch|attendanceOffRequiresFixedMonthly/);
   assert.match(status, /text\.payrollContract\}/);
   const sheetSection = page.slice(page.indexOf("function PayrollSettingSheet("), page.indexOf("function Toggle("));
-  assert.match(sheetSection, /onClick=\{onOpenPayrollSettings\}>\{text\.managePayrollSettings\} →<\/button>/);
+  assert.doesNotMatch(sheetSection, /managePayrollSettings|onOpenPayrollSettings/);
+  assert.match(sheetSection, /footer=\{<button type="button" style=\{styles\.secondaryButton\} onClick=\{onClose\}>\{text\.close\}<\/button>\}/);
+  assert.match(page, /sheetFooter: \{ display: "grid", gridTemplateColumns: "minmax\(0, 1fr\)",/);
 });
 
 test("D (4차): contract and each benefit open their own sheet; closing goes through the unsaved-input guard; nested dialogs keep Escape", () => {

@@ -95,8 +95,7 @@ test("2차: two-way navigation keeps the selected employee and confirms before d
   // 즉시성: 이탈 확인은 패널이 알린 최신 값(ref)으로 만든 문구를 쓴다.
   assert.match(settings, /const latestLeaveMessage = \(\) => payrollLeaveMessage\(panelUnsavedRef\.current, vi\);/);
   assert.match(settings, /const confirmLeave = \(\) => \{\n    const message = latestLeaveMessage\(\);\n    return message === null \|\| window\.confirm\(message\);\n  \};/);
-  // return point: the detail with 근무·급여 open, and the sheet that was open (?sheet=)
-  assert.match(page, /router\.replace\(`\/admin\/users\?userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}&section=payroll\$\{sheetView \? `&sheet=\$\{sheetView\}` : ""\}`, \{ scroll: false \}\);/);
+  // arriving from the payroll settings page still opens the employee detail with 근무·급여 open
   assert.match(page, /const \[workOpen, setWorkOpen\] = useState\(initialFocus === "payroll"\);/);
   assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
   assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
@@ -113,18 +112,18 @@ test("5차: attendance OFF warns only when the current/scheduled contract is not
   assert.doesNotMatch(page, /fetch\([^)]*\/api\/admin\/payroll\/contracts[^)]*method/, "no contract writes from the employee page");
 });
 
-test("payroll settings shortcut opens the existing employee tab with the same eligibility as its employee list", () => {
-  assert.match(page, /router\.push\(`\/admin\/payroll\/settings\?tab=employee&userId=\$\{encodeURIComponent\(String\(user\.id\)\)\}`\)/);
+test("급여 모달 1차: personal payroll settings finish inside 직원관리 — no shortcut to the payroll settings page", () => {
+  // the 급여설정 관리 → button and its navigation are gone from the employee page
+  assert.doesNotMatch(page, /router\.push\(`\/admin\/payroll\/settings/);
+  assert.doesNotMatch(page, /openPayrollSettings|onOpenPayrollSettings|managePayrollSettings/);
   assert.match(page, /user\.is_active === true && !user\.termination_date && isPayrollEligible\(user\)/);
-  // Unsaved employee edits (and, since P0, payroll input/pending saves) are confirmed before leaving.
-  assert.match(page, /const message = leaveMessage\(\);\n    if \(message && !window\.confirm\(message\)\) return;/);
-  assert.match(page, /return payrollMessage \?\? \(draftChanged \? text\.unsavedLeaveConfirm : null\);/);
+  // the payroll settings page itself is unchanged: its employee tab still accepts ?userId=
   assert.match(settings, /const requestedUserIdParam = params\.get\("userId"\)/);
   assert.match(settings, /users\.some\(\(user\) => user\.id === requested\)/);
 });
 
 test("new labels exist in KO and VI", () => {
-  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "cancelTerminationConfirm", "reactivate", "reactivateUndo", "reactivateHelp", "reactivatePending", "appLoginBlockedInactive", "appLoginBlockedTerminated", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "attendanceOffRequiresFixedMonthly", "managePayrollSettings", "unsavedLeaveConfirm"]) {
+  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "cancelTerminationConfirm", "reactivate", "reactivateUndo", "reactivateHelp", "reactivatePending", "appLoginBlockedInactive", "appLoginBlockedTerminated", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "attendanceOffRequiresFixedMonthly"]) {
     assert.equal((text.match(new RegExp(`\\b${key}:`, "g")) ?? []).length, 2, key);
   }
   assert.ok(text.includes("근태 기록을 사용하지 않으려면 급여계약을 '월 고정급'으로 설정해야 합니다."));

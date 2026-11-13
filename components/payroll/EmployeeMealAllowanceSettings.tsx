@@ -62,6 +62,8 @@ export default function EmployeeMealAllowanceSettings({
   onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
   const mounted = useRef(true);
+  // /admin/users 설정 모달(formRequest가 있으면): 제목·안내·설정 변경 버튼 없이 상태와 폼을 바로 보여 준다.
+  const modal = Boolean(formRequest);
   // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
   const formRequestRef = useRef(formRequest ?? null);
   const autoOpenedRef = useRef(false);
@@ -184,17 +186,43 @@ export default function EmployeeMealAllowanceSettings({
 
   if (!state) {
     return (
-      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi} defaultOpen={Boolean(formRequest)}>
+      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
         {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
       </EmployeeSettingCard>
     );
   }
 
   const disabledByAttendanceTracking = !state.attendanceTrackingEnabled;
+  // 기준 근무일수·예상 식대는 공통 설정에서 오는 참고 정보다(직원별 수정 불가). 모달에서는 접어 둔다.
+  const reference = <>
+    <Summary
+      label={vi ? "Số ngày làm việc tiêu chuẩn/tháng" : "한 달 기준 근무일수"}
+      value={state.standardWorkdays !== null ? (vi ? `${state.standardWorkdays} ngày` : `${state.standardWorkdays}일`) : "-"}
+    />
+    <Summary
+      label={vi ? "Chi phí ăn dự kiến" : "예상 식대"}
+      value={
+        state.current?.isEligible
+          ? state.projectedMealAllowance.warningCode === "STANDARD_WORKDAYS_MISSING"
+            ? vi
+              ? "Cần thiết lập số ngày làm việc trong tháng"
+              : "월 근무일수 설정 필요"
+            : state.dailyAmount === null
+              ? vi
+                ? "Chưa thiết lập trợ cấp ăn mỗi ngày"
+                : "1일 기본 식대 미설정"
+              : money(state.projectedMealAllowance.amount)
+          : vi
+            ? "Không áp dụng"
+            : "미대상"
+      }
+    />
+  </>;
 
   return (
-    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)}>
-      <div style={s.head}>
+    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
+      {/* 설정 모달(/admin/users)에서는 바깥 제목·바로 열린 폼이 있으므로 안내 문구·설정 변경 버튼을 두지 않는다. */}
+      {modal ? null : <div style={s.head}>
         <div>
           <p style={s.help}>
             {vi
@@ -205,7 +233,7 @@ export default function EmployeeMealAllowanceSettings({
         <button type="button" style={s.secondary} onClick={openForm}>
           {vi ? "Thay đổi" : "설정 변경"}
         </button>
-      </div>
+      </div>}
 
       <div style={s.current}>
         <Summary
@@ -213,28 +241,7 @@ export default function EmployeeMealAllowanceSettings({
           value={state.current?.isEligible ? (vi ? "Áp dụng" : "대상") : vi ? "Không áp dụng" : "미대상"}
         />
         <Summary label={vi ? "Ngày áp dụng" : "적용일"} value={state.current?.effectiveFrom ?? "-"} />
-        <Summary
-          label={vi ? "Số ngày làm việc tiêu chuẩn/tháng" : "한 달 기준 근무일수"}
-          value={state.standardWorkdays !== null ? (vi ? `${state.standardWorkdays} ngày` : `${state.standardWorkdays}일`) : "-"}
-        />
-        <Summary
-          label={vi ? "Chi phí ăn dự kiến" : "예상 식대"}
-          value={
-            state.current?.isEligible
-              ? state.projectedMealAllowance.warningCode === "STANDARD_WORKDAYS_MISSING"
-                ? vi
-                  ? "Cần thiết lập số ngày làm việc trong tháng"
-                  : "월 근무일수 설정 필요"
-                : state.dailyAmount === null
-                  ? vi
-                    ? "Chưa thiết lập trợ cấp ăn mỗi ngày"
-                    : "1일 기본 식대 미설정"
-                  : money(state.projectedMealAllowance.amount)
-              : vi
-                ? "Không áp dụng"
-                : "미대상"
-          }
-        />
+        {modal ? null : reference}
       </div>
 
       {disabledByAttendanceTracking ? (
@@ -304,6 +311,11 @@ export default function EmployeeMealAllowanceSettings({
       ) : null}
 
       {!formOpen && error ? <p role="alert" style={s.error}>{error}</p> : null}
+
+      {modal ? <details style={s.details}>
+        <summary>{vi ? "Thông tin tham khảo" : "참고 정보"}</summary>
+        <div style={{ ...s.current, marginTop: 6 }}>{reference}</div>
+      </details> : null}
 
       <details style={s.details}>
         <summary>{vi ? `Lịch sử ${state.history.length} mục` : `설정 이력 ${state.history.length}건`}</summary>

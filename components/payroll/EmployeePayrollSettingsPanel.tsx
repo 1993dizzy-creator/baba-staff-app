@@ -39,7 +39,7 @@ import { contractSaveApplied, type SubmittedContractSave } from "@/lib/payroll/c
 import type { WorkScheduleVersion } from "@/lib/payroll/types";
 import { scheduledMinutesPerDay, schedulesActiveOn } from "@/lib/payroll/work-schedule";
 import { isPayrollOwnerRole, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
-import { NO_PAYROLL_UNSAVED, readPendingContractSave, writePendingContractSave, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
+import { NO_PAYROLL_UNSAVED, payrollLeaveMessage, readPendingContractSave, writePendingContractSave, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 /** /admin/users에서 패널의 한 부분만 모달로 열 때의 범위. 없으면 급여설정 직원 탭 전체(기존 화면). */
@@ -334,6 +334,12 @@ export default function EmployeePayrollSettingsPanel({
   }
   function closeForm() {
     if (saving) return;
+    // 등록·정정 창의 ×·Escape·배경 클릭: 입력을 바꿨으면 공용 이탈 문구로 확인한다(취소하면 입력 유지).
+    // 다시 열면 openForm()이 현재 계약으로 폼을 새로 채우므로, 확인 없이 닫으면 입력이 사라진다.
+    if (contractInputDirty) {
+      const message = payrollLeaveMessage({ input: true, pendingVerification: false }, vi);
+      if (message && !window.confirm(message)) return;
+    }
     setModalError("");
     setOpen(false);
   }
@@ -525,7 +531,23 @@ export default function EmployeePayrollSettingsPanel({
         />
       </section> : null}
 
-      {showsContract ? <section id={anchor("contract")} style={{ ...s.card, ...s.anchorTarget }}>
+      {showsContract ? <section id={anchor("contract")} style={{ ...s.card, ...s.anchorTarget, ...(only ? s.cardInModal : null) }}>
+        {only ? <>
+          {/* /admin/users 계약 모달: 바깥 모달 제목(💰 급여계약 · 직원명)을 기준으로 안쪽 제목·설명을 두지 않는다. */}
+          {current ? (
+            <ContractOverview contract={current} levelRaise={levelRaise} combined={combined ?? 0} lang={l} />
+          ) : (
+            <p style={s.emptyState}>{vi ? "Chưa cài đặt hợp đồng lương. Hãy đăng ký hợp đồng mới." : "급여계약이 설정되지 않았습니다. 새 계약을 등록해주세요."}</p>
+          )}
+          <div style={s.contractManage}>
+            <button type="button" style={s.contractPrimary} onClick={openForm}>
+              {vi ? "Đăng ký thay đổi" : "계약 변경 등록"}
+            </button>
+            {contracts[0]?.auditVersion ? <button type="button" style={s.contractSecondary} onClick={openCorrectionForm}>
+              {vi ? "Chỉnh sửa hợp đồng mới nhất" : "최신 계약 정정"}
+            </button> : null}
+          </div>
+        </> : <>
         <div style={s.head}>
           <div>
             <h2 style={s.cardTitle}>{vi ? "Hợp đồng lương" : "급여계약"}</h2>
@@ -545,6 +567,7 @@ export default function EmployeePayrollSettingsPanel({
         ) : (
           <p style={s.emptyState}>{vi ? "Chưa cài đặt hợp đồng lương. Hãy đăng ký hợp đồng mới." : "급여계약이 설정되지 않았습니다. 새 계약을 등록해주세요."}</p>
         )}
+        </>}
         {levelAction ? <div style={s.levelRow}>
           <span>{selected.levelInfo.displayLabel ?? (vi ? "Không áp dụng cấp" : "레벨 미적용")} · {vi ? "Tăng theo cấp" : "레벨 인상"} {signedAmount(levelRaise, vi)}</span>
           {levelAction}
@@ -781,6 +804,37 @@ function ContractSummary({
     </div>
   );
 }
+/** 단가 금액에 급여 형태 단위를 붙인다(월급은 금액만). */
+function rateAmount(value: number, payType: string, vi: boolean) {
+  const unit = payType === "hourly" ? (vi ? " / giờ" : " / 시간") : payType === "daily" ? (vi ? " / ngày" : " / 일") : "";
+  return `${money(value)}${unit}`;
+}
+/**
+ * /admin/users 계약 모달의 요약: 현재 합산급여를 가장 크게, 급여 형태·적용 시작일은 보조 정보로,
+ * 그 아래에 기본급·고정 인상·레벨 인상을 금액 오른쪽 정렬로 보여 준다. 값은 ContractSummary와 같은 계산을 쓴다.
+ */
+function ContractOverview({ contract, levelRaise, combined, lang }: { contract: Contract; levelRaise: number; combined: number; lang: PayrollUiLang }) {
+  const vi = lang === "vi";
+  const monthly = contract.payType === "monthly";
+  const rows: { label: string; value: string }[] = [
+    { label: monthly ? (vi ? "Lương cơ bản" : "기본급") : salaryInputLabel(lang, contract.payType), value: rateAmount(contract.baseSalary, contract.payType, vi) },
+  ];
+  if (monthly || contract.fixedRaiseAmount) rows.push({ label: vi ? "Tăng cố định" : "고정 인상", value: `+${money(contract.fixedRaiseAmount)}` });
+  if (monthly || levelRaise) rows.push({ label: vi ? "Tăng theo cấp" : "레벨 인상", value: `+${money(levelRaise)}` });
+  return (
+    <div style={s.overview}>
+      <span style={s.overviewLabel}>{vi ? "Tổng lương hiện tại" : "현재 합산급여"}</span>
+      <b style={s.overviewAmount}>{rateAmount(combined, contract.payType, vi)}</b>
+      <span style={s.overviewMeta}>{payrollLabel(lang, contract.payType)} · {vi ? `áp dụng từ ${contract.effectiveFrom}` : `${contract.effectiveFrom} 적용`}</span>
+      <dl style={s.breakdown}>
+        {rows.map((row) => <div key={row.label} style={s.breakdownRow}>
+          <dt style={s.breakdownLabel}>{row.label}</dt>
+          <dd style={s.breakdownValue}>{row.value}</dd>
+        </div>)}
+      </dl>
+    </div>
+  );
+}
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label style={s.field}>
@@ -919,6 +973,19 @@ const s = {
   },
   secondary: { minHeight: 36, padding: "7px 10px", border: "1px solid #d1d5db", borderRadius: 9, background: "#fff", color: "#374151", fontSize: 13, fontWeight: 800 },
   contractActions: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  // /admin/users 계약 모달 전용(급여설정 화면의 카드 모양은 그대로)
+  cardInModal: { padding: 0, border: 0, borderRadius: 0, gap: 12 },
+  overview: { display: "grid", gap: 3, minWidth: 0, padding: "14px 14px 12px", border: "1px solid #bbf7d0", borderRadius: 14, background: "#f0fdf4" },
+  overviewLabel: { color: "#166534", fontSize: 12, fontWeight: 800 },
+  overviewAmount: { color: "#111827", fontSize: 24, fontWeight: 900, lineHeight: 1.2, overflowWrap: "anywhere", fontVariantNumeric: "tabular-nums" },
+  overviewMeta: { color: "#4b5563", fontSize: 12, fontWeight: 700 },
+  breakdown: { display: "grid", gap: 4, margin: "8px 0 0", paddingTop: 8, borderTop: "1px solid #bbf7d0" },
+  breakdownRow: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, minWidth: 0, fontSize: 13 },
+  breakdownLabel: { margin: 0, color: "#4b5563", fontWeight: 700, flexShrink: 0 },
+  breakdownValue: { margin: 0, color: "#111827", fontWeight: 800, textAlign: "right", minWidth: 0, overflowWrap: "anywhere", fontVariantNumeric: "tabular-nums" },
+  contractManage: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 },
+  contractPrimary: { minHeight: 44, padding: "8px 12px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
+  contractSecondary: { minHeight: 44, padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", color: "#374151", fontSize: 13, fontWeight: 700 },
   modalSave: { width: "100%", minHeight: 42, padding: "8px 12px", border: 0, borderRadius: 9, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
   contract: {
     display: "grid",

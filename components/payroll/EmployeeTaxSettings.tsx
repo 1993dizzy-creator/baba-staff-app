@@ -36,6 +36,8 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
   onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
+  // /admin/users 설정 모달(formRequest가 있으면): 제목·안내·설정 변경 버튼 없이 상태와 폼을 바로 보여 준다.
+  const modal = Boolean(formRequest);
   const mounted = useRef(true);
   // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
   const formRequestRef = useRef(formRequest ?? null);
@@ -163,12 +165,25 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
     ? vi ? "Lũy tiến từng phần" : "거주자 누진세"
     : vi ? "Không áp dụng TNCN" : "TNCN 미적용";
 
-  return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi} defaultOpen={Boolean(formRequest)}>
-    <div style={s.head}>
+  const burdenLabel = current?.burdenMode === "company_bears" ? vi ? "Công ty chịu (gross-up)" : "회사 부담(gross-up)" : vi ? "Nhân viên chịu" : "직원 부담";
+  const taxApplied = current !== null && current.taxMode !== "not_applicable";
+
+  return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
+    {/* 설정 모달(/admin/users)에서는 바깥 제목·바로 열린 폼이 있으므로 안내 문구·설정 변경 버튼을 두지 않는다. */}
+    {modal ? null : <div style={s.head}>
       <p style={s.help}>{vi ? "Lưu từng phiên bản theo tháng áp dụng; tên kế toán không thay đổi danh tính nhân viên." : "적용 월별 새 revision으로 저장하며 회계 명의는 직원 identity를 변경하지 않습니다."}</p>
       <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormIntent(null); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
-    </div>
-    {current ? <div style={s.current}>
+    </div>}
+    {/* 모달: 적용 방식·세금 부담·부양가족·회계 명의·적용월만(직원명은 모달 제목, revision은 이력에 있음). */}
+    {current && modal ? <div style={s.current}>
+      <Summary label={vi ? "Chế độ" : "적용 방식"} value={modeLabel} />
+      {taxApplied ? <>
+        <Summary label={vi ? "Bên chịu thuế" : "세금 부담"} value={burdenLabel} />
+        <Summary label={vi ? "Người phụ thuộc" : "부양가족"} value={String(current.dependentCount)} />
+        <Summary label={vi ? "Tên kế toán/TNCN" : "회계/TNCN 명의"} value={current.accountingName ?? "—"} />
+      </> : null}
+      <Summary label={vi ? "Tháng áp dụng" : "적용 월"} value={current.effectiveMonth.slice(0, 7)} />
+    </div> : current ? <div style={s.current}>
       <Summary label={vi ? "Nhân viên" : "직원"} value={employeeName} />
       <Summary label={vi ? "Chế độ" : "적용 방식"} value={modeLabel} />
       <Summary label={vi ? "Tên kế toán/TNCN" : "회계/TNCN 명의"} value={current.accountingName ?? "—"} />

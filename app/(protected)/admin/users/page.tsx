@@ -437,7 +437,6 @@ function UserCard({
 }) {
   const { lang } = useLanguage();
   const text = adminUsersText[lang];
-  const router = useRouter();
   // 급여설정 화면에서 "직원관리로 이동"으로 왔으면 이 직원의 상세를 연 상태로 시작한다.
   const initialFocus = payroll.initialFocusUserId === String(user.id) ? payroll.initialSection : null;
   const [isEditing, setIsEditing] = useState(initialFocus !== null);
@@ -504,19 +503,6 @@ function UserCard({
   useEffect(() => {
     if (initialFocus) articleRef.current?.scrollIntoView({ block: "start" });
   }, [initialFocus]);
-  function leaveMessage() {
-    const draftChanged = userDraftChanged(user, draft) || levelDraftChanged(user, levelDraft, draft.hire_date);
-    const payrollMessage = payrollOpen ? payroll.leaveMessage() : null;
-    if (draftChanged && payrollMessage) return `${text.unsavedLeaveConfirm}\n\n${payrollMessage}`;
-    return payrollMessage ?? (draftChanged ? text.unsavedLeaveConfirm : null);
-  }
-  function openPayrollSettings() {
-    const message = leaveMessage();
-    if (message && !window.confirm(message)) return;
-    // 뒤로가기로 돌아왔을 때 이 직원 상세(와 열려 있던 급여 영역)를 다시 열 수 있게 현재 위치를 기록한다.
-    router.replace(`/admin/users?userId=${encodeURIComponent(String(user.id))}&section=payroll${sheetView ? `&sheet=${sheetView}` : ""}`, { scroll: false });
-    router.push(`/admin/payroll/settings?tab=employee&userId=${encodeURIComponent(String(user.id))}`);
-  }
   // 재직 상태(is_active)는 일반 토글로 바꾸지 않는다. 다음 두 경우에만 명시적으로 복구한다.
   // - 퇴사 취소: 퇴사자의 퇴사일을 지우고 "퇴사 취소 확정"을 선택한 경우(서버 cancel_termination 검증)
   // - 비활성 해제: 퇴사일 없이 비활성인 기존 직원을 "비활성 해제"한 경우
@@ -838,11 +824,9 @@ function UserCard({
           view={sheetView}
           request={payroll.openRequest}
           contracts={contracts}
-          isSaving={isSaving}
           onClose={() => { payroll.setOpen(user.id, false); }}
           onFinish={(result) => finishSetting(sheetView, result)}
           onUnsavedChange={payroll.setUnsaved}
-          onOpenPayrollSettings={openPayrollSettings}
         />
       ) : null}
       {isEditing && levelModalOpen ? <LevelSettingsModal user={user} draft={draft} initial={levelDraft} text={text} onCancel={() => { setLevelModalOpen(false); focusLevelOpener(); }} onApply={value => { setLevelDraft(value); setLevelModalOpen(false); focusLevelOpener(); }} /> : null}
@@ -894,12 +878,6 @@ function attendanceOffNeedsFixedMonthly(draft: UserRow, contracts: PayrollContra
 // 급여설정 직원 목록(/api/admin/payroll/users)과 같은 조건: 재직 중(is_active)이고 급여 대상.
 function canManageUserPayroll(user: UserRow) {
   return user.is_active === true && !user.termination_date && isPayrollEligible(user);
-}
-
-// 저장 전 이탈 확인에 쓰는 직원 상세의 편집 가능한 값(서버가 다시 내려준 표시용 값은 제외).
-const EDITABLE_USER_KEYS = ["name", "full_name", "role", "part", "gender", "birth_date", "hire_date", "termination_date", "work_start_time", "work_end_time", "is_active", "attendance_tracking_enabled", "app_login_enabled", "payroll_eligible_override"] as const satisfies readonly (keyof UserRow)[];
-function userDraftChanged(user: UserRow, draft: UserRow) {
-  return EDITABLE_USER_KEYS.some(key => (draft[key] ?? null) !== (user[key] ?? null));
 }
 
 /**
@@ -1117,10 +1095,10 @@ const SHEET_TITLES: Record<PayrollSheetView, { emoji: string; title: "payrollCon
  * 저장 확인 대기·중복 저장 차단이 그대로 적용된다. 보험·세금·식대·개근 카드는 계약 모달에 나오지 않고,
  * 설정 모달에는 그 설정 카드 하나만 마운트·조회된다. 계약은 카드의 usePayrollContracts를 공유한다.
  */
-function PayrollSettingSheet({ user, text, lang, view, request, contracts, isSaving, onClose, onFinish, onUnsavedChange, onOpenPayrollSettings }: {
+function PayrollSettingSheet({ user, text, lang, view, request, contracts, onClose, onFinish, onUnsavedChange }: {
   user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; view: PayrollSheetView; request: PayrollSettingFormRequest | null;
-  contracts: PayrollContractsController; isSaving: boolean; onClose: () => void; onFinish: (result: PayrollSettingFormResult) => void;
-  onUnsavedChange: (state: PayrollUnsavedState) => void; onOpenPayrollSettings: () => void;
+  contracts: PayrollContractsController; onClose: () => void; onFinish: (result: PayrollSettingFormResult) => void;
+  onUnsavedChange: (state: PayrollUnsavedState) => void;
 }) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const panelUser = useMemo<EmployeePayrollPanelUser>(() => ({
@@ -1133,10 +1111,8 @@ function PayrollSettingSheet({ user, text, lang, view, request, contracts, isSav
     title={`${meta.emoji} ${text[meta.title]} · ${name}`}
     closeLabel={text.close}
     onClose={onClose}
-    footer={<>
-      <button type="button" style={styles.secondaryButton} disabled={isSaving} onClick={onOpenPayrollSettings}>{text.managePayrollSettings} →</button>
-      <button type="button" style={styles.primaryButton} onClick={onClose}>{text.close}</button>
-    </>}
+    // 개인별 급여 설정은 이 모달에서 끝낸다(급여설정 화면으로 이동하는 버튼 없음). 하단은 닫기 하나만 둔다.
+    footer={<button type="button" style={styles.secondaryButton} onClick={onClose}>{text.close}</button>}
   >
     <EmployeePayrollSettingsPanel
       user={panelUser}
@@ -2041,7 +2017,7 @@ const styles = {
   sheetHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
   sheetTitle: { minWidth: 0, fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
   sheetBody: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: 12, background: "#f9fafb" },
-  sheetFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
+  sheetFooter: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   sectionToggle: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 44, margin: "-4px 0", padding: "4px 0", border: "none", background: "transparent", color: "inherit", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
   sectionBody: { display: "grid", gap: 8, minWidth: 0 },
   contractLines: { display: "grid", gap: 2, minWidth: 0 },

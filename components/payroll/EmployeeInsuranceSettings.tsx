@@ -60,6 +60,8 @@ export default function EmployeeInsuranceSettings({
   /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
   onFormFinish?: (result: PayrollSettingFormResult) => void;
 }) {
+  // /admin/users 설정 모달(formRequest가 있으면): 제목·안내·설정 변경 버튼 없이 상태와 폼을 바로 보여 준다.
+  const modal = Boolean(formRequest);
   const mounted = useRef(true);
   // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
   const formRequestRef = useRef(formRequest ?? null);
@@ -207,8 +209,9 @@ export default function EmployeeInsuranceSettings({
   }
 
   return (
-    <EmployeeSettingCard title={vi ? "Bảo hiểm nhân viên" : "직원 보험"} applied={loaded ? current?.isEnrolled === true : null} vi={vi} defaultOpen={Boolean(formRequest)}>
-      <div style={s.head}>
+    <EmployeeSettingCard title={vi ? "Bảo hiểm nhân viên" : "직원 보험"} applied={loaded ? current?.isEnrolled === true : null} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
+      {/* 설정 모달(/admin/users)에서는 바깥 제목·바로 열린 폼이 있으므로 안내 문구·설정 변경 버튼을 두지 않는다. */}
+      {modal ? null : <div style={s.head}>
         <div>
           <p style={s.help}>
             {vi
@@ -219,7 +222,7 @@ export default function EmployeeInsuranceSettings({
         <button type="button" style={s.secondary} onClick={openForm}>
           {vi ? "Thay đổi cài đặt bảo hiểm" : "보험 설정 변경"}
         </button>
-      </div>
+      </div>}
 
       {current ? (
         <div style={s.current}>
@@ -243,7 +246,8 @@ export default function EmployeeInsuranceSettings({
             label={vi ? "Tháng áp dụng" : "적용 월"}
             value={current.effectiveMonth.slice(0, 7)}
           />
-          <Summary label="revision" value={`#${current.revision}`} />
+          {/* revision은 설정 이력에도 있으므로 모달에서는 생략한다. */}
+          {modal ? null : <Summary label="revision" value={`#${current.revision}`} />}
         </div>
       ) : (
         <p style={s.empty}>

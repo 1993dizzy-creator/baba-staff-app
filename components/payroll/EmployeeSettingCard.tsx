@@ -8,6 +8,7 @@ export default function EmployeeSettingCard({
   vi,
   children,
   defaultOpen = false,
+  bare = false,
 }: {
   title: string;
   applied: boolean | null;
@@ -15,12 +16,18 @@ export default function EmployeeSettingCard({
   children: ReactNode;
   /** 설정 하나만 여는 모달(/admin/users)에서는 펼친 상태로 시작한다. */
   defaultOpen?: boolean;
+  /**
+   * /admin/users 설정 모달: 바깥 모달 제목이 있으므로 카드 제목·접기 머리글 없이 내용만 펼쳐 보여 준다.
+   * 급여설정 화면(기본값 false)의 접는 카드는 그대로다.
+   */
+  bare?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const status = applied === null ? null : applied
     ? vi ? "Áp dụng" : "적용"
     : vi ? "Không áp dụng" : "미적용";
 
+  if (bare) return <section style={s.bare}>{children}</section>;
   return (
     <section style={s.card}>
       <button
@@ -49,4 +56,5 @@ const s = {
   inactiveBadge: { padding: "3px 7px", border: "1px solid #e5e7eb", borderRadius: 999, background: "#f9fafb", color: "#6b7280", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" },
   chevron: { width: 14, textAlign: "center", color: "#6b7280", fontSize: 15, lineHeight: 1 },
   body: { display: "grid", gap: 9, padding: "0 13px 13px", borderTop: "1px solid #f3f4f6", minWidth: 0 },
+  bare: { display: "grid", gap: 10, minWidth: 0 },
 } satisfies Record<string, CSSProperties>;
