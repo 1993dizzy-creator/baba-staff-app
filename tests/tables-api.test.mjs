@@ -6,6 +6,7 @@ import * as policy from '../lib/sales/table-overview.ts';
 import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 import { addStoreDays, calculateStoreBusinessDate } from '../lib/store-settings/business-time-core.ts';
 import { input, now, order } from './helpers/table-overview-fixture.mjs';
+import { evaluateOpenOrdersCronWindow } from '../lib/pos/cukcuk/open-orders-cron-policy.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 
 test('real signed-session gate allows all five roles; unauthenticated/forged/inactive/blocked cannot read snapshots', async () => {
@@ -71,8 +72,9 @@ test('server reads only central RPC and receipt evidence, resolves configured 03
       const at = new Date(dateTime), day = calculateStoreBusinessDate(at), f = input(); const calls = [];
       const service = loadTs('lib/sales/table-overview-server.ts', {
         'server-only': {}, './table-overview': policy,
-        '@/lib/store-settings/business-time-adapter': { resolveConfiguredBusinessDate: async stamp => { assert.equal(stamp, at); return day; } },
+        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async stamp => { assert.equal(stamp, at); return {databaseBusinessDate:day,snapshot:{cutoff:'03:00'},context:{isOpen:true}}; } },
         '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
+        '@/lib/pos/cukcuk/open-orders-cron-policy': {evaluateOpenOrdersCronWindow},
         '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
         './baba-table-catalog': { babaTableCatalog: () => f.catalog },
         '@/lib/supabase/server': { supabaseServer: { rpc(name, args) { calls.push([name,args]); return {
@@ -101,8 +103,9 @@ test('actual static catalog reaches the server response with READ disabled, abse
       let snapshotReads = 0;
       const service = loadTs('lib/sales/table-overview-server.ts', {
         'server-only': {}, './table-overview': policy, './baba-table-catalog': { babaTableCatalog },
-        '@/lib/store-settings/business-time-adapter': { resolveConfiguredBusinessDate: async () => base.businessDate },
+        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async () => ({databaseBusinessDate:base.businessDate,snapshot:{cutoff:'03:00'},context:{isOpen:true}}) },
         '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
+        '@/lib/pos/cukcuk/open-orders-cron-policy': {evaluateOpenOrdersCronWindow},
         '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
         '@/lib/supabase/server': { supabaseServer: { rpc() { snapshotReads++; return { abortSignal: async () => ({
           error: scenario === 'read_failed' ? { code:'offline-failure' } : null,
@@ -117,7 +120,7 @@ test('actual static catalog reaches the server response with READ disabled, abse
       assert.equal(result.tables.length,27,scenario);
       assert.deepEqual(['bar','floor1','floor2'].map(area=>result.tables.filter(t=>t.area===area).length),[11,8,8]);
       assert.equal(result.tables.filter(t=>t.state==='occupied').length,scenario==='live'?2:0,scenario);
-      assert.equal(result.summary.free,null); assert.equal(result.summary.reserved,null); assert.equal(result.summary.paid,null);
+      assert.equal(result.summary.free,null); assert.equal(result.summary.reserved,null); assert.equal(result.summary.paid,['absent','live'].includes(scenario)?0:null);
       assert.equal(snapshotReads,scenario==='read_disabled'?0:1);
     }
   } finally {
@@ -125,4 +128,29 @@ test('actual static catalog reaches the server response with READ disabled, abse
     if(oldRead===undefined)delete process.env.POS_OPEN_ORDERS_READ_ENABLED;else process.env.POS_OPEN_ORDERS_READ_ENABLED=oldRead;
     if(oldTables===undefined)delete process.env.POS_TABLES_READ_ENABLED;else process.env.POS_TABLES_READ_ENABLED=oldTables;
   }
+});
+
+test('receipt read selects only projected evidence, uses exact pagination, and never leaks raw/customer data', async()=>{
+ const old=process.env.POS_OPEN_ORDERS_READ_ENABLED;process.env.POS_OPEN_ORDERS_READ_ENABLED='true';
+ try{
+  const base=input({orders:[]});const calls=[];
+  const rows=[{id:10,payment_status:3,is_canceled:false,order_id:'receipt-only',business_date:base.businessDate,table_name:'BAR4',ref_date:now.toISOString(),raw_json:{CustomerTel:'private-customer'}}];
+  const query={select(columns,options){calls.push(['select',columns,options]);return query;},eq(...args){calls.push(['eq',...args]);return query;},in(...args){calls.push(['in',...args]);return query;},order(){return query;},abortSignal(){return query;},range(from,to){calls.push(['range',from,to]);return Promise.resolve({data:rows,error:null,count:1});}};
+  const service=loadTs('lib/sales/table-overview-server.ts',{
+   'server-only':{},'./table-overview':policy,'./baba-table-catalog':{babaTableCatalog},
+   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:base.businessDate,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
+   '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-core':core,
+   '@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},
+   '@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=> 'offline'},
+   '@/lib/supabase/server':{supabaseServer:{rpc:()=>({abortSignal:async()=>({data:{sync:base.sync,orders:[]},error:null})}),from(table){assert.equal(table,'pos_sales_receipts');return query;}}},
+   './daily-sales-summary':{fetchAllExactPages:async makeQuery=>makeQuery(0,999)},
+  });
+  const result=await service.readTableOverview(now);
+  const select=calls.find(c=>c[0]==='select')[1];
+  assert.equal(select,'id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date');
+  assert.ok(calls.some(c=>c[0]==='eq'&&c[1]==='source'&&c[2]==='cukcuk'));
+  assert.deepEqual(calls.find(c=>c[0]==='in')[2],[base.businessDate,addStoreDays(base.businessDate,1)]);
+  assert.equal(result.summary.paid,1);assert.equal(result.tables.find(t=>t.name==='BAR4').state,'paid');
+  assert.doesNotMatch(JSON.stringify(result),/CustomerTel|private-customer|raw_json/);
+ }finally{if(old===undefined)delete process.env.POS_OPEN_ORDERS_READ_ENABLED;else process.env.POS_OPEN_ORDERS_READ_ENABLED=old;}
 });

@@ -1,12 +1,13 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase/server";
-import { resolveConfiguredBusinessDate } from "@/lib/store-settings/business-time-adapter";
+import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
-import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyncState, type ReceiptLink } from "@/lib/pos/cukcuk/open-orders-core";
+import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyncState } from "@/lib/pos/cukcuk/open-orders-core";
+import { evaluateOpenOrdersCronWindow } from "@/lib/pos/cukcuk/open-orders-cron-policy";
 import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
-import { buildTableOverview } from "./table-overview";
+import { buildTableOverview, type TableReceipt } from "./table-overview";
 
 function validOrders(orders: unknown): orders is CollectedOrder[] {
   if (!Array.isArray(orders)) return false;
@@ -24,12 +25,14 @@ function validOrders(orders: unknown): orders is CollectedOrder[] {
 
 /** Only central read RPC + receipt evidence. No Cron invocation or order transport. */
 export async function readTableOverview(now = new Date()) {
-  const businessDate = await resolveConfiguredBusinessDate(now);
+  const businessTime = await loadBusinessTimeAdapter(now);
+  const businessDate = businessTime.databaseBusinessDate;
   const enabled = process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
   const catalog = babaTableCatalog();
   let sync: OpenOrderSyncState | null = null;
   let orders: CollectedOrder[] = [];
-  let receipts: ReceiptLink[] = [];
+  let receipts: TableReceipt[] = [];
+  let readFailed = false;
   if (enabled) {
     try {
       const result = await supabaseServer.rpc(OPEN_ORDERS_RPC.read, {
@@ -37,25 +40,33 @@ export async function readTableOverview(now = new Date()) {
       }).abortSignal(AbortSignal.timeout(15_000));
       if (result.error || !result.data) throw Error("SNAPSHOT_UNAVAILABLE");
       const payload = result.data as { sync: OpenOrderSyncState | null; orders: unknown };
+      const timestampOrNull = (value: unknown) => value === null || typeof value === "string" && Number.isFinite(Date.parse(value));
+      if (payload.sync !== null && (!payload.sync || typeof payload.sync !== "object"
+        || typeof payload.sync.businessDate !== "string" || !timestampOrNull(payload.sync.lastSuccessAt)
+        || !timestampOrNull(payload.sync.lastAttemptAt)
+        || !(payload.sync.lastErrorCode === null || typeof payload.sync.lastErrorCode === "string"))) throw Error("SNAPSHOT_INVALID");
       sync = payload.sync;
       // JSON numeric fields from PostgreSQL can be serialized as numbers or decimal strings.
       const rows: unknown = Array.isArray(payload.orders)
         ? payload.orders.map(order => ({ ...order, totalAmount: typeof order?.totalAmount === "number" ||
           typeof order?.totalAmount === "string" && order.totalAmount.trim() ? Number(order.totalAmount) : NaN, raw: {} })) : null;
       if (!validOrders(rows)) throw Error("SNAPSHOT_INVALID");
-      type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string };
+      type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string; table_name: string | null; ref_date: string | null };
       const evidence = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
-        .select("id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date", { count: "exact" })
+        .select("id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date", { count: "exact" })
         .eq("source", "cukcuk").in("business_date", [businessDate, addStoreDays(businessDate, 1)])
         .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to));
       if (evidence.error || !evidence.data) throw Error("RECEIPTS_UNAVAILABLE");
       receipts = evidence.data.map(row => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
-        isCanceled: row.is_canceled, businessDate: row.business_date }));
+        isCanceled: row.is_canceled, businessDate: row.business_date, tableName: row.table_name, paidAt: row.ref_date }));
       orders = rows;
     } catch {
       // Retain the last successful timestamp for the operator, but never certify old rows as current.
+      readFailed = true;
       sync = sync ? { ...sync, lastErrorCode: "read_failed" } : null;
     }
   }
-  return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts });
+  return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts, readFailed,
+    cutoff: businessTime.snapshot.cutoff,
+    collectionExpected: businessTime.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
 }

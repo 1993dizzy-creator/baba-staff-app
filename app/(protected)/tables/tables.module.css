@@ -64,3 +64,4 @@
 .lines td:not(:first-child),.lines th:not(:first-child) { text-align:right; }
 .estimate { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px; }
 @media(min-width:900px) { .areas { grid-template-columns:minmax(296px,1fr) repeat(2,minmax(0,1fr)); align-items:start; } .sheet { inset:0; margin:auto; height:fit-content; border-radius:18px; } .page { padding:16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); } }
+.diagnostic { margin:4px 0; color:#6b7280; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
