@@ -82,9 +82,16 @@ export default function TablesPage() {
   </article>;
 
   return <main className={styles.page}>
-    <header className={`${styles.header} ${styles.pageHeader}`}><h1>{t.title}</h1><button onClick={() => void load()} disabled={loading}>{t.refresh}</button></header>
-    <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "reserved", "paid", "free"] as const).map(key =>
-      <div key={key}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}</dd></div>)}</dl>
+    <h1 className={styles.srOnly}>{t.title}</h1>
+    <header className={styles.overviewBar}>
+      <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "unknown"] as const).map(key =>
+        <div key={key}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}</dd></div>)}</dl>
+      <button className={styles.refresh} onClick={() => void load()} disabled={loading} aria-label={t.refresh} title={t.refresh}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
+        </svg>
+      </button>
+    </header>
     <p className={styles.timing}>
       <span>{t.shortDate} <time dateTime={data?.businessDate} title={data?.businessDate}>{data?.businessDate.slice(5).replace("-", "/") ?? "—"}</time></span>
       <span>{t.shortOrders} <time dateTime={data?.snapshotAt ?? undefined} title={timestamp(data?.snapshotAt, lang)}>{clock(data?.snapshotAt)}</time></span>
@@ -107,11 +114,11 @@ export default function TablesPage() {
       const areaTables = data?.tables.filter(item => item.area === area) ?? [];
       return <section key={area} className={styles.area}>
       <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>{areaTables.length}{t.tableCountSuffix}</span></div>
-      <div className={styles.tiles}>{areaTables.map(item => <button key={item.id}
+      <div className={`${styles.tiles} ${area === "bar" ? styles.barTiles : ""}`}>{areaTables.map(item => <button key={item.id}
         className={`${styles.tile} ${item.state === "unknown" ? styles.unknown : ""}`}
         aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}`} onClick={() => setSelected({ kind: "table", id: item.id })}>
         {colors[item.state] ? <i className={styles.dot} style={{ background: colors[item.state] }} aria-hidden="true" /> : null}
-        {item.state === "unknown" ? <span className={styles.question} aria-hidden="true">?</span> : null}<strong>{item.name}</strong>
+        <strong>{item.name}</strong>
       </button>)}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
     </section>; })}</div>
@@ -120,8 +127,11 @@ export default function TablesPage() {
         {order.tableName?.trim().toUpperCase() === "BAR" ? t.barUnlinked : order.tableName || t.unknown} · {t.order} {order.number ?? "—"}</button>)}
     </details> : null}
     <dialog ref={dialog} className={styles.sheet} aria-labelledby="table-detail-title" onCancel={() => setSelected(null)}>
-      <header className={styles.header}><h2 id="table-detail-title">{tile?.name ?? unlinked?.tableName ?? t.details}</h2><button onClick={() => setSelected(null)}>{t.close}</button></header>
-      {tile ? <><p>{areaName(tile.area)} · {t[tile.state]} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p>
+      <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile?.name ?? unlinked?.tableName ?? t.details}</h2>
+        {tile ? <span className={`${styles.stateBadge} ${tile.state === "unknown" ? styles.unknown : ""}`}>
+          {colors[tile.state] ? <i style={{ background: colors[tile.state] }} aria-hidden="true" /> : null}{t[tile.state]}</span> : null}
+      </div><button onClick={() => setSelected(null)}>{t.close}</button></header>
+      {tile ? <><p>{areaName(tile.area)} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p>
         <p className={styles.muted}>{t.sourceArea}: {tile.areaName}</p></> : null}
       {!detailOrders.length ? <p className={styles.notice}>{t.noOrders}</p> : detailOrders.map(orderView)}
     </dialog>

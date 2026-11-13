@@ -7,11 +7,11 @@ import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
-import { overview } from './helpers/table-overview-fixture.mjs';
+import { overview, order } from './helpers/table-overview-fixture.mjs';
 
-function render(data, lang, { failed=false }={}) {
+function render(data, lang, { failed=false, selected=null }={}) {
   let hook=0;
-  const states=[data,false,failed,null], mod={exports:{}};
+  const states=[data,false,failed,selected], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
@@ -29,8 +29,11 @@ for(const lang of ['ko','vi']){
  test(`${lang}: compact summary keeps original zero/null values, separate source clocks and actual 11/8/8 counts`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),before=JSON.stringify(data),html=render(data,lang),t=tablesText[lang];
   const summary=html.match(/<dl class="summary".*?<\/dl>/s)[0];
-  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['27','0','—','—','—']);
-  for(const label of Object.values(t.summaryLabels))assert.ok(summary.includes(label));
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['27','0','27']);
+  for(const key of ['total','occupied','unknown'])assert.ok(summary.includes(t.summaryLabels[key]));
+  for(const key of ['reserved','paid','free'])assert.ok(!summary.includes(t.summaryLabels[key]));
+  assert.ok(html.includes(`<h1 class="srOnly">${t.title}</h1>`));
+  assert.ok(html.includes(`aria-label="${t.refresh}"`));
   assert.ok(html.includes('11/13'));assert.ok(html.includes('20:30'));assert.ok(html.includes('01:17'));
   assert.ok(html.includes(data.snapshotAt));assert.ok(html.includes(data.catalogAt));
   assert.equal((html.match(new RegExp(`11${t.tableCountSuffix}`,'g'))??[]).length,1);
@@ -38,9 +41,9 @@ for(const lang of ['ko','vi']){
   assert.equal(JSON.stringify(data),before,'presentation must not rewrite state or values');
  });
 
- test(`${lang}: unknown tiles use question markers and accessible status; persistent warning has collapsible detail`,()=>{
+ test(`${lang}: unknown tiles omit repeated question markers and accessible status; persistent warning has collapsible detail`,()=>{
   const html=render(overview({catalog:babaTableCatalog(),orders:[]}),lang),t=tablesText[lang];
-  assert.equal((html.match(/class="question" aria-hidden="true">\?<\/span>/g)??[]).length,27);
+  assert.equal((html.match(/class="question" aria-hidden="true">\?<\/span>/g)??[]).length,0);
   assert.ok(!html.includes(`<small>${t.unknown}</small>`));
   assert.ok(html.includes(`aria-label="BAR11 · BAR · ${t.unknown}"`));
   assert.ok(html.includes(`<summary>${t.reviewCount.replace('{count}','27')}</summary>`));
@@ -57,6 +60,21 @@ for(const lang of ['ko','vi']){
   const missing=overview({catalog:{status:'unavailable',tables:[],collectedAt:null}}),missingHtml=render(missing,lang);
   assert.ok(missingHtml.includes(`<summary>${t.catalogCheck}</summary>`));assert.ok(missingHtml.includes(t.noCatalog));
   const error=render(null,lang,{failed:true});assert.ok(error.includes(`role="alert" class="notice">${t.failed}`));
+  const summary=error.match(/<dl class="summary".*?<\/dl>/s)[0];
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['\u2014','\u2014','\u2014']);
+ });
+
+ test(`${lang}: selected sheet preserves source amounts, menu, status and timestamps`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[order('sheet-source','BAR4')]}),before=JSON.stringify(data);
+  const tile=data.tables.find(tile=>tile.name==='BAR4'),t=tablesText[lang];
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id}});
+  assert.ok(html.includes('sheet-source'));assert.ok(html.includes('Synthetic menu'));
+  for(const amount of [50000,100000]){
+   const formatted=new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount);
+   assert.ok(html.includes(formatted));
+  }
+  assert.ok(html.includes(t.occupied));assert.ok(html.includes('20:30'));
+  assert.equal(JSON.stringify(data),before);
  });
 
  test(`${lang}: render-only color/free examples preserve the three colors and keep a verified free tile marker-free`,()=>{
