@@ -1,8 +1,11 @@
 export const tablesText = {
   ko: {
+    idle: "일반 · 진행 주문 없음", unavailable: "현황 수집 오류·지연 · 현재 상태를 확인할 수 없습니다.",
+    waiting: "수집 대기 · 현재 점유 미확인", partial: "일부 테이블·결제 연결을 확인할 수 없습니다.",
+    completionEvidence: "완료는 결제 증거이며 퇴석·빈자리 확정을 뜻하지 않습니다.", completedAt: "결제 영수증 시각",
     title: "매장현황", refresh: "새로고침", loading: "매장현황 확인 중…", failed: "현황을 확인할 수 없습니다. 다시 확인해 주세요.",
-    total: "전체 테이블", occupied: "사용 중", reserved: "예약", paid: "결제완료", free: "확인된 빈자리", unknown: "미확인",
-    summaryLabels: { total: "전체", occupied: "사용 확인", unknown: "확인 필요", reserved: "예약", paid: "결제", free: "빈자리" },
+    total: "전체 테이블", occupied: "사용 중", reserved: "예약", paid: "완료", free: "확인된 빈자리", unknown: "미확인",
+    summaryLabels: { total: "전체", occupied: "사용 중", unknown: "확인 필요", reserved: "예약", paid: "완료", free: "빈자리" },
     shortDate: "영업일", shortOrders: "주문", shortTables: "테이블", tableCountSuffix: "개",
     reviewCount: "확인 필요 {count}개 · 빈자리 안내 금지", catalogCheck: "목록 확인 필요 · 빈자리 안내 금지",
     ordersCheck: "주문 확인 필요 · 빈자리 안내 금지", statusInfo: "상태 안내",
@@ -17,9 +20,12 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    idle: "Bình thường · Không có đơn đang mở", unavailable: "Lỗi hoặc chậm thu thập · Chưa xác định hiện trạng.",
+    waiting: "Chờ thu thập · Chưa xác nhận sử dụng", partial: "Chưa xác định một số bàn hoặc liên kết thanh toán.",
+    completionEvidence: "Hoàn tất chỉ xác nhận thanh toán, không xác nhận khách đã rời hay bàn trống.", completedAt: "Thời gian hóa đơn",
     title: "Tình hình cửa hàng", refresh: "Làm mới", loading: "Đang kiểm tra cửa hàng…", failed: "Chưa xác định được hiện trạng. Vui lòng thử lại.",
-    total: "Tổng số bàn", occupied: "Đang sử dụng", reserved: "Đặt trước", paid: "Đã thanh toán", free: "Bàn trống đã xác nhận", unknown: "Chưa rõ",
-    summaryLabels: { total: "Tổng", occupied: "Đang dùng", unknown: "Cần kiểm tra", reserved: "Đặt", paid: "Đã trả", free: "Trống" },
+    total: "Tổng số bàn", occupied: "Đang sử dụng", reserved: "Đặt trước", paid: "Hoàn tất", free: "Bàn trống đã xác nhận", unknown: "Chưa rõ",
+    summaryLabels: { total: "Tổng", occupied: "Đang dùng", unknown: "Cần kiểm tra", reserved: "Đặt", paid: "Hoàn tất", free: "Trống" },
     shortDate: "Ngày", shortOrders: "Đơn", shortTables: "Bàn", tableCountSuffix: " bàn",
     reviewCount: "{count} bàn chưa rõ · Không báo bàn trống", catalogCheck: "Kiểm tra danh sách · Không báo bàn trống",
     ordersCheck: "Kiểm tra đơn · Không báo bàn trống", statusInfo: "Thông tin trạng thái",

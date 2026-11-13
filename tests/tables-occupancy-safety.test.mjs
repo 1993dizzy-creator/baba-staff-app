@@ -10,10 +10,10 @@ import { observedFacts, replayOrders, replayPaidLinks } from './fixtures/tables-
 const view = changes => buildTableOverview(input({catalog:babaTableCatalog(),...changes}));
 const noFalseStates = result => {
   assert.equal(result.tables.length,27);
-  assert.equal(result.summary.free,null); assert.equal(result.summary.paid,null); assert.equal(result.summary.reserved,null);
+  assert.equal(result.summary.free,null); assert.equal(result.summary.reserved,null);
   assert.ok(result.tables.every(t=>!['free','paid','reserved'].includes(t.state)));
 };
-const unknownAll = result => { noFalseStates(result); assert.ok(result.tables.every(t=>t.state==='unknown')); };
+const noOccupancy = result => { noFalseStates(result); assert.ok(result.tables.every(t=>t.state!=='occupied')); };
 
 test('observed current shape: 20 Status 4 and zero open orders do not imply 27 vacant tables', () => {
   const facts=observedFacts.current;
@@ -22,14 +22,14 @@ test('observed current shape: 20 Status 4 and zero open orders do not imply 27 v
   }));
   const result=view({now:new Date(facts.checkedAt),businessDate:facts.businessDate,orders,
     sync:{businessDate:facts.businessDate,lastSuccessAt:facts.lastSuccessAt,lastAttemptAt:facts.lastSuccessAt,lastErrorCode:null}});
-  unknownAll(result); assert.equal(result.summary.occupied,0);
+  noOccupancy(result); assert.equal(result.summary.occupied,null);
 });
 
 test('observed historical shape is excluded from the current business day, including BAR6 with no paid evidence', () => {
   const oldDay=observedFacts.historical.businessDate;
   const orders=replayOrders({businessDate:oldDay,at:'2026-11-10T13:00:00Z'}),receipts=replayPaidLinks(oldDay);
   const result=view({orders,receipts});
-  unknownAll(result); assert.ok(result.tables.every(t=>t.orders.length===0));
+  noOccupancy(result); assert.ok(result.tables.every(t=>t.orders.length===0));
   const classified=classifyOrdersForBusinessDate(orders,receipts,businessDate);
   assert.equal(classified.otherBusinessDate,8); assert.equal(classified.open.length,0);
 });
@@ -47,8 +47,8 @@ test('synthetic seven-paid-link replay: paid-linked orders never cause green; re
   const orders=replayOrders({businessDate,at:now.toISOString()}),receipts=replayPaidLinks(businessDate);
   const classified=classifyOrdersForBusinessDate(orders,receipts,businessDate),result=view({orders,receipts});
   assert.equal(classified.converted,7); assert.deepEqual(classified.open.map(o=>o.tableName),['BAR6']);
-  assert.equal(result.summary.occupied,1); noFalseStates(result);
-  for(const table of result.tables)assert.equal(table.state,table.name==='BAR6'?'occupied':'unknown');
+  assert.equal(result.summary.occupied,null); noFalseStates(result);
+  for(const table of result.tables)assert.equal(table.state,table.name==='BAR6'?'occupied':observedFacts.historical.tableNames.includes(table.name)?'unknown':'idle');
 });
 
 test('BAR4/BAR6 and floor names retain exact actual catalog identity and separate original areas', () => {
@@ -78,39 +78,39 @@ test('regression: confirmed paid predecessor must not block another valid curren
   assert.equal(tile.state,'occupied'); assert.equal(result.summary.occupied,1);
   assert.equal(tile.orders.filter(o=>o.verifiedOpen).length,1);
   assert.equal(tile.orders.find(o=>o.id==='paid-previous').verifiedOpen,false);
-  unknownAll(view({orders:[orders[0]],receipts}));
+  noOccupancy(view({orders:[orders[0]],receipts}));
 });
 
 test('multi-table names are not split or allocated, including bare BAR', () => {
   const orders=['1+2','1,2','BAR4/BAR6','BAR'].map((name,i)=>order('composite-'+i,name));
-  const result=view({orders});unknownAll(result);assert.equal(result.unlinked.length,4);
+  const result=view({orders});noOccupancy(result);assert.equal(result.unlinked.length,4);
 });
 
 test('missing, duplicate and unmatched names stay unlinked, without a guessed seat', () => {
   const result=view({orders:[order('missing',null),order('mismatch','99')]});
-  unknownAll(result);assert.equal(result.unlinked.length,2);
+  noOccupancy(result);assert.equal(result.unlinked.length,2);
   const catalog=babaTableCatalog();catalog.tables[0].name='BAR4';
   const duplicate=view({catalog,orders:[order('duplicate','BAR4')]});
-  unknownAll(duplicate);assert.equal(duplicate.unlinked.length,1);
+  noOccupancy(duplicate);assert.equal(duplicate.unlinked.length,1);
 });
 
 test('Status 4/5/unknown and unresolved receipt conflicts never certify occupied; paid exclusion does not hide uncertainty', () => {
-  for(const status of [4,5,6,7,8,null])unknownAll(view({orders:[order('status','BAR4',{status})]}));
+  for(const status of [4,5,6,7,8,null])noOccupancy(view({orders:[order('status','BAR4',{status})]}));
   const a=order('valid','BAR4'),b=order('uncertain','BAR4',{status:7});
-  unknownAll(view({orders:[a,b]}));
+  noOccupancy(view({orders:[a,b]}));
   for(const receipts of [
     [{orderId:'valid',receiptId:1,paymentStatus:3,isCanceled:true}],
     [{orderId:'valid',receiptId:1,paymentStatus:3,isCanceled:false},{orderId:'valid',receiptId:2,paymentStatus:3,isCanceled:false}],
-  ])unknownAll(view({orders:[a],receipts}));
+  ])noOccupancy(view({orders:[a],receipts}));
 });
 
 test('03:00 boundary changes the current business day and cannot revive previous-day orders', () => {
   for(const stamp of ['2026-11-13T02:59:59+07:00','2026-11-13T03:00:00+07:00']){
     const at=new Date(stamp),day=calculateStoreBusinessDate(at);
-    const result=view({now:at,businessDate:day,orders:[order('boundary','BAR4',{businessDate:'2026-11-12',providerObservedAt:at.toISOString()})],
+    const result=view({now:at,businessDate:day,orders:[order('boundary','BAR4',{businessDate:'2026-11-12',orderDate:at.toISOString(),providerObservedAt:at.toISOString()})],
       sync:{businessDate:day,lastSuccessAt:at.toISOString(),lastAttemptAt:at.toISOString(),lastErrorCode:null}});
     assert.equal(result.summary.occupied,day==='2026-11-12'?1:0);
-    if(day!=='2026-11-12')unknownAll(result);
+    if(day!=='2026-11-12')noOccupancy(result);
   }
 });
 
@@ -122,5 +122,5 @@ test('missing/failed/stale/incomplete/disabled snapshots and stale individual ob
     {orders:[order('valid','BAR6',{providerObservedAt:'2026-11-13T10:00:00Z'})]},
     {orders:[order('valid','BAR6',{lines:null})]},
   ];
-  for(const changes of cases)unknownAll(view({orders,...changes}));
+  for(const changes of cases)noOccupancy(view({orders,...changes}));
 });

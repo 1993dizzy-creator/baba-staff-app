@@ -29,9 +29,9 @@ for(const lang of ['ko','vi']){
  test(`${lang}: compact summary keeps original zero/null values, separate source clocks and actual 11/8/8 counts`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),before=JSON.stringify(data),html=render(data,lang),t=tablesText[lang];
   const summary=html.match(/<dl class="summary".*?<\/dl>/s)[0];
-  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['27','0','27']);
-  for(const key of ['total','occupied','unknown'])assert.ok(summary.includes(t.summaryLabels[key]));
-  for(const key of ['reserved','paid','free'])assert.ok(!summary.includes(t.summaryLabels[key]));
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['27','0','0']);
+  for(const key of ['total','occupied','paid'])assert.ok(summary.includes(t.summaryLabels[key]));
+  for(const key of ['reserved','unknown','free'])assert.ok(!summary.includes(t.summaryLabels[key]));
   assert.ok(html.includes(`<h1 class="srOnly">${t.title}</h1>`));
   assert.ok(html.includes(`aria-label="${t.refresh}"`));
   assert.ok(html.includes('11/13'));assert.ok(html.includes('20:30'));assert.ok(html.includes('01:17'));
@@ -41,25 +41,19 @@ for(const lang of ['ko','vi']){
   assert.equal(JSON.stringify(data),before,'presentation must not rewrite state or values');
  });
 
- test(`${lang}: unknown tiles omit repeated question markers and accessible status; persistent warning has collapsible detail`,()=>{
+ test(`${lang}: normal idle tiles have accessible labels without permanent warnings or unknown markers`,()=>{
   const html=render(overview({catalog:babaTableCatalog(),orders:[]}),lang),t=tablesText[lang];
-  assert.equal((html.match(/class="question" aria-hidden="true">\?<\/span>/g)??[]).length,0);
-  assert.ok(!html.includes(`<small>${t.unknown}</small>`));
-  assert.ok(html.includes(`aria-label="BAR11 · BAR · ${t.unknown}"`));
-  assert.ok(html.includes(`<summary>${t.reviewCount.replace('{count}','27')}</summary>`));
-  assert.match(html,/<details class="statusNotice">/);
-  assert.ok(html.includes(t.unknownHelp));assert.equal(html.split(t.pendingVerification).length-1,1);
-  const legend=html.match(/<div class="legend">(.*?)<\/div>/s)[1];
-  assert.equal((legend.match(/<i /g)??[]).length,3);assert.ok(!legend.includes(t.free));
+  assert.ok(!html.includes('class="question"'));assert.ok(!html.includes('class="tile unknown"'));
+  assert.ok(html.includes(`aria-label="BAR11 \u00b7 BAR \u00b7 ${t.idle}"`));
+  assert.ok(!html.includes(t.pendingVerification));assert.ok(!html.includes('statusNotice'));
+  assert.ok(!html.includes('class="diagnostic"'));
+  const legend=html.match(/<div class="legend">(.*?)<\/div>/s)[1];assert.equal((legend.match(/<i /g)??[]).length,3);
  });
 
- test(`${lang}: stale and catalog reasons remain available; errors retain an alert and never turn unknown values into zero`,()=>{
+ test(`${lang}: failures remain visible and missing counts are never replaced by zero`,()=>{
   const data=overview({catalog:babaTableCatalog(),enabled:false}),t=tablesText[lang],html=render(data,lang);
-  assert.ok(html.includes(t.delayed));assert.match(html,/<dd>—<\/dd>/);
-  assert.ok(html.includes(t.reviewCount.replace('{count}','27')));
-  const missing=overview({catalog:{status:'unavailable',tables:[],collectedAt:null}}),missingHtml=render(missing,lang);
-  assert.ok(missingHtml.includes(`<summary>${t.catalogCheck}</summary>`));assert.ok(missingHtml.includes(t.noCatalog));
-  const error=render(null,lang,{failed:true});assert.ok(error.includes(`role="alert" class="notice">${t.failed}`));
+  assert.ok(html.includes(t.unavailable));assert.ok(html.includes('<dd>\u2014</dd>'));
+  const error=render(null,lang,{failed:true});assert.ok(error.includes(t.failed));
   const summary=error.match(/<dl class="summary".*?<\/dl>/s)[0];
   assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['\u2014','\u2014','\u2014']);
  });

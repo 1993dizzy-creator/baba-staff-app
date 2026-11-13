@@ -64,8 +64,10 @@ export default function TablesPage() {
   const detailOrders = tile?.orders ?? (unlinked ? [unlinked] : []);
   const areaName = (key: string) => key === "bar" ? t.bar : key === "floor1" ? t.floor1 : key === "floor2" ? t.floor2 : key.replace(/^other:/, "");
   const areas = ["bar", "floor1", "floor2", ...new Set(data?.tables.filter(item => item.area.startsWith("other:")).map(item => item.area) ?? [])];
-  const warningSummary = data && data.summary.unknown > 0 ? t.reviewCount.replace("{count}", String(data.summary.unknown))
-    : data?.catalogStatus !== "ok" ? t.catalogCheck : data?.snapshotStatus !== "ok" ? t.ordersCheck : t.statusInfo;
+  const diagnostic = data ? data.catalogStatus !== "ok" ? t.unavailable
+    : data.snapshotStatus === "waiting" ? t.waiting
+    : data.snapshotStatus !== "ok" ? t.unavailable
+    : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 ? t.partial : null : null;
   const orderView = (order: TableOrder) => <article key={order.id} className={styles.order}>
     <h3>{t.order} {order.number ?? "—"}</h3>
     <small className={styles.orderId}>OrderId: {order.id}</small>
@@ -84,7 +86,7 @@ export default function TablesPage() {
   return <main className={styles.page}>
     <h1 className={styles.srOnly}>{t.title}</h1>
     <header className={styles.overviewBar}>
-      <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "unknown"] as const).map(key =>
+      <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paid"] as const).map(key =>
         <div key={key}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}</dd></div>)}</dl>
       <button className={styles.refresh} onClick={() => void load()} disabled={loading} aria-label={t.refresh} title={t.refresh}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -97,17 +99,9 @@ export default function TablesPage() {
       <span>{t.shortOrders} <time dateTime={data?.snapshotAt ?? undefined} title={timestamp(data?.snapshotAt, lang)}>{clock(data?.snapshotAt)}</time></span>
       <span>{t.shortTables} <time dateTime={data?.catalogAt ?? undefined} title={timestamp(data?.catalogAt, lang)}>{clock(data?.catalogAt)}</time></span>
     </p>
+    {diagnostic ? <p role="status" className={styles.diagnostic}>{diagnostic}</p> : null}
     {loading && !data ? <p role="status" className={styles.notice}>{t.loading}</p> : null}
     {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
-    {data ? <div role="status"><details className={styles.statusNotice}>
-      <summary>{warningSummary}</summary>
-      <div className={styles.statusDetails}>
-        {data.catalogStatus !== "ok" ? <p>{t.noCatalog}</p> : null}
-        {data.snapshotStatus !== "ok" ? <p>{t.delayed}</p> : null}
-        <p>{t.unknownHelp}</p><p>{t.pendingVerification}</p>
-        <p>{t.businessDate}: {data.businessDate}<br />{t.updated}: {timestamp(data.snapshotAt, lang)}<br />{t.catalogUpdated}: {timestamp(data.catalogAt, lang)}</p>
-      </div>
-    </details></div> : null}
     <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}>
       <i style={{ background: colors[state] }} aria-hidden="true" />{t[state]}</span>)}</div>
     <div className={styles.areas}>{areas.map(area => {
@@ -133,6 +127,7 @@ export default function TablesPage() {
       </div><button onClick={() => setSelected(null)}>{t.close}</button></header>
       {tile ? <><p>{areaName(tile.area)} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p>
         <p className={styles.muted}>{t.sourceArea}: {tile.areaName}</p></> : null}
+      {tile?.state === "paid" ? <p className={styles.notice}>{t.completionEvidence}<br />{t.completedAt}: {timestamp(tile.lastPaidAt, lang)}</p> : null}
       {!detailOrders.length ? <p className={styles.notice}>{t.noOrders}</p> : detailOrders.map(orderView)}
     </dialog>
   </main>;

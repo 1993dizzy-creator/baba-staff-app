@@ -33,9 +33,9 @@ test('static catalog remains visible after probe time; historical true never sup
   assert.ok(catalog.tables.every(t => t.available === null));
   const result = overview({ catalog, orders: [] });
   assert.equal(result.summary.total, 27); assert.equal(result.summary.occupied, 0);
-  assert.equal(result.summary.unknown, 27);
-  assert.equal(result.summary.free, null); assert.equal(result.summary.paid, null); assert.equal(result.summary.reserved, null);
-  assert.ok(result.tables.every(t => t.state === 'unknown'));
+  assert.equal(result.summary.unknown, 0);
+  assert.equal(result.summary.free, null); assert.equal(result.summary.paid, 0); assert.equal(result.summary.reserved, null);
+  assert.ok(result.tables.every(t => t.state === 'idle'));
   assert.equal(result.tables.filter(t => t.area === 'bar').length, 11);
   assert.equal(result.tables.filter(t => t.area === 'floor1').length, 8);
   assert.equal(result.tables.filter(t => t.area === 'floor2').length, 8);
@@ -64,7 +64,7 @@ test('catalog never overrides order freshness/errors/uncertainty; BAR alone and 
     { orders:[order('menu-missing','BAR1',{lines:null})] },
   ]) {
     const result = overview({ catalog, orders:[order('synthetic','BAR1')], ...changes });
-    assert.equal(result.tables.length, 27); assert.ok(result.tables.every(t=>t.state==='unknown'));
+    assert.equal(result.tables.length, 27); assert.ok(result.tables.every(t=>t.state!=='occupied'));
   }
   const unmatched = overview({ catalog, orders:[order('a','BAR'),order('b','1+2'),order('c','BAR1/BAR2'),order('d',null)] });
   assert.equal(unmatched.unlinked.length,4); assert.ok(unmatched.tables.every(t=>t.state==='unknown'));

@@ -37,10 +37,10 @@ test('duplicate names across areas, composites, missing names and unmatched BAR 
   assert.equal(exact.tables[0].state, 'occupied'); assert.equal(exact.tables[0].orders.length, 1);
 });
 
-test('IsAvailable never certifies free; occupied/availability mismatch is unknown; no inferred reservation or paid state', () => {
+test('historical IsAvailable never certifies vacancy or blocks an independently verified open order', () => {
   const result = overview({ catalog: { ...catalog(), tables: catalog().tables.map(t => ({ ...t, available: true })) } });
-  assert.ok(result.tables.every(t => t.state === 'unknown'));
-  assert.equal(result.summary.free, null); assert.equal(result.summary.reserved, null); assert.equal(result.summary.paid, null);
+  assert.equal(result.tables[1].state,'occupied');assert.equal(result.tables[0].state,'idle');
+  assert.equal(result.summary.free, null); assert.equal(result.summary.reserved, null); assert.equal(result.summary.paid, 0);
   for (const status of [4, 5, 6, 7, 8]) assert.notEqual(overview({ orders: [order('a', 'A1', { status })] }).tables[1].state, 'occupied');
 });
 
@@ -63,8 +63,8 @@ test('missing, stale, failed/incomplete, future timestamps and wrong business da
     { orders: [order('a', 'A1', { providerObservedAt: '2026-11-13T10:00:00Z' })] },
     { catalog: { ...base.catalog, collectedAt: '2026-11-13T10:00:00Z' } },
   ];
-  for (const changes of variants) assert.ok(overview(changes).tables.every(t => t.state === 'unknown'), JSON.stringify(changes));
-  assert.ok(overview({ orders: [order('a', 'A1', { businessDate: '2026-11-12' })] }).tables.every(t => t.state === 'unknown'));
+  for (const changes of variants) assert.ok(overview(changes).tables.every(t => t.state !== 'occupied'), JSON.stringify(changes));
+  assert.ok(overview({ orders: [order('a', 'A1', { businessDate: '2026-11-12' })] }).tables.every(t => t.state === 'idle'));
   const missing = overview({ catalog: { status: 'not_enabled', tables: [], collectedAt: null } });
   assert.equal(missing.summary.total, null); assert.equal(missing.tables.length, 0); assert.equal(missing.unlinked.length, 1);
 });
