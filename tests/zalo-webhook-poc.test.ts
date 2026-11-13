@@ -209,6 +209,42 @@ test("11 oversized body -> 413 (declared length and streamed length)", async () 
   assert.equal(r.status, 413);
 });
 
+test("testWebhook-style probes: authenticated empty body -> 200; unauthenticated empty body -> 401", async () => {
+  const empty = new Request("https://example.test/x", { method: "POST", headers: { "x-bot-api-secret-token": SECRET } });
+  const r = await call(empty);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, { ok: true, observed: false });
+  assert.equal(r.entries[0].result, "empty_body");
+
+  const zeroBytes = await call(request(""));
+  assert.equal(zeroBytes.status, 200);
+  assert.equal(zeroBytes.entries[0].result, "empty_body");
+
+  const noAuth = await call(new Request("https://example.test/x", { method: "POST" }));
+  assert.equal(noAuth.status, 401);
+  assert.equal(noAuth.entries[0].reason, "missing");
+});
+
+test("allowlist accepts the logged group fingerprint instead of the raw id", async () => {
+  const fp = fingerprint(GROUP_ID)!;
+  const byFp = await call(request(event()), { ZALO_BOT_WEBHOOK_SECRET: SECRET, ZALO_BOT_WEBHOOK_POC_ALLOWED_GROUP_IDS: fp });
+  assert.equal(byFp.entries[0].result, "group_text_received");
+  const otherFp = await call(request(event({ chat_id: "grp-test-9999" })), { ZALO_BOT_WEBHOOK_SECRET: SECRET, ZALO_BOT_WEBHOOK_POC_ALLOWED_GROUP_IDS: fp });
+  assert.equal(otherFp.entries[0].result, "other_group");
+  assertNoSensitive(byFp.logs);
+});
+
+test("request id and user-agent family are logged; unsafe header values are dropped", async () => {
+  const vercelId = "sin1::iad1::abcd1-1794551160000-0123abcdef";
+  const ok = await call(request(event(), { "x-bot-api-secret-token": SECRET, "x-vercel-id": vercelId, "user-agent": "Java/17.0.2" }));
+  assert.equal(ok.entries[0].request_id, vercelId);
+  assert.equal(ok.entries[0].ua, "java");
+  const bad = await call(request(event(), { "x-bot-api-secret-token": SECRET, "x-vercel-id": "x\"} injected", "user-agent": "Mozilla/5.0 secret-ua" }));
+  assert.equal(bad.entries[0].request_id, null);
+  assert.equal(bad.entries[0].ua, "other");
+  assert.ok(!bad.logs.join("").includes("secret-ua"));
+});
+
 test("12 module performs no DB / network / reply calls", () => {
   const source = readFileSync("lib/zalo/webhook-poc.ts", "utf8");
   const route = readFileSync("app/api/integrations/zalo-bot/route.ts", "utf8");

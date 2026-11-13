@@ -103,9 +103,15 @@ export function parseAllowedGroupIds(raw: string | undefined): string[] {
   return (raw ?? "").split(",").map((id) => id.trim()).filter(Boolean);
 }
 
-/** Empty allowlist = discovery mode (all groups observed). Must be set before real ingestion. */
+/**
+ * Empty allowlist = discovery mode (all groups observed). Must be set before real ingestion.
+ * Entries may be the raw group id or its logged 16-hex `group_fp`, so the allowlist can be
+ * built from routine logs without ever turning on the raw group id toggle.
+ */
 export function isAllowedGroup(chatId: string, allowed: string[]): boolean {
-  return allowed.length === 0 || allowed.includes(chatId);
+  if (allowed.length === 0) return true;
+  const fp = fingerprint(chatId);
+  return allowed.includes(chatId) || (fp !== null && allowed.includes(fp));
 }
 
 export function classifyZaloObservation(observation: ZaloObservation, allowed: string[] = []): ZaloClassification {
@@ -124,8 +130,11 @@ export function fingerprint(value: string | null): string | null {
 
 class BodyError extends Error {}
 
+/** Authenticated request with no body (possible connectivity probe; Zalo's testWebhook body is undocumented). */
+const EMPTY_BODY = Symbol("empty_body");
+
 async function readLimitedJson(req: Request): Promise<unknown> {
-  if (!req.body) throw new BodyError("invalid_json");
+  if (!req.body) return EMPTY_BODY;
   const reader = req.body.getReader();
   const parts: Uint8Array[] = [];
   let total = 0;
@@ -145,6 +154,7 @@ async function readLimitedJson(req: Request): Promise<unknown> {
     bytes.set(part, offset);
     offset += part.byteLength;
   }
+  if (total === 0) return EMPTY_BODY;
   try {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
@@ -165,8 +175,14 @@ export async function handleZaloWebhook(
   env: ZaloWebhookEnv,
   log: ZaloLogger = (tag, data) => console.info(tag, data),
 ): Promise<Response> {
-  const requestId = safeToken(req.headers.get("x-vercel-id")?.split("::").pop() ?? null);
-  const emit = (data: JsonRecord) => log(LOG_TAG, JSON.stringify({ request_id: requestId, ...data }));
+  // x-vercel-id looks like "sin1::iad1::abcd1-1700000000000-0123abcd"; only its charset is allowed through.
+  const vercelId = req.headers.get("x-vercel-id");
+  const requestId = vercelId && /^[A-Za-z0-9_.:-]{1,120}$/.test(vercelId) ? vercelId : null;
+  // Zalo's documented WAF hint names a "Java/<version>" User-Agent; only the family is logged.
+  const userAgent = req.headers.get("user-agent");
+  const uaFamily = !userAgent ? null : /^Java\//.test(userAgent) ? "java" : "other";
+  const emit = (data: JsonRecord) =>
+    log(LOG_TAG, JSON.stringify({ request_id: requestId, ua: uaFamily, ...data }));
 
   if (!validSecret(env.ZALO_BOT_WEBHOOK_SECRET)) {
     emit({ result: "misconfigured" });
@@ -191,6 +207,11 @@ export async function handleZaloWebhook(
     const code = error instanceof BodyError ? error.message : "invalid_json";
     emit({ result: code });
     return json({ ok: false, error: code }, code === "body_too_large" ? 413 : 400);
+  }
+
+  if (payload === EMPTY_BODY) {
+    emit({ result: "empty_body" });
+    return json({ ok: true, observed: false });
   }
 
   const observation = parseZaloObservation(payload);
