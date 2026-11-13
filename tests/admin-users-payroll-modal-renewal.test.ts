@@ -49,30 +49,81 @@ test("contract form: closing with changed input asks with the shared leave messa
   assert.match(panel, /if \(pendingContractSave\) return;\n\s+const correcting = formMode === "correct" \? correctionTarget : null;/);
 });
 
-test("benefit modals: bare card (no inner title), no help text or 설정 변경 button, form opens directly", () => {
+const parts = read("components/payroll/BenefitModalParts.tsx");
+const page = read("app/(protected)/admin/users/page.tsx");
+const cards = [["meal", meal], ["bonus", bonus], ["insurance", insurance], ["tax", tax]] as const;
+const modalBranch = (source: string) => source.slice(source.indexOf("  if (modal) {"), source.indexOf("\n  return", source.indexOf("  if (modal) {") + 20));
+
+test("2차 benefit modals: own modal branch — bare card, status line, 2-way choice, one footer 취소·저장 set", () => {
   assert.match(card, /bare = false,/);
   assert.match(card, /if \(bare\) return <section style=\{s\.bare\}>\{children\}<\/section>;/);
-  for (const [name, source] of [["meal", meal], ["bonus", bonus], ["insurance", insurance], ["tax", tax]] as const) {
-    assert.match(source, /const modal = Boolean\(formRequest\);/, name);
-    assert.match(source, /defaultOpen=\{Boolean\(formRequest\)\} bare=\{modal\}>/, name);
-    assert.match(source, /\{modal \? null : <div style=\{s\.head\}>/, name);
-    // the payroll settings page keeps the 설정 변경 button (non-modal branch)
+  for (const [name, source] of cards) {
+    const branch = modalBranch(source);
+    assert.match(source, /const modal = Boolean\(formRequest\);\n\s+const formId = useId\(\);/, name);
+    assert.match(branch, /defaultOpen=\{Boolean\(formRequest\)\} bare>/, name);
+    assert.match(branch, /<BenefitStatusLine/, name);
+    assert.match(branch, /<BenefitChoice/, name);
+    assert.match(branch, /<form id=\{formId\} style=\{m\.form\} onSubmit=\{submit\}>/, name);
+    assert.match(branch, /<BenefitModalActions[\s\S]*?onCancel=\{cancelForm\}/, name);
+    // no second cancel/save set, no select/checkbox for the main choice, no 설정 변경 button inside the modal
+    assert.doesNotMatch(branch, /s\.actions|설정 변경|type="checkbox"|<EmployeeSettingCard[^>]*bare=\{modal\}/, name);
+    // the payroll settings page keeps its card (header, 설정 변경, inline actions)
+    const settings = source.slice(source.indexOf("\n  return", source.indexOf("  if (modal) {") + 20));
+    assert.match(settings, /defaultOpen=\{Boolean\(formRequest\)\}>/, name);
+    assert.match(settings, /<div style=\{s\.head\}>/, name);
+    assert.match(settings, /style=\{s\.actions\}/, name);
     assert.match(source, /설정 변경/, name);
+  }
+  // footer actions are portaled into the sheet footer and submit the card's form (browser + card validation apply)
+  assert.match(parts, /return createPortal\(/);
+  assert.match(parts, /<button type="submit" form=\{formId\} style=\{\{ \.\.\.m\.save, \.\.\.\(!canSave \|\| saving \? m\.saveDisabled : null\) \}\} disabled=\{!canSave \|\| saving\}>/);
+  assert.match(parts, /<button type="button" style=\{m\.cancel\} disabled=\{saving\} onClick=\{onCancel\}>/);
+  assert.match(parts, /role="radiogroup"/);
+  assert.match(parts, /role="radio"\n\s+aria-checked=\{value === optionValue\}/);
+  assert.match(page, /actionsTarget=\{cardActions \? actionsSlot : undefined\}/);
+});
+
+test("2차 benefit modals: save only with a real change; duplicate submit blocked; loading/failure keep cancel", () => {
+  for (const [name, source] of cards) {
+    assert.match(source, /async function saveForm\(event: FormEvent\) \{\n\s+event\.preventDefault\(\);\n\s+if \(saving\) return;/, name);
+    assert.match(source, /if \(modal && !formValuesChanged\(/, name);
+    // "changed" compares against the current values (not the switch intent), so a switch-opened modal can save its intent
+    assert.match(modalBranch(source), /const changed = formValuesChanged\(\{[^}]+\}, \w+FormBaseline\(\w+(\.current)?(, employeeName)?\)\);/, name);
+  }
+  // meal/bonus: loading or load failure still offer 취소 (save disabled), never shown as 미적용
+  for (const source of [meal, bonus]) assert.match(source, /\{modal \? <BenefitModalActions target=\{actionsTarget\} formId=\{formId\} vi=\{vi\} saving=\{false\} canSave=\{false\} hint=\{null\} onCancel=\{cancelForm\} \/> : null\}/);
+  // insurance/tax: the status line only appears after a successful load (the form opens only then)
+  for (const source of [insurance, tax]) assert.match(modalBranch(source), /\{formOpen \? <BenefitStatusLine|\{formOpen \? \(\n\s+<BenefitStatusLine/);
+});
+
+test("2차 insurance: cancel always reachable; not enrolled → not enrolled cannot be saved and says why", () => {
+  const branch = modalBranch(insurance);
+  assert.match(branch, /const savable = enrolled \|\| current\?\.isEnrolled === true;/);
+  assert.match(branch, /canSave=\{formOpen && savable && changed\}/);
+  assert.match(branch, /미가입 상태는 저장할 내용이 없습니다/);
+  // existing submit policy kept
+  assert.match(insurance, /if \(!enrolled && current\?\.isEnrolled !== true\) return;/);
+  // choosing 가입 keeps the old default base amount
+  assert.match(branch, /if \(next && Number\(base\) < 1\) setBase\("5000000"\);/);
+});
+
+test("2차 status line: current state and schedule come from the same pick rules as the switches", () => {
+  assert.match(meal, /pickMealAllowance\(state\.history, resolveSettingsSummaryReference\(null, vietnamToday\(\)\)\)/);
+  assert.match(bonus, /pickAttendanceBonus\(state\.history, resolveSettingsSummaryReference\(null, `\$\{currentMonth\(\)\}-01`\)\)/);
+  assert.match(insurance, /pickInsurance\(history, resolveSettingsSummaryReference\(null, `\$\{currentMonth\(\)\}-01`\)\)/);
+  assert.match(tax, /pickTax\(history, resolveSettingsSummaryReference\(null, `\$\{currentMonth\(\)\}-01`\)\)/);
+  assert.match(parts, /`예약: \$\{scheduled\.from\}부터 \$\{scheduled\.on \? onLabel : offLabel\}`/);
+  for (const [name, source] of cards) {
+    assert.match(modalBranch(source), /<summary style=\{m\.summary\}>\{vi \? "Thông tin tham khảo" : "참고 정보"\}<\/summary>/, name);
+    assert.match(modalBranch(source), /\{historyLabel\}/, name);
   }
 });
 
-test("benefit modals: priority info first, common-setting reference folded, history kept", () => {
-  // meal: 상태·적용일 first; 기준 근무일수·예상 식대 folded
-  assert.match(meal, /\{modal \? null : reference\}/);
-  assert.match(meal, /\{modal \? <details style=\{s\.details\}>\n\s+<summary>\{vi \? "Thông tin tham khảo" : "참고 정보"\}<\/summary>/);
-  // bonus: 대상·적용월 first; 금액·판정 기준·이번 달 상태 folded (read-only common policy)
-  assert.match(bonus, /\{modal \? null : reference\}/);
-  assert.match(bonus, /const reference = <>\n\s+<Summary label=\{vi \? "Mức thưởng" : "보너스 금액"\}/);
-  // insurance: 가입·기준급여·적용월; revision only on the settings page
-  assert.match(insurance, /\{modal \? null : <Summary label="revision"/);
-  // tax: 적용 방식·세금 부담·부양가족·회계 명의·적용월
-  const taxModal = tax.slice(tax.indexOf("{current && modal ? <div style={s.current}>"), tax.indexOf("</div> : current ? <div style={s.current}>"));
-  for (const label of ["적용 방식", "세금 부담", "부양가족", "회계/TNCN 명의", "적용 월"]) assert.ok(taxModal.includes(`"${label}"`), label);
-  assert.doesNotMatch(taxModal, /revision|employeeName/);
-  for (const source of [meal, bonus, insurance, tax]) assert.match(source, /설정 이력|Lịch sử/);
+test("2차: every benefit card blocks a second save request synchronously (double click / repeated Enter)", () => {
+  const guard = read("components/payroll/useGuardedSubmit.ts");
+  assert.match(guard, /event\.preventDefault\(\);\n\s+if \(busyRef\.current\) return;\n\s+busyRef\.current = true;\n\s+void saveRef\.current\(event\)\.finally\(\(\) => \{ busyRef\.current = false; \}\);/);
+  for (const [name, source] of cards) {
+    assert.match(source, /const submit = useGuardedSubmit\(saveForm\);/, name);
+    assert.doesNotMatch(source, /async function submit\(/, name);
+  }
 });

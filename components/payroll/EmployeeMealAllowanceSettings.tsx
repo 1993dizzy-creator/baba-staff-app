@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -11,8 +12,10 @@ import {
 } from "react";
 import { money } from "@/lib/payroll/ui-labels";
 import EmployeeSettingCard from "@/components/payroll/EmployeeSettingCard";
-import type { SettingHistoryState } from "@/lib/payroll/settings-summary";
+import { BenefitChoice, BenefitField, BenefitModalActions, BenefitStatusLine, m } from "@/components/payroll/BenefitModalParts";
+import { pickMealAllowance, resolveSettingsSummaryReference, type SettingHistoryState } from "@/lib/payroll/settings-summary";
 import { formValuesChanged, useReportDirty } from "@/components/payroll/useReportDirty";
+import { useGuardedSubmit } from "@/components/payroll/useGuardedSubmit";
 import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 
 export type MealAllowanceVersion = {
@@ -50,6 +53,7 @@ export default function EmployeeMealAllowanceSettings({
   onDirtyChange,
   formRequest,
   onFormFinish,
+  actionsTarget,
 }: {
   userId: number;
   vi: boolean;
@@ -60,10 +64,13 @@ export default function EmployeeMealAllowanceSettings({
   formRequest?: PayrollSettingFormRequest | null;
   /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
   onFormFinish?: (result: PayrollSettingFormResult) => void;
+  /** 설정 모달의 하단 취소·저장을 그릴 시트 footer(직원관리 전용). */
+  actionsTarget?: HTMLElement | null;
 }) {
   const mounted = useRef(true);
-  // /admin/users 설정 모달(formRequest가 있으면): 제목·안내·설정 변경 버튼 없이 상태와 폼을 바로 보여 준다.
+  // /admin/users 설정 모달(formRequest가 있으면): 바깥 제목만 두고 상태 줄·2분할 선택·필요한 입력·하단 취소/저장 한 세트로 보여 준다.
   const modal = Boolean(formRequest);
+  const formId = useId();
   // 모달 모드: 첫 조회가 끝나면 한 번만 폼을 연다(저장 후 재조회에서는 다시 열지 않음).
   const formRequestRef = useRef(formRequest ?? null);
   const autoOpenedRef = useRef(false);
@@ -156,8 +163,21 @@ export default function EmployeeMealAllowanceSettings({
     setFormOpen(true);
   }
 
-  async function submit(event: FormEvent) {
+  function cancelForm() {
+    setFormOpen(false);
+    resetForm(state?.current ?? null);
+    setFormIntent(null);
+    onFormFinish?.("cancelled");
+  }
+
+  // 같은 저장 요청이 두 번 나가지 않게 한다(더블 클릭·Enter 연타는 saving 상태가 반영되기 전에 들어올 수 있다).
+  const submit = useGuardedSubmit(saveForm);
+
+  async function saveForm(event: FormEvent) {
     event.preventDefault();
+    if (saving) return;
+    // 모달: 현재 값과 같으면 저장하지 않는다(저장 버튼도 비활성).
+    if (modal && !formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null))) return;
     setSaving(true);
     setError("");
     setBlockedCode("");
@@ -187,13 +207,15 @@ export default function EmployeeMealAllowanceSettings({
   if (!state) {
     return (
       <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={null} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
-        {error ? <p role="alert" style={s.error}>{error}</p> : <p style={s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
+        {error ? <p role="alert" style={modal ? m.error : s.error}>{error}</p> : <p style={modal ? m.muted : s.empty}>{vi ? "Đang tải…" : "불러오는 중…"}</p>}
+        {/* 조회 중·조회 실패에도 취소는 누를 수 있다(저장은 불가). 실패를 미적용으로 표시하지 않는다. */}
+        {modal ? <BenefitModalActions target={actionsTarget} formId={formId} vi={vi} saving={false} canSave={false} hint={null} onCancel={cancelForm} /> : null}
       </EmployeeSettingCard>
     );
   }
 
   const disabledByAttendanceTracking = !state.attendanceTrackingEnabled;
-  // 기준 근무일수·예상 식대는 공통 설정에서 오는 참고 정보다(직원별 수정 불가). 모달에서는 접어 둔다.
+  // 기준 근무일수·예상 식대는 공통 설정에서 오는 참고 정보다(직원별 수정 불가). 모달에서는 참고 정보로 접어 둔다.
   const reference = <>
     <Summary
       label={vi ? "Số ngày làm việc tiêu chuẩn/tháng" : "한 달 기준 근무일수"}
@@ -218,22 +240,85 @@ export default function EmployeeMealAllowanceSettings({
       }
     />
   </>;
+  const help = vi
+    ? "Nhân viên thuộc đối tượng nhận trợ cấp ăn sẽ được tính chi phí ăn theo ngày đi làm thực tế."
+    : "식대 대상 직원은 실제 출근일을 기준으로 식대비용이 계산됩니다.";
+  const attendanceNotice = vi
+    ? "Nhân viên này không sử dụng chấm công nên chưa thể chọn thuộc đối tượng nhận trợ cấp ăn."
+    : "이 직원은 근태 기록을 사용하지 않아 식대 대상으로 설정할 수 없습니다.";
+  const historyItems = state.history.map((item) => (
+    <article style={s.history} key={item.id}>
+      <b>{item.effectiveFrom} · #{item.revision}</b>
+      <span>{item.isEligible ? (vi ? "Áp dụng" : "대상") : vi ? "Không áp dụng" : "미대상"}</span>
+      {item.note ? <small>{item.note}</small> : null}
+    </article>
+  ));
+  const historyLabel = vi ? `Lịch sử ${state.history.length} mục` : `설정 이력 ${state.history.length}건`;
+
+  if (modal) {
+    // 현재 적용 상태와 예약은 스위치·급여 계산과 같은 규칙(pickMealAllowance)으로 따로 보여 준다.
+    const pick = pickMealAllowance(state.history, resolveSettingsSummaryReference(null, vietnamToday()));
+    const onLabel = vi ? "Áp dụng" : "적용";
+    const offLabel = vi ? "Không áp dụng" : "미적용";
+    const changed = formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state.current));
+    const blockedByAttendance = isEligible && disabledByAttendanceTracking;
+    const hint = !formOpen ? null : blockedByAttendance ? attendanceNotice : !changed ? (vi ? "Không có thay đổi để lưu." : "변경된 내용이 없습니다.") : null;
+    return (
+      <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)} bare>
+        <BenefitStatusLine
+          vi={vi}
+          onLabel={onLabel}
+          offLabel={offLabel}
+          unsetLabel={vi ? "Chưa đặt" : "미설정"}
+          status={{
+            applied: pick.applied ? { on: pick.applied.isEligible, since: pick.applied.effectiveFrom } : null,
+            scheduled: pick.scheduled ? { on: pick.scheduled.isEligible, from: pick.scheduled.effectiveFrom } : null,
+          }}
+        />
+        {disabledByAttendanceTracking ? <p style={m.notice}>{attendanceNotice}</p> : null}
+        {formOpen ? (
+          <form id={formId} style={m.form} onSubmit={submit}>
+            <BenefitChoice label={vi ? "Đối tượng được trợ cấp ăn" : "식대 대상"} value={isEligible} onChange={setIsEligible} onLabel={onLabel} offLabel={offLabel} onDisabled={disabledByAttendanceTracking} />
+            {blockedCode === "MEAL_ALLOWANCE_REQUIRES_ATTENDANCE_TRACKING" ? (
+              <p role="alert" style={m.error}>
+                {vi
+                  ? "Chi phí ăn được tính theo dữ liệu chấm công thực tế, vì vậy nhân viên phải sử dụng chấm công."
+                  : "식대비용은 실제 출근 기록을 기준으로 계산하므로 근태 기록 사용이 필요합니다."}
+              </p>
+            ) : null}
+            <BenefitField label={vi ? "Ngày áp dụng" : "적용일"}>
+              <input style={m.input} required type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} />
+            </BenefitField>
+            <BenefitField label={vi ? "Ghi chú (không bắt buộc)" : "메모(선택)"}>
+              <textarea style={m.textarea} value={note} onChange={(event) => setNote(event.target.value)} />
+            </BenefitField>
+            {error ? <p role="alert" style={m.error}>{error}</p> : null}
+          </form>
+        ) : error ? <p role="alert" style={m.error}>{error}</p> : null}
+        <details style={m.details}>
+          <summary style={m.summary}>{vi ? "Thông tin tham khảo" : "참고 정보"}</summary>
+          <p style={m.muted}>{help}</p>
+          <div style={m.reference}>{reference}</div>
+        </details>
+        <details style={m.details}>
+          <summary style={m.summary}>{historyLabel}</summary>
+          {historyItems}
+        </details>
+        <BenefitModalActions target={actionsTarget} formId={formId} vi={vi} saving={saving} canSave={formOpen && changed && !blockedByAttendance} hint={hint} onCancel={cancelForm} />
+      </EmployeeSettingCard>
+    );
+  }
 
   return (
-    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)} bare={modal}>
-      {/* 설정 모달(/admin/users)에서는 바깥 제목·바로 열린 폼이 있으므로 안내 문구·설정 변경 버튼을 두지 않는다. */}
-      {modal ? null : <div style={s.head}>
+    <EmployeeSettingCard title={vi ? "Trợ cấp ăn" : "🍚 식대"} applied={state.current?.isEligible === true} vi={vi} defaultOpen={Boolean(formRequest)}>
+      <div style={s.head}>
         <div>
-          <p style={s.help}>
-            {vi
-              ? "Nhân viên thuộc đối tượng nhận trợ cấp ăn sẽ được tính chi phí ăn theo ngày đi làm thực tế."
-              : "식대 대상 직원은 실제 출근일을 기준으로 식대비용이 계산됩니다."}
-          </p>
+          <p style={s.help}>{help}</p>
         </div>
         <button type="button" style={s.secondary} onClick={openForm}>
           {vi ? "Thay đổi" : "설정 변경"}
         </button>
-      </div>}
+      </div>
 
       <div style={s.current}>
         <Summary
@@ -241,15 +326,11 @@ export default function EmployeeMealAllowanceSettings({
           value={state.current?.isEligible ? (vi ? "Áp dụng" : "대상") : vi ? "Không áp dụng" : "미대상"}
         />
         <Summary label={vi ? "Ngày áp dụng" : "적용일"} value={state.current?.effectiveFrom ?? "-"} />
-        {modal ? null : reference}
+        {reference}
       </div>
 
       {disabledByAttendanceTracking ? (
-        <p style={s.notice}>
-          {vi
-            ? "Nhân viên này không sử dụng chấm công nên chưa thể chọn thuộc đối tượng nhận trợ cấp ăn."
-            : "이 직원은 근태 기록을 사용하지 않아 식대 대상으로 설정할 수 없습니다."}
-        </p>
+        <p style={s.notice}>{attendanceNotice}</p>
       ) : null}
 
       {formOpen ? (
@@ -291,16 +372,7 @@ export default function EmployeeMealAllowanceSettings({
           </label>
           {error ? <p role="alert" style={s.error}>{error}</p> : null}
           <div style={s.actions}>
-            <button
-              type="button"
-              style={s.secondary}
-              onClick={() => {
-                setFormOpen(false);
-                resetForm(state.current);
-                setFormIntent(null);
-                onFormFinish?.("cancelled");
-              }}
-            >
+            <button type="button" style={s.secondary} onClick={cancelForm}>
               {vi ? "Hủy" : "취소"}
             </button>
             <button style={s.button} disabled={saving}>
@@ -312,20 +384,9 @@ export default function EmployeeMealAllowanceSettings({
 
       {!formOpen && error ? <p role="alert" style={s.error}>{error}</p> : null}
 
-      {modal ? <details style={s.details}>
-        <summary>{vi ? "Thông tin tham khảo" : "참고 정보"}</summary>
-        <div style={{ ...s.current, marginTop: 6 }}>{reference}</div>
-      </details> : null}
-
       <details style={s.details}>
-        <summary>{vi ? `Lịch sử ${state.history.length} mục` : `설정 이력 ${state.history.length}건`}</summary>
-        {state.history.map((item) => (
-          <article style={s.history} key={item.id}>
-            <b>{item.effectiveFrom} · #{item.revision}</b>
-            <span>{item.isEligible ? (vi ? "Áp dụng" : "대상") : vi ? "Không áp dụng" : "미대상"}</span>
-            {item.note ? <small>{item.note}</small> : null}
-          </article>
-        ))}
+        <summary>{historyLabel}</summary>
+        {historyItems}
       </details>
     </EmployeeSettingCard>
   );

@@ -139,6 +139,7 @@ export default function EmployeePayrollSettingsPanel({
   only,
   formRequest,
   onFormFinish,
+  actionsTarget,
 }: {
   user: EmployeePayrollPanelUser;
   lang: PayrollUiLang;
@@ -165,6 +166,8 @@ export default function EmployeePayrollSettingsPanel({
   /** only가 설정 하나일 때 그 카드에 전달하는 스위치 요청·완료 알림. */
   formRequest?: PayrollSettingFormRequest | null;
   onFormFinish?: (result: PayrollSettingFormResult) => void;
+  /** only가 설정 하나일 때 그 카드의 하단 취소·저장을 그릴 모달 footer(직원관리 전용). */
+  actionsTarget?: HTMLElement | null;
 }) {
   const l = lang;
   const vi = lang === "vi";
@@ -588,6 +591,7 @@ export default function EmployeePayrollSettingsPanel({
           onDirtyChange={cardDirtyReporters.insurance}
           formRequest={only === "insurance" ? formRequest : undefined}
           onFormFinish={only === "insurance" ? onFormFinish : undefined}
+          actionsTarget={only === "insurance" ? actionsTarget : undefined}
         />
       ) : (
         <aside style={s.directorNotice}>
@@ -600,14 +604,14 @@ export default function EmployeePayrollSettingsPanel({
       </div> : null}
 
       {!only || only === "tax" ? <div id={anchor("tax")} style={s.anchorTarget}>
-        <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} onHistoryStateChange={setTaxHistoryState} onDirtyChange={cardDirtyReporters.tax} formRequest={only === "tax" ? formRequest : undefined} onFormFinish={only === "tax" ? onFormFinish : undefined} />
+        <EmployeeTaxSettings key={`tax-${selected.id}`} userId={selected.id} employeeName={selected.name ?? selected.username} vi={vi} onHistoryStateChange={setTaxHistoryState} onDirtyChange={cardDirtyReporters.tax} formRequest={only === "tax" ? formRequest : undefined} onFormFinish={only === "tax" ? onFormFinish : undefined} actionsTarget={only === "tax" ? actionsTarget : undefined} />
       </div> : null}
 
       {!only || only === "meal" ? <div id={anchor("meal")} style={s.anchorTarget}>
-        <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => { setMealHistoryState(state); onMealHistoryChange?.(state); }} onDirtyChange={cardDirtyReporters.meal} formRequest={only === "meal" ? formRequest : undefined} onFormFinish={only === "meal" ? onFormFinish : undefined} />
+        <EmployeeMealAllowanceSettings key={`meal-allowance-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={(state) => { setMealHistoryState(state); onMealHistoryChange?.(state); }} onDirtyChange={cardDirtyReporters.meal} formRequest={only === "meal" ? formRequest : undefined} onFormFinish={only === "meal" ? onFormFinish : undefined} actionsTarget={only === "meal" ? actionsTarget : undefined} />
       </div> : null}
       {!only || only === "bonus" ? <div id={anchor("bonus")} style={s.anchorTarget}>
-        <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={setBonusHistoryState} onDirtyChange={cardDirtyReporters.bonus} formRequest={only === "bonus" ? formRequest : undefined} onFormFinish={only === "bonus" ? onFormFinish : undefined} />
+        <EmployeeAttendanceBonusSettings key={`attendance-bonus-${selected.id}`} userId={selected.id} vi={vi} onHistoryStateChange={setBonusHistoryState} onDirtyChange={cardDirtyReporters.bonus} formRequest={only === "bonus" ? formRequest : undefined} onFormFinish={only === "bonus" ? onFormFinish : undefined} actionsTarget={only === "bonus" ? actionsTarget : undefined} />
       </div> : null}
       {open && (
         <PayrollModal

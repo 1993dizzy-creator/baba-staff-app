@@ -1107,12 +1107,18 @@ function PayrollSettingSheet({ user, text, lang, view, request, contracts, onClo
   }), [user]);
   const name = user.name || user.full_name || user.username;
   const meta = SHEET_TITLES[view];
+  // 복리후생 설정 모달은 카드가 하단에 취소·저장 한 세트를 그린다(이 footer 칸에 portal). 계약 모달과
+  // 회사 공통으로 관리하는 법인장 보험(폼 없음)은 닫기만 둔다.
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const cardActions = view !== "contract" && !(view === "insurance" && isDirectorManagedInsurance(user.username));
   return <PayrollSheet
     title={`${meta.emoji} ${text[meta.title]} · ${name}`}
     closeLabel={text.close}
     onClose={onClose}
     // 개인별 급여 설정은 이 모달에서 끝낸다(급여설정 화면으로 이동하는 버튼 없음). 하단은 닫기 하나만 둔다.
-    footer={<button type="button" style={styles.secondaryButton} onClick={onClose}>{text.close}</button>}
+    footer={cardActions
+      ? <div ref={setActionsSlot} style={styles.sheetFooterActions} />
+      : <button type="button" style={styles.secondaryButton} onClick={onClose}>{text.close}</button>}
   >
     <EmployeePayrollSettingsPanel
       user={panelUser}
@@ -1125,6 +1131,7 @@ function PayrollSettingSheet({ user, text, lang, view, request, contracts, onClo
       // 상세 설정(또는 급여설정에서 돌아와 다시 연 경우)은 현재 값으로 폼을 연다(목표 상태 없음).
       formRequest={view === "contract" ? undefined : request ?? { enable: null }}
       onFormFinish={view === "contract" ? undefined : onFinish}
+      actionsTarget={cardActions ? actionsSlot : undefined}
       onUnsavedChange={onUnsavedChange}
     />
   </PayrollSheet>;
@@ -2017,6 +2024,7 @@ const styles = {
   sheetHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
   sheetTitle: { minWidth: 0, fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
   sheetBody: { flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: 12, background: "#f9fafb" },
+  sheetFooterActions: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, minWidth: 0 },
   sheetFooter: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   sectionToggle: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 44, margin: "-4px 0", padding: "4px 0", border: "none", background: "transparent", color: "inherit", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
   sectionBody: { display: "grid", gap: 8, minWidth: 0 },

@@ -56,5 +56,5 @@ const s = {
   inactiveBadge: { padding: "3px 7px", border: "1px solid #e5e7eb", borderRadius: 999, background: "#f9fafb", color: "#6b7280", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" },
   chevron: { width: 14, textAlign: "center", color: "#6b7280", fontSize: 15, lineHeight: 1 },
   body: { display: "grid", gap: 9, padding: "0 13px 13px", borderTop: "1px solid #f3f4f6", minWidth: 0 },
-  bare: { display: "grid", gap: 10, minWidth: 0 },
+  bare: { display: "grid", gap: 14, minWidth: 0 },
 } satisfies Record<string, CSSProperties>;
