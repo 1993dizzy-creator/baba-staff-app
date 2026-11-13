@@ -40,7 +40,8 @@ test("B: detail cards carry an emoji header and a light tint; inputs stay white 
 test("C: the work·pay card no longer has its own 급여설정 shortcut; the payroll sheet keeps one", () => {
   const status = page.slice(page.indexOf("function PayrollContractStatus("), page.indexOf("// 직원 상세 카드별 은은한 배경색"));
   assert.doesNotMatch(status, /managePayrollSettings|onOpenPayrollSettings|payrollLinkButton/);
-  assert.match(status, /text\.payrollContractMismatch/);
+  // 5차: the contract summary no longer carries the attendance mismatch notice (it moved under the attendance switch).
+  assert.doesNotMatch(status, /payrollContractMismatch|attendanceOffRequiresFixedMonthly/);
   assert.match(status, /text\.payrollContract\}/);
   const sheetSection = page.slice(page.indexOf("function PayrollSettingSheet("), page.indexOf("function Toggle("));
   assert.match(sheetSection, /onClick=\{onOpenPayrollSettings\}>\{text\.managePayrollSettings\} →<\/button>/);

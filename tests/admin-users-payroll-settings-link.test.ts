@@ -52,8 +52,8 @@ test("current payroll contract is read per employee only when the detail is open
   assert.match(hook, /window\.addEventListener\("pageshow", restored\)/);
   // Read failure and "no contract" are different states.
   assert.match(page, /contracts\.loadFailed \? <span style=\{styles\.contractError\}>\{text\.payrollContractLoadFailed\}/);
-  // 4차: 1~2 lines (label, base salary · start month) or 미설정
-  assert.match(page, /: current \? <>\n\s+<strong style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\}<\/strong>[\s\S]*?<\/> : <strong style=\{styles\.contractPrimary\}>\{text\.payrollContractNone\}<\/strong>\}/);
+  // 5차: one line (contract type · current combined salary), amount-unavailable, or 미설정
+  assert.match(page, /: current \? amount !== null\n\s+\? <strong style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\} · \{amount\}<\/strong>\n\s+: <span style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\} · <span style=\{styles\.contractError\}>\{text\.payrollContractAmountUnavailable\}<\/span><\/span>\n\s+: <strong style=\{styles\.contractPrimary\}>\{text\.payrollContractNone\}<\/strong>\}/);
 });
 
 test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contract editor exists only in the shared panel", () => {
@@ -84,7 +84,7 @@ test("2차/4차: the employee page mounts at most one payroll sheet (contract on
   assert.match(page, /showIdentity=\{false\}/);
   assert.match(page, /anchorPrefix=\{`user-\$\{user\.id\}-`\}/);
   // One contract read is shared by the 💰 summary and the contract sheet's panel (no shortcut button in work·pay).
-  assert.match(page, /<PayrollContractStatus user=\{user\} draft=\{draft\} text=\{text\} contracts=\{contracts\} canManage=\{canManagePayroll\}/);
+  assert.match(page, /<PayrollContractStatus user=\{user\} text=\{text\} lang=\{lang\} contracts=\{contracts\} canManage=\{canManagePayroll\}/);
   assert.match(page, /contracts=\{contracts\}[\s\S]*contracts=\{contracts\}/);
 });
 
@@ -107,9 +107,9 @@ test("2차: two-way navigation keeps the selected employee and confirms before d
   assert.doesNotMatch(settings, /redirect\(|router\.replace\(`\/admin\/users/);
 });
 
-test("contract/attendance mismatch reuses the payroll policy and only warns", () => {
-  assert.match(page, /requiresFixedMonthlyContract\(draft\.role, draft\.attendance_tracking_enabled !== false\) !== \(current\.calculationBasis === "fixed_monthly"\)/);
-  assert.match(page, /\{mismatch \? <span role="status" style=\{styles\.fieldNotice\}>\{text\.payrollContractMismatch\}<\/span> : null\}/);
+test("5차: attendance OFF warns only when the current/scheduled contract is not fixed monthly, and only warns", () => {
+  assert.doesNotMatch(page, /payrollContractMismatch|const mismatch =/, "the old two-way mismatch warning is replaced");
+  assert.match(page, /\{attendanceOffNeedsFixedMonthly\(draft, contracts\) \? <span role="status" style=\{styles\.fieldNotice\}>\{text\.attendanceOffRequiresFixedMonthly\}<\/span> : null\}/);
   assert.doesNotMatch(page, /fetch\([^)]*\/api\/admin\/payroll\/contracts[^)]*method/, "no contract writes from the employee page");
 });
 
@@ -124,10 +124,11 @@ test("payroll settings shortcut opens the existing employee tab with the same el
 });
 
 test("new labels exist in KO and VI", () => {
-  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "cancelTerminationConfirm", "reactivate", "reactivateUndo", "reactivateHelp", "reactivatePending", "appLoginBlockedInactive", "appLoginBlockedTerminated", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "payrollContractMismatch", "managePayrollSettings", "unsavedLeaveConfirm"]) {
+  for (const key of ["workPayInfo", "employmentStatus", "appAccess", "appLoginAllowed", "cancelTerminationConfirm", "reactivate", "reactivateUndo", "reactivateHelp", "reactivatePending", "appLoginBlockedInactive", "appLoginBlockedTerminated", "payrollException", "payrollContractCurrent", "payrollContractNone", "payrollContractLoadFailed", "attendanceOffRequiresFixedMonthly", "managePayrollSettings", "unsavedLeaveConfirm"]) {
     assert.equal((text.match(new RegExp(`\\b${key}:`, "g")) ?? []).length, 2, key);
   }
-  assert.match(text, /근태 설정과 현재 급여계약이 다릅니다\. 급여설정에서 계약을 확인해야 합니다\./);
+  assert.ok(text.includes("근태 기록을 사용하지 않으려면 급여계약을 '월 고정급'으로 설정해야 합니다."));
+  assert.ok(text.includes("Để tắt chấm công, cần thiết lập hợp đồng lương cố định hằng tháng."));
 });
 
 test("P0: each payroll setting card reports real unsaved input against the same baseline its form resets to", () => {

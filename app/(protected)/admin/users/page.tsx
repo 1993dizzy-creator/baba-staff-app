@@ -31,13 +31,14 @@ import {
 import { addCalendarMonthsClamped, calculateEmployeeLevel } from "@/lib/employee-level/calculate";
 import { hireMonthBase } from "@/lib/employee-level/month";
 import { employeeLevelMonthCandidate } from "@/lib/employee-level/month-transition";
-import { isPayrollEligible, requiresFixedMonthlyContract } from "@/lib/payroll/eligibility";
+import { isPayrollEligible } from "@/lib/payroll/eligibility";
 import EmployeePayrollSettingsPanel, { isDirectorManagedInsurance, type EmployeePayrollPanelOnly, type EmployeePayrollPanelUser } from "@/components/payroll/EmployeePayrollSettingsPanel";
 import { usePayrollContracts, type PayrollContractView, type PayrollContractsController } from "@/components/payroll/usePayrollContracts";
 import { resolveSettingsSummaryReference } from "@/lib/payroll/settings-summary";
 import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
-import { useEmployeeBenefitStatus, type BenefitKey, type BenefitSchedule, type BenefitStatus } from "@/components/payroll/useEmployeeBenefitStatus";
-import { money } from "@/lib/payroll/ui-labels";
+import { useEmployeeBenefitStatus, type BenefitKey, type BenefitStatus } from "@/components/payroll/useEmployeeBenefitStatus";
+import { formatContractRate } from "@/lib/payroll/payroll-page-money";
+import { attendanceDisableBlockCode } from "@/lib/employee/attendance-disable-block";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { isTopModal, useModalFocusTrap } from "@/components/payroll/useModalFocusTrap";
 import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
@@ -470,7 +471,6 @@ function UserCard({
   const roleValue = isRoleOption(draft.role) ? draft.role : "staff";
   const partValue = isPartOption(draft.part) ? draft.part : "kitchen";
   const hasLevelEditor = !user.is_system_account;
-  const currentBase = policyBaseForMonth(user, "current");
   const [levelModalOpen, setLevelModalOpen] = useState(false);
   const savePending = useRef(false);
   const levelButtonRef = useRef<HTMLButtonElement>(null);
@@ -734,53 +734,48 @@ function UserCard({
                   </Field>
                 </div>
               ) : null}
-              <span style={styles.modalHint}>{text.attendancePayrollHelp}</span>
+              {/* 근태 OFF를 고른 경우에만, 현재·예약 계약이 월 고정급이 아니면 안내한다(계약은 자동 변경·저장하지 않음). */}
+              {attendanceOffNeedsFixedMonthly(draft, contracts) ? <span role="status" style={styles.fieldNotice}>{text.attendanceOffRequiresFixedMonthly}</span> : null}
             </> : null}
-            <PayrollContractStatus user={user} draft={draft} text={text} contracts={contracts} canManage={canManagePayroll} isSaving={isSaving} onManage={() => openSheet("contract")} />
+            <PayrollContractStatus user={user} text={text} lang={lang} contracts={contracts} canManage={canManagePayroll} isSaving={isSaving} onManage={() => openSheet("contract")} />
           {hasLevelEditor || canManagePayroll ? <div style={styles.subsection}>
             <SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>
-            {hasLevelEditor ? <BenefitRow
-              emoji="📈"
-              title={text.longTermLevel}
-              text={text}
-              status={levelBenefitStatus(user)}
-              detail={levelBenefitDetail(user, text)}
-              disabled={isSaving || Boolean(user.termination_date)}
-              detailButtonRef={levelButtonRef}
-              onSwitch={openLevelModal}
-              onDetail={openLevelModal}
-              notes={<>
-                {isEmployeeLevelMonthBaseMode(currentBase.mode) ? <span style={styles.modalMuted}>{text.levelBaseMonth}: {currentBase.baseDate?.slice(0, 7) ?? "-"}</span> : null}
-                {/* 목록의 레벨 일정 줄에만 있던 월 기준 전환 안내(조건은 기존과 같다). */}
-                {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
-                {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
-                {/* 레벨 모달의 '적용'은 아직 저장이 아니다. 저장 전에는 스위치가 현재 정책을 그대로 보여 준다. */}
-                {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span role="status" style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)} · {text.levelPendingSave}<br />{text.levelPendingSaveHelp}</span> : null}
-              </>}
-            /> : null}
-            {canManagePayroll ? BENEFIT_ROWS.map((row) => {
-              const status = benefits.status(row.key);
-              const director = row.key === "insurance" && isDirectorManagedInsurance(user.username);
-              // 근태 미사용 직원은 식대·개근을 켤 수 없다(기존 서버 검증과 같다). 끄기·상세 설정은 가능하다.
-              const needsAttendance = (row.key === "meal" || row.key === "bonus") && status.state === "ready" && !status.on && status.attendanceTrackingEnabled === false;
-              return <BenefitRow
-                key={row.key}
-                emoji={row.emoji}
-                title={text[row.title]}
+            <div style={styles.benefitGrid}>
+              {hasLevelEditor ? <BenefitTile
+                wide
+                emoji="📈"
+                title={text.longTermLevel}
                 text={text}
-                status={director ? { state: "ready", on: false, configured: false, since: null, scheduled: null } : status}
-                detail={director ? text.insuranceDirectorManaged : benefitDetail(row.key, status, text)}
-                disabled={isSaving || director}
-                switchDisabled={needsAttendance}
-                onSwitch={() => openSheet(row.key, { enable: !(status.state === "ready" && status.on) })}
-                onDetail={() => openSheet(row.key)}
-                onRetry={() => benefits.reload(row.key)}
-                notes={<>
-                  {needsAttendance ? <span style={styles.modalMuted}>{text.requiresAttendance}</span> : null}
-                  {row.key === "bonus" ? <span style={styles.modalMuted}>{text.bonusSwitchHelp}</span> : null}
-                </>}
-              />;
-            }) : null}
+                status={levelBenefitStatus(user)}
+                disabled={isSaving || Boolean(user.termination_date)}
+                buttonRef={levelButtonRef}
+                onOpen={openLevelModal}
+              /> : null}
+              {canManagePayroll ? BENEFIT_ROWS.map((row) => {
+                const status = benefits.status(row.key);
+                const director = row.key === "insurance" && isDirectorManagedInsurance(user.username);
+                return <BenefitTile
+                  key={row.key}
+                  emoji={row.emoji}
+                  title={text[row.title]}
+                  text={text}
+                  status={status}
+                  stateLabel={director ? text.benefitCommonManaged : benefitUnsetLabel(row.key, status, text)}
+                  disabled={isSaving || director}
+                  // OFF(미설정 포함)는 적용 제안으로, ON은 현재 값 그대로 연다. 해제·세부값 변경은 모달 안에서 한다.
+                  // 근태 미사용 직원의 식대·개근 적용 제안은 카드가 기존대로 무시한다(서버 검증도 그대로).
+                  onOpen={() => openSheet(row.key, { enable: status.state === "ready" && status.on ? null : true })}
+                  onRetry={() => benefits.reload(row.key)}
+                />;
+              }) : null}
+            </div>
+            {hasLevelEditor ? <>
+              {/* 목록의 레벨 일정 줄에만 있던 월 기준 전환 안내(조건은 기존과 같다). */}
+              {user.levelInfo.eligible && user.levelInfo.displayLabel && !isEmployeeLevelMonthBaseMode(user.levelInfo.baseDateSource) ? <span style={styles.fieldNotice}>{text.levelMonthTransitionRequired}</span> : null}
+              {user.termination_date ? <span style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</span> : null}
+              {/* 레벨 모달의 '적용'은 아직 저장이 아니다. 저장 전에는 타일이 현재 정책을 그대로 보여 준다. */}
+              {levelDraftChanged(user, levelDraft, draft.hire_date) ? <span role="status" style={styles.fieldNotice}>{text.levelPending} · {levelEffectiveFrom(levelDraft.effectiveMonth)} · {text.levelPendingSave}<br />{text.levelPendingSaveHelp}</span> : null}
+            </> : null}
           </div> : null}
           {/* 급여 대상 예외: 기존 허용 대상(owner/master 등 사장 그룹)에게만, 기존 저장 조건 그대로. */}
           {isAdminGroupUser && !user.is_system_account ? <div style={styles.subsection}>
@@ -792,7 +787,6 @@ function UserCard({
           {!isMasterUser ? <section style={sectionStyle("appAccess")}>
             <SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>
             <Toggle label={text.appLoginAllowed} checked={draft.app_login_enabled !== false} onChange={value => update("app_login_enabled", value)} />
-            <span style={styles.modalHint}>{text.appLoginAllowedHelp}</span>
             {/* 로그인은 재직 상태(is_active)와 앱 로그인 허용이 모두 켜져 있어야 가능하다(서버 인증과 같은 조건). */}
             {user.termination_date || user.is_active === false ? <span style={styles.fieldNotice}>{user.termination_date ? text.appLoginBlockedTerminated : text.appLoginBlockedInactive}</span> : null}
           </section> : null}
@@ -860,9 +854,34 @@ function employmentStatusStyle(user: UserRow): CSSProperties {
 }
 
 function payrollContractLabel(contract: Pick<PayrollContractView, "payType" | "calculationBasis">, text: AdminUsersPageText) {
-  if (contract.calculationBasis === "fixed_monthly") return `${text.payTypeFixedMonthly} · ${text.contractBasisNoAttendance}`;
-  const payType = contract.payType === "hourly" ? text.payTypeHourly : contract.payType === "daily" ? text.payTypeDaily : text.payTypeMonthly;
-  return `${payType} · ${text.contractBasisAttendance}`;
+  if (contract.calculationBasis === "fixed_monthly") return text.payTypeFixedMonthly;
+  return contract.payType === "hourly" ? text.payTypeHourly : contract.payType === "daily" ? text.payTypeDaily : text.payTypeMonthly;
+}
+
+function contractPayType(payType: string): CompensationContract["payType"] | null {
+  return payType === "monthly" || payType === "daily" || payType === "hourly" ? payType : null;
+}
+
+/**
+ * 현재 합산급여: 급여 엔진과 같은 calculateCombinedSalary(계약 기본급 + 고정 인상 + 레벨 인상, 시급제는 시급 환산)를
+ * 현재 적용 중인 계약과 직원의 현재 레벨 정보로 그대로 계산한다(새 계산식 없음, 세금·보험 공제 전 금액).
+ * 계산할 수 없으면 null(별도 상태로 표시).
+ */
+function currentContractAmount(contract: PayrollContractView, levelInfo: EmployeeLevelInfo, lang: "ko" | "vi") {
+  const payType = contractPayType(contract.payType);
+  if (!payType) return null;
+  const combined = calculateCombinedSalary({ ...contract, payType }, levelInfo).combinedSalary;
+  return combined === null ? null : formatContractRate(combined, payType, lang);
+}
+
+/**
+ * 근태 OFF를 선택했는데 현재 적용 계약(또는 예약된 다음 계약)이 월 고정급이 아니면 true.
+ * 계약 조회 중·실패는 판정하지 않는다. 근태 ON이면 언제나 false.
+ */
+function attendanceOffNeedsFixedMonthly(draft: UserRow, contracts: PayrollContractsController) {
+  if (draft.attendance_tracking_enabled !== false || contracts.loading || contracts.loadFailed) return false;
+  const fixed = (contract: PayrollContractView | null) => contract?.calculationBasis === "fixed_monthly";
+  return !fixed(contracts.current) || (contracts.scheduled !== null && !fixed(contracts.scheduled));
 }
 
 // 급여설정 직원 목록(/api/admin/payroll/users)과 같은 조건: 재직 중(is_active)이고 급여 대상.
@@ -877,17 +896,17 @@ function userDraftChanged(user: UserRow, draft: UserRow) {
 }
 
 /**
- * 💰 현재 급여계약 1~2줄 요약과 "계약 관리"(급여계약 전용 모달). 계약 조회는 카드가 소유한 usePayrollContracts 결과를
- * 받아 쓴다(별도 조회 없음). 급여계약은 단순 ON/OFF가 아니므로 스위치로 표현하지 않는다.
+ * 💰 현재 급여계약 한 줄 요약(계약형태 · 현재 합산급여)과 "계약 관리"(급여계약 전용 모달). 계약 조회는 카드가 소유한
+ * usePayrollContracts 결과를 받아 쓴다(별도 조회 없음). 예약 계약은 현재 계약으로 표시하지 않고 따로 표시한다.
+ * 적용 시작월·등록/정정·이력은 계약 관리 모달에서 확인한다.
  */
-function PayrollContractStatus({ user, draft, text, contracts, canManage, isSaving, onManage }: {
-  user: UserRow; draft: UserRow; text: AdminUsersPageText; contracts: PayrollContractsController;
+function PayrollContractStatus({ user, text, lang, contracts, canManage, isSaving, onManage }: {
+  user: UserRow; text: AdminUsersPageText; lang: "ko" | "vi"; contracts: PayrollContractsController;
   canManage: boolean; isSaving: boolean; onManage: () => void;
 }) {
   const ready = !contracts.loading && !contracts.loadFailed;
   const current = ready ? contracts.current : null;
-  const mismatch = current !== null
-    && requiresFixedMonthlyContract(draft.role, draft.attendance_tracking_enabled !== false) !== (current.calculationBasis === "fixed_monthly");
+  const amount = current ? currentContractAmount(current, user.levelInfo, lang) : null;
   return <div style={styles.subsection}>
     <div style={styles.sectionHead}>
       <SubsectionTitle emoji="💰">{text.payrollContract}</SubsectionTitle>
@@ -896,13 +915,12 @@ function PayrollContractStatus({ user, draft, text, contracts, canManage, isSavi
     <div style={styles.contractLines} aria-live="polite">
       {contracts.loading ? <span style={styles.modalMuted}>{text.payrollContractLoading}</span>
         : contracts.loadFailed ? <span style={styles.contractError}>{text.payrollContractLoadFailed} <button type="button" style={styles.inlineEditButton} onClick={contracts.reload}>{text.retry}</button></span>
-        : current ? <>
-          <strong style={styles.contractPrimary}>{payrollContractLabel(current, text)}</strong>
-          <span style={styles.contractMeta}>{text.contractBaseSalary} {money(current.baseSalary)} · {text.contractEffectiveMonth} {current.effectiveFrom.slice(0, 7)}</span>
-        </> : <strong style={styles.contractPrimary}>{text.payrollContractNone}</strong>}
+        : current ? amount !== null
+          ? <strong style={styles.contractPrimary}>{payrollContractLabel(current, text)} · {amount}</strong>
+          : <span style={styles.contractPrimary}>{payrollContractLabel(current, text)} · <span style={styles.contractError}>{text.payrollContractAmountUnavailable}</span></span>
+        : <strong style={styles.contractPrimary}>{text.payrollContractNone}</strong>}
     </div>
     {ready && contracts.scheduled ? <span style={styles.modalMuted}>{text.payrollContractScheduled} {contracts.scheduled.effectiveFrom} · {payrollContractLabel(contracts.scheduled, text)}</span> : null}
-    {mismatch ? <span role="status" style={styles.fieldNotice}>{text.payrollContractMismatch}</span> : null}
     {canManage || user.is_system_account ? null : <span style={styles.modalMuted}>{text.payrollSettingsUnavailable}</span>}
   </div>;
 }
@@ -915,83 +933,50 @@ const BENEFIT_ROWS: readonly { key: BenefitRowKey & BenefitKey; emoji: string; t
   { key: "tax", emoji: "🧾", title: "benefitTax" },
 ];
 
-function scheduleText(scheduled: BenefitSchedule | null, text: AdminUsersPageText) {
-  return scheduled ? `${scheduled.on ? text.scheduledOn : text.scheduledOff} ${scheduled.from}` : "";
+/** 보험·TNCN은 적용 버전이 없으면 OFF가 아니라 "미설정"으로 표시한다(식대·개근은 버전 없음 = 미대상 OFF). */
+function benefitUnsetLabel(key: BenefitKey, status: BenefitStatus, text: AdminUsersPageText) {
+  return (key === "insurance" || key === "tax") && status.state === "ready" && !status.configured ? text.benefitUnset : undefined;
 }
 
-/** 스위치 옆 한 줄 상태(조회 결과 그대로). 조회 중·실패는 BenefitRow가 따로 표시한다. */
-function benefitDetail(key: BenefitKey, status: BenefitStatus, text: AdminUsersPageText) {
-  if (status.state !== "ready") return "";
-  const since = status.since ? ` · ${status.since}~` : "";
-  const parts: string[] = [];
-  if (key === "meal" || key === "bonus") parts.push(`${status.on ? text.benefitEligible : text.benefitIneligible}${status.on ? since : ""}`);
-  else if (key === "insurance") parts.push(!status.configured ? text.insuranceUnset : status.on ? `${text.insuranceEnrolled} · ${text.insuranceBase} ${money(status.insuranceBaseAmount)}` : text.insuranceNotEnrolled);
-  else parts.push(!status.configured ? text.taxUnset : `${status.on ? text.taxResident : text.taxNotApplicable}${status.on && status.requiresReview ? ` · ${text.taxReview}` : ""}`);
-  const scheduled = scheduleText(status.scheduled, text);
-  if (scheduled) parts.push(scheduled);
-  return parts.join(" · ");
-}
-
-/** 장기근무 레벨 스위치: 실제 적용 중인 정책(levelProgramPolicy) 기준. 예약 변경은 따로 표시한다. */
+/** 장기근무 레벨 타일: 실제 적용 중인 정책(levelProgramPolicy) 기준. 예약 변경은 따로 표시한다. */
 function levelBenefitStatus(user: UserRow): Extract<BenefitStatus, { state: "ready" }> {
   const policy = user.levelProgramPolicy;
   const on = currentPolicyEnabled(user);
   const scheduled = policy?.hasScheduledChange && policy.nextEnabled !== policy.currentEnabled ? { on: policy.nextEnabled, from: policy.nextEffectiveFrom.slice(0, 7) } : null;
   return { state: "ready", on, configured: true, since: null, scheduled };
 }
-function levelBenefitDetail(user: UserRow, text: AdminUsersPageText) {
-  const status = levelBenefitStatus(user);
-  const levelInfo = user.levelInfo;
-  const current = !status.on ? text.benefitNotApplied
-    : levelInfo.eligible && levelInfo.displayLabel ? [`${text.currentLevel} ${levelInfo.displayLabel}`, isEmployeeLevelMonthBaseMode(levelInfo.baseDateSource) ? `${text.nextLevel} ${levelInfo.nextLevelDate ?? text.highestLevel}` : ""].filter(Boolean).join(" · ")
-    : text.benefitApplied;
-  const scheduled = scheduleText(status.scheduled, text);
-  return [current, scheduled].filter(Boolean).join(" · ");
-}
 
 /**
- * 복리후생 항목 한 줄: 항목명·현재 상태(누르면 상세 설정) + 슬라이딩 스위치.
- * 스위치는 저장하지 않는다. 누르면 그 설정의 모달을 열고(목표 상태를 미리 채움), 저장 후 다시 조회한 실제 상태만 표시한다.
- * 조회 중·실패에는 OFF로 단정하지 않고 상태 확인 중/조회 실패와 재조회를 보여 준다.
+ * 복리후생 타일 하나 = 버튼 하나(중첩 버튼 없음): 아이콘·항목명·현재 적용 상태(ON/OFF)와 예약 표시만 보여 준다.
+ * 누르면 그 설정의 모달을 연다. 타일은 저장하지 않으며, 저장 후 다시 조회한 실제 상태만 표시한다.
+ * 조회 중에는 비활성, 조회 실패는 OFF로 단정하지 않고 "조회 실패"로 표시하며 누르면 다시 조회한다.
  */
-function BenefitRow({ emoji, title, text, status, detail, disabled, switchDisabled, detailButtonRef, onSwitch, onDetail, onRetry, notes }: {
-  emoji: string; title: string; text: AdminUsersPageText; status: BenefitStatus; detail: string;
-  disabled: boolean; switchDisabled?: boolean; detailButtonRef?: Ref<HTMLButtonElement>;
-  onSwitch: (event: MouseEvent<HTMLButtonElement>) => void; onDetail: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void; notes?: ReactNode;
+function BenefitTile({ emoji, title, text, status, stateLabel, disabled, wide, buttonRef, onOpen, onRetry }: {
+  emoji: string; title: string; text: AdminUsersPageText; status: BenefitStatus; stateLabel?: string;
+  disabled: boolean; wide?: boolean; buttonRef?: Ref<HTMLButtonElement>;
+  onOpen: (event: MouseEvent<HTMLButtonElement>) => void; onRetry?: () => void;
 }) {
-  const detailId = useId();
   const ready = status.state === "ready";
-  const on = ready && status.on;
-  return <div style={styles.benefitItem}>
-    <div style={styles.benefitRow}>
-      <button ref={detailButtonRef} type="button" aria-haspopup="dialog" disabled={disabled || !ready} onClick={onDetail} style={styles.benefitInfo}>
-        <span style={styles.benefitTitle}><span aria-hidden="true">{emoji}</span>{title}</span>
-        <span id={detailId} style={styles.benefitDetail}>
-          {status.state === "loading" ? text.statusChecking : status.state === "error" ? text.statusLoadFailed : detail}
-          {ready ? <span style={styles.benefitDetailLink}> · {text.detailSettings} ›</span> : null}
-        </span>
-      </button>
-      {status.state === "error" ? (
-        <button type="button" style={styles.benefitRetry} onClick={onRetry}>{text.retry}</button>
-      ) : (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={on}
-          aria-label={title}
-          aria-describedby={detailId}
-          aria-busy={status.state === "loading" || undefined}
-          disabled={disabled || !ready || switchDisabled}
-          onClick={onSwitch}
-          style={styles.switchButton}
-        >
-          <span style={styles.switchText}>{status.state === "loading" ? "…" : on ? "ON" : "OFF"}</span>
-          <SwitchTrack on={on} />
-        </button>
-      )}
-    </div>
-    {notes}
-  </div>;
+  const failed = status.state === "error";
+  const on = ready && status.on && stateLabel === undefined;
+  const label = stateLabel ?? (status.state === "loading" ? text.statusChecking : failed ? text.statusLoadFailed : on ? "ON" : "OFF");
+  const scheduled = ready ? status.scheduled : null;
+  const tone = failed ? styles.benefitTileError : on ? styles.benefitTileOn : styles.benefitTileOff;
+  return <button
+    ref={buttonRef}
+    type="button"
+    aria-haspopup={failed ? undefined : "dialog"}
+    aria-busy={status.state === "loading" || undefined}
+    disabled={disabled || status.state === "loading" || (failed && !onRetry)}
+    onClick={failed ? () => onRetry?.() : onOpen}
+    style={{ ...styles.benefitTile, ...tone, ...(wide ? styles.benefitTileWide : null) }}
+  >
+    <span style={styles.benefitTileTitle}><span aria-hidden="true" style={styles.benefitTileEmoji}>{emoji}</span><span style={styles.benefitTileName}>{title}</span></span>
+    <span style={styles.benefitTileState}>
+      <span style={{ ...styles.benefitTilePill, ...(failed ? styles.benefitTilePillError : on ? styles.benefitTilePillOn : null) }}>{label}{failed ? ` · ${text.retry}` : ""}</span>
+      {scheduled ? <span style={styles.benefitTileSchedule}>{scheduled.on ? text.scheduledOn : text.scheduledOff} {scheduled.from}</span> : null}
+    </span>
+  </button>;
 }
 
 /** 둥근 트랙과 원형 손잡이(색 + ON/OFF 글자 + aria-checked로 상태를 함께 전달). */
@@ -1649,6 +1634,13 @@ export default function AdminUsersPage() {
           window.alert(result.error || text.saveFailed);
           return false;
         }
+        // 식대·개근 보너스 대상이라 근태 OFF가 서버에서 차단된 경우: 내부 오류명 대신 지정 문구로 안내한다.
+        // 편집 화면·입력값은 그대로 두고(저장 성공으로 표시하지 않음), 차단 규칙 자체는 우회하지 않는다.
+        const blocked = attendanceDisableBlockCode(result);
+        if (blocked) {
+          window.alert(blocked === "ATTENDANCE_BONUS_ELIGIBLE_BLOCKS_ATTENDANCE_TRACKING_DISABLE" ? text.attendanceDisableBlockedBonus : text.attendanceDisableBlockedMeal);
+          return false;
+        }
         throw new Error(result.error || text.saveFailed);
       }
 
@@ -2023,14 +2015,20 @@ const styles = {
   contractLines: { display: "grid", gap: 2, minWidth: 0 },
   contractPrimary: { fontSize: 13, fontWeight: 800, color: "#111827", overflowWrap: "anywhere" },
   contractMeta: { fontSize: 12, color: "#374151", overflowWrap: "anywhere" },
-  benefitItem: { display: "grid", gap: 4, minWidth: 0 },
-  benefitRow: { display: "flex", alignItems: "center", gap: 8, minWidth: 0, padding: "4px 4px 4px 10px", border: "1px solid #e0f2fe", borderRadius: 10, background: "#fff" },
-  benefitInfo: { flex: 1, minWidth: 0, minHeight: 44, display: "grid", alignContent: "center", gap: 1, padding: "4px 0", border: "none", background: "transparent", color: "#111827", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
-  benefitTitle: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 800, minWidth: 0, overflowWrap: "anywhere" },
-  benefitDetail: { fontSize: 11, color: "#4b5563", lineHeight: 1.4, overflowWrap: "anywhere" },
-  benefitDetailLink: { color: "#2563eb", fontWeight: 700, whiteSpace: "nowrap" },
-  benefitRetry: { flexShrink: 0, minHeight: 44, padding: "0 12px", border: "1px solid #fca5a5", borderRadius: 999, background: "#fff", color: "#b91c1c", fontSize: 12, fontWeight: 800, cursor: "pointer" },
-  switchButton: { flexShrink: 0, minWidth: 44, minHeight: 44, display: "inline-flex", alignItems: "center", gap: 6, padding: "0 6px", border: "none", borderRadius: 999, background: "transparent", color: "#111827", fontFamily: "inherit", cursor: "pointer" },
+  benefitGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, minWidth: 0 },
+  benefitTile: { minWidth: 0, minHeight: 64, display: "grid", alignContent: "space-between", gap: 6, padding: "10px 12px", borderWidth: 1, borderStyle: "solid", borderRadius: 12, color: "#111827", fontFamily: "inherit", textAlign: "left", cursor: "pointer" },
+  benefitTileWide: { gridColumn: "1 / -1" },
+  benefitTileOn: { background: "#f0fdf4", borderColor: "#bbf7d0" },
+  benefitTileOff: { background: "#f8fafc", borderColor: "#e2e8f0" },
+  benefitTileError: { background: "#fff", borderColor: "#fca5a5" },
+  benefitTileTitle: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 13, fontWeight: 800, lineHeight: 1.3 },
+  benefitTileEmoji: { flexShrink: 0, fontSize: 18, lineHeight: 1 },
+  benefitTileName: { minWidth: 0, overflowWrap: "anywhere" },
+  benefitTileState: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4, minWidth: 0 },
+  benefitTilePill: { borderRadius: 999, padding: "2px 8px", background: "#e5e7eb", color: "#374151", fontSize: 11, fontWeight: 900, overflowWrap: "anywhere" },
+  benefitTilePillOn: { background: "#dcfce7", color: "#166534" },
+  benefitTilePillError: { background: "#fef2f2", color: "#b91c1c" },
+  benefitTileSchedule: { fontSize: 10, fontWeight: 800, color: "#92400e", overflowWrap: "anywhere" },
   switchControl: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6 },
   switchText: { minWidth: 26, fontSize: 11, fontWeight: 900, textAlign: "right", color: "#374151" },
   switchTrack: { position: "relative", display: "inline-block", flexShrink: 0, width: 44, height: 24, borderRadius: 999, background: "#d1d5db", transition: "background-color 0.18s ease" },

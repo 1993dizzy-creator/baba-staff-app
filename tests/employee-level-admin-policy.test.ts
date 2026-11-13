@@ -196,10 +196,10 @@ test("employee cards use the shared theme badge and preserve compact mobile layo
   // 2026-11: the list card no longer renders a level schedule line (LevelSummary removed);
   // the level badge stays and the schedule lives in the employee detail.
   assert.doesNotMatch(page, /function LevelSummary\(|<LevelSummary /);
-  // 2026-11 4차: the level details are the 📈 benefit row's one-line status (LevelDetails folded into levelBenefitDetail).
-  const detailsBody = page.slice(page.indexOf("function levelBenefitDetail("), page.indexOf("function BenefitRow("));
-  assert.match(detailsBody, /levelInfo\.nextLevelDate/);
-  assert.doesNotMatch(detailsBody, /cumulativeRaiseAmount/);
+  // 2026-11 5차: the 📈 tile shows only ON/OFF; level details (next level date etc.) stay in the level settings modal.
+  assert.doesNotMatch(page, /function levelBenefitDetail\(/);
+  const modalBody = page.slice(page.indexOf("function LevelSettingsModal("));
+  assert.match(modalBody, /displayInfo\.nextLevelDate/);
 });
 
 test("level policy mutations use server-owned stable audit reason codes", () => {
