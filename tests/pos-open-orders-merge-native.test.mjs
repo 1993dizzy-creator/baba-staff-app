@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { nativeInventoryPostgres } from './helpers/inventory-native-postgres.mjs';
 import { installProductionBaseline, applyMerged, MERGED, doc, FUNCTION_HASHES } from './helpers/pos-open-orders-native-fixture.mjs';
+import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 
 const enabled = Boolean(process.env.QA_POSTGRES_BIN);
 const settle = promise => promise.then(value => ({ value }), error => ({ error }));
@@ -151,6 +152,33 @@ test('native PostgreSQL: merge evidence migration, preflight/postflight, concurr
     assert.equal((await db.query("select count(*)::int n from information_schema.columns where column_name = 'closure_merged_into_order_id'")).rows[0].n, 0);
     assert.equal((await db.query("select count(*)::int n from pg_proc where proname = 'merge_zero_v1'")).rows[0].n, 0);
   }, { migrated: false });
+
+  await scenario('production log shape end-to-end: collector + empty-GUID detail + exact merge receipt commits on real PostgreSQL', async ({ db }) => {
+    await receipt(db);
+    const rpc = async (name, args) => {
+      const order = { pos_open_orders_claim: ['p_run_id', 'p_owner_token', 'p_scope', 'p_branch_id', 'p_business_date'],
+        pos_open_orders_commit: ['p_run_id', 'p_owner_token', 'p_manifest', 'p_orders'], pos_open_orders_read: ['p_scope', 'p_business_date'],
+        pos_open_orders_fail: ['p_run_id', 'p_owner_token', 'p_code'] }[name].map(key => args[key]);
+      if (name === 'pos_open_orders_claim') order.push(0);
+      try { return await call(db, name, order); } catch (error) { throw new Error(core.openOrdersRpcErrorCode(error)); }
+    };
+    const header = o => ({ Id: o.orderId, No: o.orderNo, Date: o.orderDate, Status: o === target ? 4 : 1, TotalAmount: o.totalAmount, TableName: o === target ? null : o.tableName });
+    const transport = { login: async () => {}, sleep: async () => {}, send: async request => request.kind === 'page'
+      ? { status: 200, json: { Success: true, Total: 2, Data: [target, other].map(header) } }
+      : request.orderId === 'order-o'
+        ? { status: 200, json: { Success: true, Data: { ...header(other), OrderDetails: other.lines.map(l => ({ Id: l.detailId, ItemId: l.itemId, Quantity: l.quantity, Price: l.price, Amount: l.amount, Status: 2 })) } } }
+        : { status: 200, json: { Success: true, Data: { Id: '00000000-0000-0000-0000-000000000000', Date: '0001-01-01T00:00:00', Status: 0, TotalAmount: 0 } } } };
+    const receipts = async () => (await db.query(`select id, branch_id, business_date::text bd, payment_status, is_canceled, total_amount, discount_amount,
+      raw_json->>'OrderId' oid, raw_json->'DiscountAmount' d1, raw_json->'PromotionAmount' d2, raw_json->'PromotionItemsAmount' d3, raw_json->'SAInvoiceDetails' details
+      from public.pos_sales_receipts`)).rows.map(r => ({ orderId: r.oid, receiptId: Number(r.id), paymentStatus: r.payment_status, isCanceled: r.is_canceled,
+      businessDate: r.bd, branchId: r.branch_id, totalAmount: Number(r.total_amount), discountAmount: Number(r.discount_amount), headerDiscounts: [r.d1, r.d2, r.d3], details: r.details }));
+    const input = { scope, branchId: branch, businessDate: date, windowFrom: new Date(`${date}T03:00:00+07:00`).toISOString(), cutoff: '03:00' };
+    const result = await core.runOpenOrderSync({ rpc, transport, uuid: randomUUID, loadReceiptEvidence: receipts, loadMergeReceiptEvidence: receipts }, input);
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    const rows = await snapshot(db);
+    assert.deepEqual(rows.filter(r => r.closure_merged_into_order_id).map(r => [r.order_id, r.status, Number(r.closure_receipt_id)]), [['order-a', 1, 501], ['order-b', 1, 501]]);
+    assert.deepEqual(failedSql((await db.query(doc('functional-check'))).rows), []);
+  });
 
   await scenario('1/9: payment status change in flight blocks the merge commit (SHARE lock); the commit decides on committed state', async ({ db, a, b, pid }) => {
     await receipt(db, { status: 1 });

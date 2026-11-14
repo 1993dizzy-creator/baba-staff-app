@@ -372,7 +372,7 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
   5. 첫 정상 수집의 `receiptClosures`와 KPI·`/tables`를 대조한다.
 - 앱보다 Migration이 먼저 적용되어도 안전하다. 기존 앱은 계약 버전 2 이상에서 단건 증거만 보내며 합치기 필드를 보내지 않는다.
 - Migration 없이 앱만 배포돼도 안전하다. 계약 2에서는 합치기 증거를 보내지 않는다.
-- 위험 1: 실제 상세 재조회의 실패 종류가 위 허용 목록 밖(예: timeout 반복)이면 이번 경로가 동작하지 않는다. 운영 진단 로그로 reason/causeCode를 확인해야 한다.
+- 위험 1: (2026-11-15 확인) 운영 로그는 `order_id_invalid`였다. 아래 "빈 GUID 응답" 절에서 반영했다.
 - 위험 2: 할인·옵션·합치기 후 추가 주문이 섞인 합치기는 계속 미확인으로 남는다. 이는 의도된 보호다.
 - 위험 3: (2026-11-15 해소) 격리 PostgreSQL 17.12 다중 연결 검증을 아래 최종 감사에서 수행했다.
 - 2026-11-10 장애(22:17 `orders_invalid_row` 후 반복)는 같은 오류 코드 사례일 뿐이다. 주문 합치기가 원인이었다고 가정하지 않는다(당시 스냅샷이 남아 있지 않다).
@@ -453,6 +453,37 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
   - 영수증 수집 트랜잭션이 10초 넘게 열려 있으면 그 회차는 실패한다. 두 Cron은 서로 2분 이상 떨어져 있다.
   - 잠금 시간은 커밋 트랜잭션 동안(수십 ms)뿐이다.
 - 영업일 전환 전후의 실제 운영 데이터 흐름은 배포 후 functional-check로 확인해야 한다.
+
+### 2026-11-15 운영 진단 로그 반영: 빈 GUID 응답 (이전 합치기 허용 조건 설명보다 우선)
+
+**확보한 운영 로그**
+
+- `[OPEN_ORDERS_SYNC_DIAGNOSTIC]` 값: `orders_vanished_unconfirmed` / stage `vanished_detail` / reason `order_id_invalid` / causeCode `orders_invalid_row` / vanishedCount 2 / confirmedCount 0.
+- 이전 합치기 허용 조건(`order_id_missing`, `detail_data_missing`, `provider_failure`, `provider_http_failure`)에는 이 조합이 없다. 그래서 이전 수정만으로는 운영 장애가 해결되지 않았다.
+
+**`order_id_invalid`가 나오는 형태 (`normalizeOrderSummary`)**
+
+- `Id`가 있으나 쓸 수 없는 경우뿐이다. 즉 문자열이 아닌 값(숫자·불리언·객체·배열)이거나, 빈 GUID `00000000-0000-0000-0000-000000000000`(대소문자·공백 무관)이다.
+- null·빈 문자열은 `order_id_missing`이다. 다른 주문의 실제 Id는 `vanished_id_mismatch`가 된다.
+- CUKCUK의 `Id`는 GUID 필드다. 사라진 주문에 대해 기본 객체를 돌려주면 빈 GUID가 된다. 운영 응답 원문은 받지 않았고 CUKCUK도 새로 호출하지 않았다. 따라서 빈 GUID는 가장 유력한 형태로 판단한 것이고, 확정은 아니다.
+
+**수정 (앱 코드만, Migration·DB 변경 없음)**
+
+- 빈 GUID일 때만 오류 객체에 내부 표시(`emptyIdentity`)를 단다. 로그에는 남지 않고 로그 reason은 그대로 `order_id_invalid`다. 이 경우만 "식별자 없음"으로 보고 합치기 후보로 인정한다.
+- 숫자·객체 등 다른 `order_id_invalid`, 그리고 `orders_invalid_row` 전체는 계속 즉시 실패한다.
+- 재감사 결과 `provider_failure`·`provider_http_failure`를 합치기 후보에서 제외했다. 근거 없이 넣었던 조건이다. 이 둘은 일시 장애·5xx·게이트웨이 오류일 수 있으므로 "주문이 없어졌다"는 확정 응답이 아니다.
+- 단건 결제완료 대체 경로(자기 OrderId 영수증)는 바꾸지 않았다. 빈 GUID는 합치기 증거 경로에서만 인정한다.
+
+**검증**
+
+- RED: 수정 전 코드에 빈 GUID 응답 3형태(기본 객체·Id만·대문자+공백)와 정확한 합치기 영수증을 넣었다.
+  - 운영 로그와 똑같은 진단 `{stage: vanished_detail, reason: order_id_invalid, causeCode: orders_invalid_row, vanishedCount: 2, confirmedCount: 0}`으로 실패했다.
+  - `provider_failure`·`provider_http_failure`는 합치기로 닫히는 과허용이 재현됐다.
+- GREEN:
+  - PGlite 36/36: 빈 GUID 3형태는 허용된다.
+  - 다음은 모두 거부된다: 숫자·객체 Id, provider_failure, HTTP 503, 102, 다른 Id 응답, 빈 GUID와 미결제 영수증, 빈 GUID와 금액만 일치하는 영수증.
+  - 증거가 없으면 운영과 같은 진단으로 실패한다.
+- 격리 PostgreSQL 17.12 14/14: 실제 수집기와 빈 GUID 응답, 운영과 같은 DB 구조로 끝까지(end-to-end) 커밋되고 기능 점검 SQL을 통과했다.
 
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.

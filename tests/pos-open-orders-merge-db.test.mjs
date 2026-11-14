@@ -227,6 +227,13 @@ const rejectCases = {
   duplicate_active: { extra: [{ id: 502, status: 1 }] },
   member_own_receipt: { extra: [{ id: 503, orderId: 'order-a', status: 1, details: mergedDetails.slice(1, 2) }] },
   transient_detail_error: { vanished: { Success: false, Code: 102, ErrorType: 102 } },
+  // Not a definitive "this order is gone" answer: provider business errors and HTTP failures
+  // (outages, 5xx, gateway errors) never close an order, even with a perfect merge receipt.
+  provider_failure_detail: { vanished: { Success: false, Code: 500, ErrorType: 1 } },
+  provider_http_failure_detail: { vanished: () => ({ status: 503, json: null }) },
+  // order_id_invalid shapes other than the empty GUID stay hard failures.
+  numeric_id_detail: { vanished: { Success: true, Data: { Id: 18, Date: at(5), Status: 4, TotalAmount: 0 } } },
+  object_id_detail: { vanished: { Success: true, Data: { Id: { value: 'x' }, Date: at(5), Status: 4, TotalAmount: 0 } } },
   wrong_identity_detail: { vanished: () => ({ status: 200, json: { Success: true, Data: { Id: 'order-zzz', Date: at(5), Status: 4, TotalAmount: 0 } } }) },
 };
 for (const [name, c] of Object.entries(rejectCases)) {
@@ -245,6 +252,50 @@ for (const [name, c] of Object.entries(rejectCases)) {
     } finally { await db.close(); }
   });
 }
+
+// Production 2026-11-14 22:17+ diagnostic: vanished_detail / order_id_invalid / orders_invalid_row,
+// vanishedCount 2, confirmedCount 0. The merged-away orders' detail carries the empty GUID as Id.
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+const emptyGuidShapes = {
+  default_object: { Success: true, Data: { Id: EMPTY_GUID, Date: '0001-01-01T00:00:00', Status: 0, TotalAmount: 0, OrderDetails: [] } },
+  id_only: { Success: true, Data: { Id: EMPTY_GUID } },
+  upper_case_padded: { Success: true, Data: { Id: ` ${EMPTY_GUID.toUpperCase()} `, Date: at(5), Status: 4, TotalAmount: 0 } },
+};
+for (const [shape, response] of Object.entries(emptyGuidShapes)) {
+  test(`production log shape (${shape}): empty-GUID detail with an exact merge receipt commits the merge`, async () => {
+    const db = await seeded();
+    try {
+      await receipt(db);
+      const diagnostics = [];
+      const result = await run(db, transport({ vanished: response }), { onDiagnostic: d => diagnostics.push(d) });
+      assert.equal(result.status, 'committed', JSON.stringify({ result, diagnostics }));
+      const after = await read(db);
+      assert.deepEqual(['order-a', 'order-b'].map(id => [byId(after, id).closureMergedIntoOrderId, byId(after, id).status]), [['order-t', 1], ['order-t', 1]]);
+    } finally { await db.close(); }
+  });
+}
+
+test('production log shape without merge evidence still fails with exactly the observed diagnostic', async () => {
+  const db = await seeded();
+  try {
+    const diagnostics = [];
+    const result = await run(db, transport({ vanished: emptyGuidShapes.default_object }), { onDiagnostic: d => diagnostics.push(d) });
+    assert.equal(result.code, 'orders_vanished_unconfirmed');
+    assert.deepEqual(diagnostics, [{ code: 'orders_vanished_unconfirmed', stage: 'vanished_detail', reason: 'order_id_invalid',
+      causeCode: 'orders_invalid_row', vanishedCount: 2, confirmedCount: 0 }]);
+  } finally { await db.close(); }
+});
+
+test('empty-GUID detail never closes an order through an amount-only or unpaid receipt', async () => {
+  for (const variant of [{ status: 1 }, { details: [{ RefDetailType: 1, ItemID: 'item-z', Quantity: 1, UnitPrice: 1090000, Amount: 1090000 }] }]) {
+    const db = await seeded();
+    try {
+      await receipt(db, variant);
+      const result = await run(db, transport({ vanished: emptyGuidShapes.default_object }));
+      assert.equal(result.code, 'orders_vanished_unconfirmed', JSON.stringify(variant));
+    } finally { await db.close(); }
+  }
+});
 
 test('ambiguity: two vanished look-alike orders that could each explain the receipt are never closed', async () => {
   const db = await database();
