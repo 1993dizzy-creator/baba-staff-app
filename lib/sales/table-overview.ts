@@ -107,6 +107,9 @@ export function buildTableOverview(input: {
   // are history, not competing occupancy candidates. Unknown/conflicting orders still block.
   const convertedIds = new Set(orders.filter(order => order.businessDate === businessDate && !openIds.has(order.orderId)
     && classifyOrdersForBusinessDate([order], receipts, businessDate).converted === 1).map(order => order.orderId));
+  // Merged in POS into another order with a verified single paid receipt: history, not occupancy.
+  const mergedIds = new Set(orders.filter(order => order.businessDate === businessDate
+    && classifyOrdersForBusinessDate([order], receipts, businessDate).merged === 1).map(order => order.orderId));
   const revokedIds = new Set(orders.filter(order => order.businessDate === businessDate
     && classifyOrderStatus(order.status) === "paid_candidate"
     && classifyOrdersForBusinessDate([order], receipts, businessDate).receiptCanceled === 1).map(order => order.orderId));
@@ -164,13 +167,13 @@ export function buildTableOverview(input: {
   const uniqueName = (name: string | null | undefined) => !!name && nameCounts.get(nameKey(name)) === 1;
   const assigned = new Set(projected.filter(order => uniqueName(order.tableName)).map(order => order.id));
   const unlinked = projected.filter(order => !assigned.has(order.id));
-  const unlocatedOrder = unlinked.some(order => !convertedIds.has(order.id) && !revokedIds.has(order.id));
+  const unlocatedOrder = unlinked.some(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id));
   const unlinkedReceiptCount = currentPaid.filter(receipt => !paidByOrder.has(receipt.orderId)
     || !uniqueName(receipt.tableName)).length;
   const tables = catalog.tables.map((table): TableTile => {
     const unique = nameCounts.get(nameKey(table.name)) === 1;
     const matches = unique ? projected.filter(order => order.tableName && nameKey(order.tableName) === nameKey(table.name)) : [];
-    const candidates = matches.filter(order => !convertedIds.has(order.id) && !revokedIds.has(order.id));
+    const candidates = matches.filter(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id));
     const settlements = [...paidByOrder.values()].filter(receipt => unique && nameKey(receipt.tableName!) === nameKey(table.name));
     const last = settlements.sort((a, b) => Date.parse(b.paidAt!) - Date.parse(a.paidAt!))[0];
     const receiptIssue = receipts.some(receipt => receipt.businessDate === businessDate && receipt.tableName

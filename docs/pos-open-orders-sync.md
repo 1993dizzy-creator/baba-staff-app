@@ -300,6 +300,83 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 - 정식 LF 파일 SHA-256: `b88c2977c73177f7b86e5d07b309d20f1b496a75766ae3322b47f9296d4667e9`. 실제 검증 파일·Worktree·커밋 blob의 바이트 일치를 제출 시 확인한다.
 - RED 및 GREEN 측정 결과·CLI 로그는 `.local/open-orders-safety-fix/`에 보존한다. 코드 병합과 운영 적용은 별개다. 로컬 기술 검증 GO이며, 실제 운영 Migration 적용은 대상 preflight·영수증 증거 확인과 사용자의 별도 승인 후에만 진행한다.
 
+### 2026-11-14 POS 주문 합치기 대응 (운영 미적용, 이전 상태 설명보다 우선)
+
+**원인과 확인한 사실 (운영 DB 읽기 전용 SELECT)**
+
+- 22:12:22 마지막 정상 수집 이후 22:17부터 `orders_vanished_unconfirmed`가 연속 실패했다.
+- 22:12 스냅샷의 미완료 주문 BAR8(170,000)·BAR9(510,000)·BAR11(410,000)이 POS에서 BAR8 주문으로 합쳐졌다. 영수증 8885(OrderId=BAR8 주문, TableName "2")에 1,090,000으로 결제됐다.
+- 근거는 품목 단위 대조다. 영수증 품목 7종(수량 10)이 세 주문의 품목ID·단가·수량·금액 합과 정확히 일치했다.
+- POS는 합칠 때 상세 ID를 새로 발급하고 같은 품목을 한 줄로 합쳤다(예: 90,000 품목 2+1 → 수량 3). 따라서 상세 ID로는 대조할 수 없고 품목·단가 기준 집계로 대조한다.
+- 할인·프로모션은 0이었다. VAT 103,600은 영수증에서 따로 계산되어 `final_amount` 1,193,600이 됐다. 대조는 세전 품목 금액(`total_amount` = 품목 Amount 합)으로 한다.
+- BAR9·BAR11은 자기 OrderId 영수증이 없다. 운영 진단 로그(`[OPEN_ORDERS_SYNC_DIAGNOSTIC]`)는 확보하지 못했다. Vercel/Supabase CLI는 BABA 정책 훅이 "production-capable CLI"로 차단했고, Vercel 읽기 MCP가 없었다. 그래서 상세 재조회의 실제 reason/causeCode는 확정하지 않았다.
+
+**기존 코드의 실패 조건**
+
+- 이전 미완료 주문이 새 전체 목록에 없으면 상세 재조회를 한다.
+- 상세가 종료를 확인하지 못하면 영수증 대체 증거가 필요하다. 조건은 같은 OrderId의 유효 영수증이 정확히 1건이고, 결제완료이며, 같은 영업일 또는 다음 영업일인 것이다.
+- 합쳐진 주문은 자기 영수증이 영원히 생기지 않는다. 그래서 그 영업일이 끝날 때까지 매 회차 실패한다.
+- DB `commit_v1`도 같은 OrderId 영수증만 인정한다. 앱만 고쳐서는 통과할 수 없다.
+
+**새 합치기 증거 규칙** (앱 `proveMergedOrders`, DB `commit_v1`이 독립적으로 재검증)
+
+1. 대상 주문은 같은 지점·영업일의 이전 정상 스냅샷에 있던 미완료 주문이고, 새 전체 목록에 없어야 한다.
+   - 상세 재조회 결과가 "주문 없음/Id 없음/공급자 실패 응답"(`order_id_missing`, `detail_data_missing`, `provider_failure`, `provider_http_failure`)일 때만 합치기 후보가 된다.
+   - timeout·102·토큰 오류, 다른 Id·다른 영업일 응답은 기존대로 즉시 실패한다.
+2. 합친 결과의 남은 주문(target)은 이전 스냅샷에 있고, 새 목록에도 있어야 한다.
+   - target에는 유효 영수증이 정확히 1건이어야 하고, 그 영수증은 결제완료(3)이며 취소·무효(4/5)가 아니어야 한다. 같은 지점, 영업일 D 또는 D+1(03:00 이후 결제)이어야 한다.
+3. 합쳐진 주문에는 자기 OrderId로 된 활성 영수증이 없어야 한다. 하나라도 있으면 그 영수증 규칙이 우선한다.
+4. 메뉴 구성이 정확히 일치해야 한다. "target + 합쳐진 주문들"의 직전 품목을 품목ID·단가별 수량·금액으로 집계한 값이 영수증 품목 집계와 순서 무관하게 같아야 한다.
+   - 각 주문 헤더 금액 = 취소되지 않은 줄 합계, 주문 합계 = 영수증 `total_amount` = 영수증 품목 합계여야 한다.
+   - 금액만 같으면 거부한다.
+5. 할인·프로모션(헤더 DiscountAmount·PromotionAmount·PromotionItemsAmount, 줄 PromotionAmount·PromotionRate·DiscountRate·SAInvoicePromotionAmount)이 0이 아니면 증명하지 않는다.
+   - 옵션·추가·하위 줄(RefDetailType≠1, ParentID, Addition, 주문 줄 isOption)이 있어도 증명하지 않는다.
+   - 해당 합치기는 계속 미확인으로 보호된다.
+6. 모호하면 종료하지 않는다.
+   - 같은 영수증을 설명하는 조합이 2개 이상인 경우
+   - 한 주문이 두 영수증으로 설명되는 경우
+   - 비슷한 후보가 12개를 넘는 경우
+   - 이 중 어느 것이든 해당 그룹 전체가 미확인이다.
+7. 한 영수증은 한 그룹에만 쓴다. 단건 결제 증거와 합치기 증거에 동시에 쓰거나, target을 둘 이상 두는 것은 DB가 거부한다.
+
+**기록과 후속 수집**
+
+- 합쳐진 주문은 POS가 마지막으로 보낸 상태(예: Status 1/open)·품목·관측 시각을 그대로 둔다. Status 4로 위조하지 않는다.
+  - `closure_receipt_id`(남은 주문의 영수증), `closure_merged_into_order_id`, `closure_evidence_hash`(영수증 품목·target·그룹의 md5)를 함께 기록한다.
+  - run manifest의 `receiptClosures`에 `kind: merged_receipt`, `mergedIntoOrderId`, `carried`를 남긴다.
+- 다음 수집부터는 남은 주문이 Status 4가 되어 품목이 없다. 그래서 합쳐진 주문은 상세 재조회 없이 이어서 기록한다(carried).
+  - 매 회차 앱과 DB가 다시 확인하는 것: 영수증이 여전히 target의 단일 결제완료 영수증인지, 합쳐진 주문에 자기 영수증이 없는지, 영수증 내용 hash와 그룹 구성이 같은지.
+  - 영수증이 취소되거나 품목이 바뀌면 다시 미확인으로 보고 실패한다.
+- KPI 분류에서는 `merged`로 따로 센다. 진행 주문 금액에 다시 더하지 않는다. 매출은 남은 주문의 영수증 1건으로 한 번만 잡힌다.
+- `/tables`에서는 합쳐진 주문을 이력으로 본다. 원래 테이블을 occupied나 unknown으로 만들지 않는다.
+- read 계약 버전은 3이다. 앱은 버전 3 이상일 때만 합치기 증거를 보낸다. 버전 2 DB에는 기존 단건 영수증 증거만 보낸다.
+
+**산출물**
+
+- 정식 Migration: `supabase/migrations/20261114161500_pos_open_orders_merged_receipt_evidence.sql` (버전 20261114161500).
+  - Supabase CLI `migration new`는 BABA 정책 훅이 차단해 CLI와 같은 UTC 타임스탬프 형식으로 직접 생성했다.
+  - 기존 Migration은 수정하지 않았다. `read_v1`·`commit_v1`은 같은 시그니처로 교체했고, SECURITY DEFINER·`search_path=''`·권한을 유지했다. 새 private helper 3개는 API 역할 실행을 막았다.
+- 적용 전후 검사(읽기 전용): `docs/sql/pos-open-orders-merged-receipt-evidence-preflight.sql`, `docs/sql/pos-open-orders-merged-receipt-evidence-postflight.sql`.
+- 롤백: `docs/sql/pos-open-orders-merged-receipt-evidence-rollback.sql`.
+  - `read_v1`·`commit_v1`을 20261110170329 본문 그대로 복원하고, 새 객체만 제거한다.
+  - 이미 합치기로 닫힌 스냅샷 행의 증거는 지운다. 그 영업일은 다시 기존처럼 미확인으로 보호된다.
+- 테스트: `tests/pos-open-orders-merge-db.test.mjs` (PGlite에서 실제 Migration 적용).
+
+**운영 적용 시 위험과 절차 (별도 승인 사항)**
+
+- 순서:
+  1. 읽기 전용 preflight를 전부 통과한다.
+  2. Cron 사이(수집 중 lease 없음)에 Migration을 적용한다.
+  3. postflight를 전부 통과한다.
+  4. 앱을 배포한다.
+  5. 첫 정상 수집의 `receiptClosures`와 KPI·`/tables`를 대조한다.
+- 앱보다 Migration이 먼저 적용되어도 안전하다. 기존 앱은 계약 버전 2 이상에서 단건 증거만 보내며 합치기 필드를 보내지 않는다.
+- Migration 없이 앱만 배포돼도 안전하다. 계약 2에서는 합치기 증거를 보내지 않는다.
+- 위험 1: 실제 상세 재조회의 실패 종류가 위 허용 목록 밖(예: timeout 반복)이면 이번 경로가 동작하지 않는다. 운영 진단 로그로 reason/causeCode를 확인해야 한다.
+- 위험 2: 할인·옵션·합치기 후 추가 주문이 섞인 합치기는 계속 미확인으로 남는다. 이는 의도된 보호다.
+- 위험 3: 동시성 검증은 PGlite 단일 연결(lease·소유권·writer fence·원자적 거부)로만 했다. 영수증 SHARE 잠금은 기존 단건 경로와 같은 구문을 재사용했지만, native PostgreSQL 독립 연결 검증은 이번 환경에 PostgreSQL이 없어 수행하지 않았다.
+- 2026-11-10 장애(22:17 `orders_invalid_row` 후 반복)는 같은 오류 코드 사례일 뿐이다. 주문 합치기가 원인이었다고 가정하지 않는다(당시 스냅샷이 남아 있지 않다).
+
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.
   - `claim`: advisory lock과 scope별 활성 run 1개 제한으로 단일 실행을 보장한다. lease는 3분이다.

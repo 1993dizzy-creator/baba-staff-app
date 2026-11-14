@@ -355,6 +355,8 @@ export type CollectedOrder = OrderSummary & {
   /** Independent DB receipt evidence; status/ID remain last observed provider facts. */
   closureReceiptId?: number | null;
   closureConfirmedAt?: string | null;
+  /** Set only with closureReceiptId: this order was merged in POS into that surviving order. */
+  closureMergedIntoOrderId?: string | null;
   providerObservedAt?: string | null;
 };
 
@@ -437,6 +439,8 @@ export type ClassifiedOrders = {
   open: (CollectedOrder & { lines: OrderLine[] })[];
   uncertain: { orderId: string; orderNo: string | null; reason: UncertainReason; amount: number }[];
   converted: number;
+  /** Merged in POS into another order whose single paid receipt contains it (already in paid sales once). */
+  merged: number;
   canceled: number;
   receiptPending: number;
   receiptCanceled: number;
@@ -463,7 +467,7 @@ export function classifyOrdersForBusinessDate(
     receiptSeen.add(receipt.receiptId);
     links.set(orderId, [...(links.get(orderId) ?? []), receipt]);
   }
-  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, canceled: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
+  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, merged: 0, canceled: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
   for (const order of orders) {
     if (order.businessDate !== businessDate) {
       result.otherBusinessDate++;
@@ -488,6 +492,13 @@ export function classifyOrdersForBusinessDate(
     // A canceled receipt re-issued as a paid one (seen in production: status 4 + 3 on one
     // OrderId) is one sale. Only non-canceled receipts decide; two of those stay uncertain.
     const active = linked.filter((receipt) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+    if (order.closureReceiptId && order.closureMergedIntoOrderId) {
+      // Never counted as open again; the surviving order's receipt is the one sale.
+      const target = links.get(toId(order.closureMergedIntoOrderId))?.filter(activeReceipt) ?? [];
+      if (!active.length && target.length === 1 && target[0].receiptId === order.closureReceiptId && target[0].paymentStatus === 3) result.merged++;
+      else uncertain("closure_evidence_changed");
+      continue;
+    }
     if (active.length > 1) uncertain("multiple_receipts");
     else if (active.length === 1) {
       if (active[0].paymentStatus === 3) result.converted++;
@@ -508,10 +519,150 @@ export function classifyOrdersForBusinessDate(
   return result;
 }
 
-/** Orders that were not finished in the previous snapshot (open or unverified status). */
-export function unfinishedOrderIds(previous: { orderId: string; statusClass: OrderStatusClass; status?: number | null }[]) {
+/**
+ * Orders that were not finished in the previous snapshot (open or unverified status).
+ * A verified merge closure is carried forward separately (its receipt is revalidated
+ * every run) instead of re-reading a detail the POS no longer has.
+ */
+export function unfinishedOrderIds(previous: { orderId: string; statusClass: OrderStatusClass; status?: number | null;
+  closureMergedIntoOrderId?: string | null }[]) {
   return previous.filter((order) => order.statusClass !== "paid_candidate" && order.statusClass !== "canceled"
-    && order.status !== ORDER_STATUS_CANCELED).map((order) => toId(order.orderId)).filter(Boolean);
+    && order.status !== ORDER_STATUS_CANCELED && !order.closureMergedIntoOrderId).map((order) => toId(order.orderId)).filter(Boolean);
+}
+
+/** One CUKCUK receipt with the fields a merge proof needs (no customer data). */
+export type MergeReceiptEvidence = ReceiptLink & {
+  branchId: string | null;
+  totalAmount: number | null;
+  discountAmount: number | null;
+  /** Raw header DiscountAmount / PromotionAmount / PromotionItemsAmount. */
+  headerDiscounts: unknown[];
+  /** Raw SAInvoiceDetails. */
+  details: unknown;
+};
+
+type MenuEntry = { item: string; price: number; quantity: number; amount: number };
+const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
+const isZeroOrAbsent = (value: unknown) => value === undefined || value === null || value === 0;
+const blank = (value: unknown) => value === undefined || value === null || (typeof value === "string" && !value.trim());
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function addMenu(menu: Map<string, MenuEntry>, item: string, price: number, quantity: number, amount: number) {
+  const key = `${item}|${round(price, 2)}`;
+  const entry = menu.get(key) ?? { item, price: round(price, 2), quantity: 0, amount: 0 };
+  entry.quantity = round(entry.quantity + quantity, 4);
+  entry.amount = round(entry.amount + amount, 2);
+  menu.set(key, entry);
+}
+
+/**
+ * Menu of preserved snapshot orders by item and unit price, or null when any order lacks
+ * lines, its header differs from its lines, or a non-canceled line is an option/addition/
+ * child or malformed. Mirrors the DB merge_order_menu_v1 helper.
+ */
+export function mergeOrderMenu(orders: CollectedOrder[]) {
+  const menu = new Map<string, MenuEntry>();
+  for (const order of orders) {
+    if (!Array.isArray(order.lines) || !finite(order.totalAmount)) return null;
+    let sum = 0;
+    for (const line of order.lines) {
+      if (line.isCanceled === true) continue;
+      if (line.isOption || line.isOrphanOption || !blank(line.additionId) || !blank(line.parentDetailId) || blank(line.itemId)
+        || !finite(line.quantity) || !finite(line.price) || !finite(line.amount) || line.quantity <= 0 || line.price < 0
+        || Math.abs(line.amount - line.quantity * line.price) > 0.005) return null;
+      addMenu(menu, String(line.itemId).trim().toLowerCase(), line.price, line.quantity, line.amount);
+      sum += line.amount;
+    }
+    if (Math.abs(round(sum, 2) - order.totalAmount) > 0.005) return null;
+  }
+  return orders.length ? menu : null;
+}
+
+/** Plain item-only receipt menu, or null. Mirrors the DB merge_receipt_menu_v1 helper. */
+export function mergeReceiptMenu(details: unknown) {
+  if (!Array.isArray(details) || !details.length) return null;
+  const menu = new Map<string, MenuEntry>();
+  for (const line of details) {
+    if (!isObject(line) || line.RefDetailType !== 1 || !blank(line.ParentID) || !blank(line.InventoryItemAdditionID) || blank(line.ItemID)
+      || typeof line.ItemID !== "string"
+      || ![line.PromotionAmount, line.PromotionRate, line.DiscountRate, line.SAInvoicePromotionAmount].every(isZeroOrAbsent)
+      || !finite(line.Quantity) || !finite(line.UnitPrice) || !finite(line.Amount) || line.Quantity <= 0 || line.UnitPrice < 0
+      || Math.abs(line.Amount - line.Quantity * line.UnitPrice) > 0.005) return null;
+    addMenu(menu, line.ItemID.trim().toLowerCase(), line.UnitPrice, line.Quantity, line.Amount);
+  }
+  return menu;
+}
+
+const activeReceipt = (receipt: ReceiptLink) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5);
+
+/**
+ * CUKCUK order merge: merged orders vanish from the list and never get their own receipt.
+ * A vanished order is closed only when exactly one combination of vanished orders plus one
+ * surviving order (previous snapshot, still listed) equals, item by item, the single paid
+ * receipt of that surviving order. Amount-only matches, discounts, options, unpaid or
+ * duplicated receipts, other days/branches and any ambiguity stay unconfirmed.
+ */
+export function proveMergedOrders(input: {
+  businessDate: string; branchId: string; candidates: CollectedOrder[]; previousOrders: CollectedOrder[];
+  listedIds: Set<string>; receipts: MergeReceiptEvidence[];
+}) {
+  const days = [input.businessDate, addStoreDays(input.businessDate, 1)];
+  const candidateIds = new Set(input.candidates.map((order) => toId(order.orderId)));
+  const ownReceipt = new Set(input.receipts.filter(activeReceipt).map((receipt) => toId(receipt.orderId)));
+  const pool = input.candidates.filter((order) => !ownReceipt.has(toId(order.orderId)) && order.businessDate === input.businessDate);
+  const groups: { receiptId: number; targetOrderId: string; members: string[] }[] = [];
+  const ambiguous = new Set<string>();
+  for (const receipt of input.receipts) {
+    const targetId = toId(receipt.orderId);
+    const target = input.previousOrders.find((order) => toId(order.orderId) === targetId);
+    if (!target || candidateIds.has(targetId) || !input.listedIds.has(targetId) || target.businessDate !== input.businessDate
+      || receipt.paymentStatus !== 3 || receipt.isCanceled === true || !days.includes(receipt.businessDate ?? "")
+      || receipt.branchId !== input.branchId || !isZeroOrAbsent(receipt.discountAmount) || !receipt.headerDiscounts.every(isZeroOrAbsent)
+      || singlePaidOrderReceipt(targetId, input.businessDate, input.receipts)?.receiptId !== receipt.receiptId) continue;
+    const receiptMenu = mergeReceiptMenu(receipt.details);
+    const targetMenu = mergeOrderMenu([target]);
+    if (!receiptMenu || !targetMenu || !finite(receipt.totalAmount)
+      || Math.abs([...receiptMenu.values()].reduce((sum, entry) => sum + entry.amount, 0) - receipt.totalAmount) > 0.005) continue;
+    // What the surviving order alone does not explain; nothing may be left negative.
+    const needed = new Map(receiptMenu);
+    let explainable = true;
+    for (const [key, entry] of targetMenu) {
+      const left = needed.get(key);
+      if (!left || left.quantity < entry.quantity || left.amount < entry.amount) { explainable = false; break; }
+      const rest = { ...left, quantity: round(left.quantity - entry.quantity, 4), amount: round(left.amount - entry.amount, 2) };
+      if (rest.quantity === 0 && rest.amount === 0) needed.delete(key); else needed.set(key, rest);
+    }
+    if (!explainable || !needed.size) continue;
+    const fits = pool.map((order) => ({ order, menu: mergeOrderMenu([order]) })).filter((entry) => entry.menu
+      && [...entry.menu].every(([key, part]) => { const left = needed.get(key); return left && left.quantity >= part.quantity && left.amount >= part.amount; }));
+    if (fits.length > 12) { // Too many look-alikes to rule out ambiguity: stay unconfirmed.
+      for (const entry of fits) ambiguous.add(toId(entry.order.orderId));
+      continue;
+    }
+    const solutions: CollectedOrder[][] = [];
+    for (let mask = 1; mask < 1 << fits.length; mask++) {
+      const group = fits.filter((_, index) => mask & (1 << index)).map((entry) => entry.order);
+      const menu = mergeOrderMenu([target, ...group]);
+      if (!menu || menu.size !== receiptMenu.size) continue;
+      if (![...receiptMenu].every(([key, entry]) => { const own = menu.get(key); return own && own.quantity === entry.quantity && own.amount === entry.amount; })) continue;
+      if (Math.abs([target, ...group].reduce((sum, order) => sum + order.totalAmount, 0) - receipt.totalAmount) > 0.005) continue;
+      solutions.push(group);
+    }
+    if (solutions.length > 1) { // Several explanations: never pick one.
+      for (const group of solutions) for (const order of group) ambiguous.add(toId(order.orderId));
+    } else if (solutions.length === 1) {
+      groups.push({ receiptId: receipt.receiptId, targetOrderId: targetId, members: solutions[0].map((order) => toId(order.orderId)) });
+    }
+  }
+  // An order explained by two receipts, or by an ambiguous one, voids its whole group.
+  const uses = new Map<string, number>();
+  for (const group of groups) for (const id of group.members) uses.set(id, (uses.get(id) ?? 0) + 1);
+  const proven = new Map<string, { receiptId: number; targetOrderId: string }>();
+  for (const group of groups) {
+    if (group.members.some((id) => ambiguous.has(id) || uses.get(id) !== 1)) continue;
+    for (const id of group.members) proven.set(id, { receiptId: group.receiptId, targetOrderId: group.targetOrderId });
+  }
+  return proven;
 }
 
 export const MAX_VANISHED_CONFIRMATIONS = 20;
@@ -535,7 +686,10 @@ export async function collectOpenOrderSnapshot(
   transport: OrderTransport,
   input: { branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number;
     previousUnfinishedIds?: string[]; previousOrders?: CollectedOrder[];
-    loadReceiptEvidence?: () => Promise<ReceiptLink[]>; deadlineAt?: number; now?: () => number }
+    loadReceiptEvidence?: () => Promise<ReceiptLink[]>;
+    /** Only with a DB that revalidates merge proofs (read contract >= 3). */
+    loadMergeReceiptEvidence?: () => Promise<MergeReceiptEvidence[]>;
+    deadlineAt?: number; now?: () => number }
 ) {
   const windowStart = Date.parse(input.windowFrom);
   if (!Number.isFinite(windowStart)) throw new OpenOrderSyncError("orders_page_bound", "window");
@@ -561,11 +715,42 @@ export async function collectOpenOrderSnapshot(
   }
 
   const listedIds = new Set(selected.map((order) => order.orderId));
-  const vanished = [...new Set(input.previousUnfinishedIds ?? [])].map(toId).filter((id) => id && !listedIds.has(id));
+  let receiptEvidence: Promise<ReceiptLink[]> | undefined;
+  const loadLinks = async () => {
+    assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "receipt_evidence");
+    receiptEvidence ??= input.loadReceiptEvidence!();
+    const links = await receiptEvidence;
+    assertWithinDeadline(state, 0, "receipt_evidence");
+    return links;
+  };
+  // A verified merge closure stays closed while its receipt is still the single paid
+  // receipt of the surviving order and the merged order has none of its own (the DB
+  // rechecks the receipt is unchanged). Otherwise it is rechecked like any vanished order.
+  const recheck: string[] = [];
+  for (const previous of input.previousOrders ?? []) {
+    const id = toId(previous.orderId);
+    if (!previous.closureMergedIntoOrderId || !previous.closureReceiptId || previous.businessDate !== input.businessDate || listedIds.has(id)) continue;
+    let carried = false;
+    if (input.loadMergeReceiptEvidence && input.loadReceiptEvidence) {
+      try {
+        const links = await loadLinks();
+        carried = listedIds.has(toId(previous.closureMergedIntoOrderId))
+          && singlePaidOrderReceipt(previous.closureMergedIntoOrderId, input.businessDate, links)?.receiptId === previous.closureReceiptId
+          && !links.some((receipt) => toId(receipt.orderId) === id && activeReceipt(receipt));
+      } catch (error) {
+        if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
+      }
+    }
+    if (carried) orders.push({ ...previous, raw: {} });
+    else recheck.push(id);
+  }
+  const vanished = [...new Set([...(input.previousUnfinishedIds ?? []), ...recheck])].map(toId).filter((id) => id && !listedIds.has(id));
   if (vanished.length > MAX_VANISHED_CONFIRMATIONS) throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined,
     { stage: "vanished_limit", reason: "vanished_limit", vanishedCount: vanished.length, confirmedCount: 0 });
   let confirmedCount = 0;
-  let receiptEvidence: Promise<ReceiptLink[]> | undefined;
+  // Vanished orders whose detail cannot confirm an ending and that have no paid receipt of
+  // their own: they may still be proven merged once all vanished orders are known.
+  const mergeCandidates: { previous: CollectedOrder; context: OpenOrderDiagnosticContext }[] = [];
   for (const orderId of vanished) {
     let confirmed: CollectedOrder;
     try {
@@ -597,7 +782,7 @@ export async function collectOpenOrderSnapshot(
           const receipt = singlePaidOrderReceipt(orderId, input.businessDate, await receiptEvidence);
           assertWithinDeadline(state, 0, "receipt_evidence");
           if (receipt) {
-            orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId });
+            orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId, closureMergedIntoOrderId: null });
             confirmedCount++;
             continue;
           }
@@ -611,6 +796,12 @@ export async function collectOpenOrderSnapshot(
         ...(error instanceof OpenOrderSyncError ? {} : { reason: "unexpected_error" as const }),
         causeCode: error instanceof OpenOrderSyncError ? error.code : undefined };
       if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw withDiagnostic(error, context);
+      // Only a definitive "no such order" style answer may be explained by a merge; timeouts,
+      // busy/credential errors and wrong identity/day responses stay hard failures.
+      const mergeEligible = Boolean(input.loadMergeReceiptEvidence) && error instanceof OpenOrderSyncError
+        && (missingIdentity || error.code === "provider_failure" || error.code === "provider_http_failure")
+        && previous?.businessDate === input.businessDate && Array.isArray(previous.lines);
+      if (mergeEligible && previous) { mergeCandidates.push({ previous, context }); continue; }
       throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, context);
     }
     if (confirmed.orderId !== orderId || confirmed.businessDate !== input.businessDate) {
@@ -620,6 +811,26 @@ export async function collectOpenOrderSnapshot(
     }
     orders.push(confirmed);
     confirmedCount++;
+  }
+  if (mergeCandidates.length) {
+    let proven = new Map<string, { receiptId: number; targetOrderId: string }>();
+    try {
+      assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "merge_evidence");
+      const receipts = await input.loadMergeReceiptEvidence!();
+      assertWithinDeadline(state, 0, "merge_evidence");
+      proven = proveMergedOrders({ businessDate: input.businessDate, branchId: input.branchId,
+        candidates: mergeCandidates.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts });
+    } catch (error) {
+      if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
+      // An unavailable receipt read is not evidence. Keep the original vanished failure.
+    }
+    for (const candidate of mergeCandidates) {
+      const proof = proven.get(toId(candidate.previous.orderId));
+      if (!proof) throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, { ...candidate.context, confirmedCount });
+      // Preserved provider facts plus independent evidence; never a synthesized Status 4.
+      orders.push({ ...candidate.previous, raw: {}, closureReceiptId: proof.receiptId, closureMergedIntoOrderId: proof.targetOrderId });
+      confirmedCount++;
+    }
   }
   return {
     orders,
@@ -679,7 +890,8 @@ export type OpenOrderRpc = (name: string, args: Record<string, unknown>) => Prom
 export async function runOpenOrderSync(
   deps: { rpc: OpenOrderRpc; transport: OrderTransport; uuid: () => string; now?: () => number;
     onDiagnostic?: (diagnostic: OpenOrderSyncDiagnostic) => void;
-    loadReceiptEvidence?: (businessDate: string) => Promise<ReceiptLink[]> },
+    loadReceiptEvidence?: (businessDate: string) => Promise<ReceiptLink[]>;
+    loadMergeReceiptEvidence?: (businessDate: string) => Promise<MergeReceiptEvidence[]> },
   input: { scope: string; branchId: string; businessDate: string; windowFrom: string; cutoff: string; limit?: number; retryDelayMs?: number }
 ): Promise<Record<string, unknown>> {
   const now = deps.now ?? Date.now;
@@ -695,14 +907,18 @@ export async function runOpenOrderSync(
     // The previous snapshot of this date decides which orders must still be accounted for.
     const previous = await deps.rpc(OPEN_ORDERS_RPC.read, { p_scope: input.scope, p_business_date: input.businessDate });
     const previousOrders = Array.isArray(previous?.orders) ? (previous.orders as CollectedOrder[]) : [];
+    const contract = previous?.recoveryContractVersion;
     assertWithinDeadline({ relogins: 0, maxRelogins: 0, deadlineAt, now }, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "login");
     await deps.transport.login();
     const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, {
       ...input, previousOrders, previousUnfinishedIds: unfinishedOrderIds(previousOrders), deadlineAt, now,
       // Old commit RPCs ignore unknown JSON fields: never send receipt fallback to
       // an unupgraded DB that cannot preserve/validate its independent evidence.
-      loadReceiptEvidence: previous.recoveryContractVersion === 2 && deps.loadReceiptEvidence
+      // Contract 2 validates single-order receipts; 3 also revalidates merge proofs.
+      loadReceiptEvidence: typeof contract === "number" && contract >= 2 && deps.loadReceiptEvidence
         ? () => deps.loadReceiptEvidence!(input.businessDate) : undefined,
+      loadMergeReceiptEvidence: typeof contract === "number" && contract >= 3 && deps.loadReceiptEvidence && deps.loadMergeReceiptEvidence
+        ? () => deps.loadMergeReceiptEvidence!(input.businessDate) : undefined,
     });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
@@ -710,6 +926,7 @@ export async function runOpenOrderSync(
       orderDate: order.orderDate, businessDate: order.businessDate, totalAmount: order.totalAmount,
       tableName: order.tableName, lines: order.lines,
       ...(order.closureReceiptId ? { closureReceiptId: order.closureReceiptId } : {}),
+      ...(order.closureReceiptId && order.closureMergedIntoOrderId ? { closureMergedIntoOrderId: order.closureMergedIntoOrderId } : {}),
     }));
     return await deps.rpc(OPEN_ORDERS_RPC.commit, {
       p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
