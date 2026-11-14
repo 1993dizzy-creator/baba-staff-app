@@ -1,5 +1,7 @@
 # BABA 예약 관리 Phase 1 — 로컬 기반 및 RPC 계약
 
+이 문서는 Phase 1 완료 시점의 계약·검증 기록이다. 후속 UI·API 구현 현황은 [Phase 2 로컬 보고서](reservation-phase2-local-ui-api.md)를 따른다.
+
 상태: Codex에서 인수·핵심 결함 보완. Phase 2 UI 미구현. Main 병합·Push·배포·운영 DB 조회/쓰기·Migration 적용 없음.
 
 ## 인수와 Migration 판단
