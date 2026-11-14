@@ -595,7 +595,7 @@ export async function PATCH(req: Request) {
       || (baseUsesOverride && comparisonBaseDateOverride !== requestedBaseDateOverride)
       || hireMonthChanged;
     if (hireMonthChanged && body.levelPolicyEdit !== true) {
-      return NextResponse.json({ ok: false, code: "LEVEL_BASE_MONTH_REVIEW_REQUIRED", error: lang === "vi" ? "Vui lòng kiểm tra tháng mốc trong thiết lập cấp trước khi lưu ngày vào làm." : "입사일 변경으로 기준월이 달라집니다. 레벨 설정에서 확인 후 편집에 반영해주세요." }, { status: 400 });
+      return NextResponse.json({ ok: false, code: "LEVEL_BASE_MONTH_REVIEW_REQUIRED", error: lang === "vi" ? "Ngày vào làm mới làm thay đổi tháng mốc. Kiểm tra tháng mốc trong thiết lập cấp, bấm 'Áp dụng', rồi bấm Lưu ở thông tin nhân viên để lưu chính thức." : "입사일 변경으로 기준월이 달라집니다. 레벨 설정에서 기준월을 확인한 후 '적용'을 누르고, 직원 상세에서 최종 저장해주세요." }, { status: 400 });
     }
     const salaryRaiseEnabled = levelProgramEnabled && (settingsChanged || body.levelPolicyEdit === true)
       ? true : comparisonSalaryRaiseEnabled;
