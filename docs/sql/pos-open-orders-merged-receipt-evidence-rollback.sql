@@ -1,13 +1,29 @@
 -- ROLLBACK for 20261114161500_pos_open_orders_merged_receipt_evidence.sql.
--- Run only with separate explicit Owner approval, in one transaction, after pausing the
--- open-orders Cron (POS_OPEN_ORDERS_SYNC_ENABLED != "true"). App code from this change
--- stops sending merge evidence by itself once read reports contract 2 again.
--- Restores read_v1/commit_v1 exactly as in 20261110170329 (bodies copied verbatim) and
--- removes only objects added by the merge migration. No receipt/ledger/inventory DML.
+-- Run only with separate explicit Owner approval, as ONE transaction (this file has its
+-- own begin/commit), after setting POS_OPEN_ORDERS_SYNC_ENABLED to anything but "true"
+-- and waiting until no collecting run holds a live lease (checked again below).
+-- App code from this change stops sending merge evidence by itself once read reports
+-- contract 2 again.
+-- Restores read_v1/commit_v1 exactly as in 20261110170329 (bodies copied verbatim; their
+-- md5(prosrc) equals the production baseline pinned in the preflight) and removes only
+-- objects added by the merge migration. No receipt/ledger/inventory DML.
 -- Effect on rows already closed by a merge proof: their closure is cleared, so for that
 -- business date the old guard reports them as unconfirmed again (pre-fix behavior).
+-- Migration history is NOT changed here: supabase_migrations.schema_migrations keeps
+-- 20261114161500 until a separately approved `supabase migration repair --status reverted
+-- 20261114161500` (or removing the file). Re-run the preflight afterwards: A2 must fail
+-- until that repair, every other row must pass.
 begin;
 set local lock_timeout = '5s';
+
+-- Block new claims/commits for this transaction and refuse while a run is collecting.
+lock table pos_open_orders_private.runs in exclusive mode;
+do $$
+begin
+  if exists (select 1 from pos_open_orders_private.runs where status = 'collecting' and lease_until > clock_timestamp()) then
+    raise exception 'open_orders_rollback_blocked_active_run';
+  end if;
+end $$;
 
 create or replace function pos_open_orders_private.read_v1(p_scope text, p_business_date date)
 returns jsonb language sql stable security definer set search_path = '' as $$

@@ -10,6 +10,7 @@ import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 import { calculateStoreBusinessDate, addStoreDays } from '../lib/store-settings/business-time-core.ts';
 import { buildTableOverview } from '../lib/sales/table-overview.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
+import { PREREQUISITES } from './helpers/pos-open-orders-native-fixture.mjs';
 
 const dir = 'supabase/' + 'migrations/';
 const base = readFileSync(dir + '20261109210000_pos_open_orders_v1.sql', 'utf8');
@@ -43,13 +44,18 @@ const mergedDetails = [['item-a', 2, 170000], ['item-b', 3, 90000], ['item-c', 1
   ['item-f', 1, 60000], ['item-g', 1, 180000]].map(([ItemID, Quantity, UnitPrice], i) => ({ RefDetailType: 1, ItemID, Quantity, UnitPrice,
   Amount: Quantity * UnitPrice, OrderDetailID: `reissued-${i}`, PromotionAmount: 0, PromotionRate: 0, DiscountRate: 0, SAInvoicePromotionAmount: 0 }));
 
+const history = new Map([[receiptEvidence, ['20261110170329', 'pos_open_orders_vanished_receipt_evidence']],
+  [merged, ['20261114161500', 'pos_open_orders_merged_receipt_evidence']]]);
+// Production-like prerequisites (receipt column types/nullability, roles, migration history).
 async function database(migrations = [receiptEvidence, merged]) {
   const db = new PGlite();
-  await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
-    create table public.pos_sales_receipts(id bigint primary key, source text, branch_id text, business_date date, payment_status integer,
-      is_canceled boolean, total_amount numeric, discount_amount numeric, raw_json jsonb);`);
+  await db.exec(PREREQUISITES);
   await db.exec(base);
-  for (const sql of migrations) await db.exec(sql);
+  await db.query("insert into supabase_migrations.schema_migrations(version, name) values ('20261109210000', 'pos_open_orders_v1')");
+  for (const sql of migrations) {
+    await db.exec(sql);
+    await db.query('insert into supabase_migrations.schema_migrations(version, name) values ($1, $2)', history.get(sql));
+  }
   return db;
 }
 async function rpc(db, name, args) {
@@ -369,8 +375,9 @@ test('preflight -> apply -> postflight all pass; documented rollback restores co
   try {
     assert.deepEqual(await checks(db, 'preflight'), []);
     await db.exec(merged);
+    await db.query("insert into supabase_migrations.schema_migrations(version, name) values ('20261114161500', 'pos_open_orders_merged_receipt_evidence')");
     assert.deepEqual(await checks(db, 'postflight'), []);
-    assert.ok((await checks(db, 'preflight')).includes('merge columns are not present yet'));
+    assert.ok((await checks(db, 'preflight')).some(name => name.startsWith('A4 ')));
     // A merge closure exists when rolling back: it is cleared, provider facts stay.
     await commit(db, [target, memberA, memberB, other]);
     await receipt(db);
@@ -380,6 +387,9 @@ test('preflight -> apply -> postflight all pass; documented rollback restores co
     assert.equal(after.recoveryContractVersion, 2);
     assert.deepEqual([byId(after, 'order-a').closureReceiptId, byId(after, 'order-a').status, 'closureMergedIntoOrderId' in byId(after, 'order-a')], [null, 1, false]);
     assert.equal((await db.query("select count(*)::int n from pg_proc where proname like 'merge\_%'")).rows[0].n, 0);
+    // The history row stays until a separately approved `migration repair`; nothing else differs.
+    assert.deepEqual((await checks(db, 'preflight')).map(name => name.slice(0, 3)), ['A2 ']);
+    await db.query("delete from supabase_migrations.schema_migrations where version = '20261114161500'");
     assert.deepEqual(await checks(db, 'preflight'), []);
     // Back to the pre-fix guard for merged orders (never a silent pass) ...
     assert.equal((await run(db)).code, 'orders_vanished_unconfirmed');
