@@ -16,16 +16,18 @@ const make=async (client,extra={}) => (await rawRpc(client,'reservation_create_v
 
 test('real PostgreSQL concurrency: confirm, edit, table exclusion/rollback, Inbox create and request-key idempotency', {timeout:60000}, async t => {
   const platform=process.platform==='win32'?'windows':process.platform;
-  const bin=path.resolve(`.local/pg-tools/node_modules/@embedded-postgres/${platform}-${process.arch}/native/bin`);
+  const bin=path.resolve(process.env.BABA_RESERVATION_PG_BIN || `.local/pg-tools/node_modules/@embedded-postgres/${platform}-${process.arch}/native/bin`);
   const exe=name=>path.join(bin,name+(process.platform==='win32'?'.exe':''));
   assert.ok(existsSync(exe('initdb')), 'Install the pinned local-only test binaries using the command at the top of this file');
   const root=path.resolve('.local/reservation-phase1');mkdirSync(root,{recursive:true});
   const dir=mkdtempSync(path.join(root,'pg-'));const logs=[];
-  const init=execFileSync(exe('initdb'),['-D',dir,'--auth=trust','--username=baba_test','--locale=C','--encoding=UTF8'],{windowsHide:true,encoding:'utf8'});
+  const env=Object.fromEntries(['PATH','SystemRoot','WINDIR','COMSPEC','PATHEXT'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
+  Object.assign(env,{TEMP:dir,TMP:dir,HOME:dir,USERPROFILE:dir});
+  const init=execFileSync(exe('initdb'),['-D',dir,'--auth=trust','--username=baba_test','--locale=C','--encoding=UTF8'],{env,windowsHide:true,encoding:'utf8'});
   logs.push(init);
   const probe=net.createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));
   const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
-  const child=spawn(exe('postgres'),['-D',dir,'-h','127.0.0.1','-p',String(port)],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+  const child=spawn(exe('postgres'),['-D',dir,'-h','127.0.0.1','-p',String(port)],{env,windowsHide:true,stdio:['ignore','pipe','pipe']});
   child.stdout.on('data',b=>logs.push(b.toString()));child.stderr.on('data',b=>logs.push(b.toString()));
   const config={host:'127.0.0.1',port,user:'baba_test',database:'postgres',connectionTimeoutMillis:500,statement_timeout:8000};
   const clients=[];let admin;
@@ -127,7 +129,7 @@ test('real PostgreSQL concurrency: confirm, edit, table exclusion/rollback, Inbo
   } finally {
     for(const client of clients.reverse()) await client.end().catch(()=>{});
     if(child.exitCode===null) {
-      execFileSync(exe('pg_ctl'),['-D',dir,'stop','-m','fast','-w'],{windowsHide:true,encoding:'utf8',timeout:10000});
+      execFileSync(exe('pg_ctl'),['-D',dir,'stop','-m','fast','-w'],{env,windowsHide:true,encoding:'utf8',timeout:10000});
     }
     writeFileSync(path.join(dir,'test-server.log'),logs.join('\n'));
   }
