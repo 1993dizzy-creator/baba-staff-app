@@ -1,4 +1,5 @@
--- Rollback for migrations/20261114120000_create_reservation_inbox_foundation.sql.
+-- Rollback for migrations/20261114120000_create_reservation_inbox_foundation.sql
+-- and optional 20261114120001_reservation_phase1_hardening.sql (empty database only).
 -- NOT a migration. Run manually, only with separate owner approval, and only after:
 --   1. ZALO_BOT_WEBHOOK_MODE is unset (or "observe") in Vercel and that deployment is live,
 --      so the webhook no longer calls public.reservation_inbox_ingest_v1;
@@ -25,7 +26,8 @@ drop function public.reservation_inbox_reprocess_v1(bigint, bigint, jsonb);
 drop function public.reservation_create_v1(bigint, jsonb);
 drop function public.reservation_update_v1(bigint, bigint, integer, jsonb);
 drop function public.reservation_transition_v1(bigint, bigint, integer, text, text);
-drop function public.reservation_link_table_v1(bigint, bigint, integer, text);
+drop function if exists public.reservation_link_table_v1(bigint, bigint, integer, text);
+drop function if exists public.reservation_link_table_v1(bigint, bigint, integer, uuid);
 drop function public.reservation_release_table_v1(bigint, bigint, integer, bigint, text);
 drop function public.reservation_list_v1(bigint, date, date, text[]);
 drop function public.reservation_get_v1(bigint, bigint, boolean);
