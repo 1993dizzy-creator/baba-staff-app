@@ -22,36 +22,28 @@ test("5차 B-3: attendance-OFF block codes are recognised only from the exact se
   assert.match(route, /code: "ATTENDANCE_OPEN_RECORD_EXISTS",/);
 });
 
-test("5차 B-3: the page shows the localized message, keeps the detail and draft, and never reports success", () => {
-  const save = page.slice(page.indexOf("if (!res.ok || !result.ok || !result.user) {"), page.indexOf("setUsers((current) =>\n        current.map((user) => (user.id === original.id"));
-  assert.match(save, /if \(result\.code === "ATTENDANCE_OPEN_RECORD_EXISTS"\) \{[\s\S]*?window\.alert\(result\.error \|\| text\.saveFailed\);\n\s+return false;/);
-  assert.match(save, /const blocked = attendanceDisableBlockCode\(result\);\n\s+if \(blocked\) \{\n\s+window\.alert\(blocked === "ATTENDANCE_BONUS_ELIGIBLE_BLOCKS_ATTENDANCE_TRACKING_DISABLE" \? text\.attendanceDisableBlockedBonus : text\.attendanceDisableBlockedMeal\);\n\s+return false;\n\s+\}/);
-  assert.doesNotMatch(save, /saveSuccess/);
-  // the save button still blocks duplicate requests
-  assert.match(page, /if \(savePending\.current \|\| isSaving \|\| levelModalOpen\) return;\n\s+savePending\.current = true;/);
-  const { ko, vi } = adminUsersText;
-  assert.equal(ko.attendanceDisableBlockedBonus, "개근 보너스 대상자로 설정되어 있어 근태 기록을 중지할 수 없습니다. 먼저 복리후생의 개근 보너스 설정에서 대상 자격과 적용월을 확인하고 해제한 후 다시 저장해 주세요.");
-  assert.equal(vi.attendanceDisableBlockedBonus, "Không thể tắt chấm công vì nhân viên vẫn đang thuộc diện thưởng chuyên cần. Vui lòng kiểm tra và ngừng áp dụng thưởng chuyên cần trong mục Phúc lợi, đồng thời kiểm tra tháng hiệu lực trước khi lưu lại.");
-  for (const lang of [ko, vi]) for (const message of [lang.attendanceDisableBlockedBonus, lang.attendanceDisableBlockedMeal]) {
-    assert.doesNotMatch(message, /Failed|ATTENDANCE_|MEAL_ALLOWANCE_/);
-  }
+test("detail saves preserve attendance: no independent switch, mutation or disable instructions", () => {
+  assert.doesNotMatch(page, /<Toggle label=\{text\.attendanceTracking\}/);
+  assert.doesNotMatch(page, /update\("attendance_tracking_enabled"/);
+  const updates = page.slice(page.indexOf("const updates: Record<string, unknown>"), page.indexOf('if (original.role === "owner")',page.indexOf("const updates: Record<string, unknown>")));
+  assert.doesNotMatch(updates, /attendance_tracking_enabled/);
+  assert.match(updates, /app_login_enabled/);
+  assert.match(page, /draft\.attendance_tracking_enabled !== false \? \(/);
+  assert.match(page, /if \(savePending\.current \|\| isSaving \|\| levelModalOpen\) return;/);
+  assert.doesNotMatch(page, /attendanceDisableBlockCode|attendanceOffNeedsFixedMonthly/);
 });
 
-test("5차 A/B: app-login and always-on attendance help texts are gone; the fixed-monthly notice is conditional", () => {
+test("obsolete independent attendance guidance is removed in both languages; detail login management remains", () => {
   for (const lang of [adminUsersText.ko, adminUsersText.vi] as Record<string, unknown>[]) {
-    for (const key of ["appLoginAllowedHelp", "attendancePayrollHelp", "payrollContractMismatch", "contractBasisAttendance", "contractBasisNoAttendance", "bonusSwitchHelp"]) assert.equal(lang[key], undefined, key);
+    for (const key of ["appLoginAllowedHelp", "attendancePayrollHelp", "payrollContractMismatch", "contractBasisAttendance", "contractBasisNoAttendance", "bonusSwitchHelp",
+      "attendanceOffRequiresFixedMonthly", "attendanceDisableBlockedBonus", "attendanceDisableBlockedMeal"]) assert.equal(lang[key], undefined, key);
   }
-  assert.equal(adminUsersText.ko.attendanceOffRequiresFixedMonthly, "근태 기록을 사용하지 않으려면 급여계약을 '월 고정급'으로 설정해야 합니다.");
-  assert.equal(adminUsersText.vi.attendanceOffRequiresFixedMonthly, "Để tắt chấm công, cần thiết lập hợp đồng lương cố định hằng tháng.");
-  const rule = page.slice(page.indexOf("function attendanceOffNeedsFixedMonthly("), page.indexOf("// 급여설정 직원 목록"));
-  assert.match(rule, /if \(draft\.attendance_tracking_enabled !== false \|\| contracts\.loading \|\| contracts\.loadFailed\) return false;/);
-  assert.match(rule, /return !fixed\(contracts\.current\) \|\| \(contracts\.scheduled !== null && !fixed\(contracts\.scheduled\)\);/);
   assert.match(page, /<Toggle label=\{text\.appLoginAllowed\}/);
 });
 
 test("5차 C: contract summary = type · current combined salary from the payroll engine and the shared formatter", () => {
   assert.match(page, /import \{ formatContractRate \} from "@\/lib\/payroll\/payroll-page-money";/);
-  const helper = page.slice(page.indexOf("function currentContractAmount("), page.indexOf("function attendanceOffNeedsFixedMonthly("));
+  const helper = page.slice(page.indexOf("function currentContractAmount("), page.indexOf("// 급여설정 직원 목록"));
   assert.match(helper, /calculateCombinedSalary\(\{ \.\.\.contract, payType \}, levelInfo\)\.combinedSalary/);
   assert.match(helper, /formatContractRate\(combined, payType, lang\)/);
   // the summary uses the current contract only; the scheduled one stays a separate line

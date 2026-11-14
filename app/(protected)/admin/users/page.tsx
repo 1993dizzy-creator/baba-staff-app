@@ -38,7 +38,6 @@ import { resolveSettingsSummaryReference } from "@/lib/payroll/settings-summary"
 import type { PayrollSettingFormRequest, PayrollSettingFormResult } from "@/components/payroll/settingFormRequest";
 import { useEmployeeBenefitStatus, type BenefitKey, type BenefitStatus } from "@/components/payroll/useEmployeeBenefitStatus";
 import { formatContractRate } from "@/lib/payroll/payroll-page-money";
-import { attendanceDisableBlockCode } from "@/lib/employee/attendance-disable-block";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { isTopModal, useModalFocusTrap } from "@/components/payroll/useModalFocusTrap";
 import { BenefitChoice, BenefitField, BenefitStatusLine, m } from "@/components/payroll/BenefitModalParts";
@@ -704,7 +703,6 @@ function UserCard({
           ) : null}
           <CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>
             {!isMasterUser ? <>
-              <Toggle label={text.attendanceTracking} checked={draft.attendance_tracking_enabled !== false} onChange={value => update("attendance_tracking_enabled", value)} />
               {draft.attendance_tracking_enabled !== false ? (
                 <div style={styles.fieldRow2}>
                   <Field label={text.workStartTime}>
@@ -725,8 +723,6 @@ function UserCard({
                   </Field>
                 </div>
               ) : null}
-              {/* 근태 OFF를 고른 경우에만, 현재·예약 계약이 월 고정급이 아니면 안내한다(계약은 자동 변경·저장하지 않음). */}
-              {attendanceOffNeedsFixedMonthly(draft, contracts) ? <span role="status" style={styles.fieldNotice}>{text.attendanceOffRequiresFixedMonthly}</span> : null}
             </> : null}
             <PayrollContractStatus user={user} text={text} lang={lang} contracts={contracts} canManage={canManagePayroll} isSaving={isSaving} onManage={() => openSheet("contract")} />
           {hasLevelEditor || canManagePayroll ? <div style={styles.subsection}>
@@ -868,16 +864,6 @@ function currentContractAmount(contract: PayrollContractView, levelInfo: Employe
   if (!payType) return null;
   const combined = calculateCombinedSalary({ ...contract, payType }, levelInfo).combinedSalary;
   return combined === null ? null : formatContractRate(combined, payType, lang);
-}
-
-/**
- * 근태 OFF를 선택했는데 현재 적용 계약(또는 예약된 다음 계약)이 월 고정급이 아니면 true.
- * 계약 조회 중·실패는 판정하지 않는다. 근태 ON이면 언제나 false.
- */
-function attendanceOffNeedsFixedMonthly(draft: UserRow, contracts: PayrollContractsController) {
-  if (draft.attendance_tracking_enabled !== false || contracts.loading || contracts.loadFailed) return false;
-  const fixed = (contract: PayrollContractView | null) => contract?.calculationBasis === "fixed_monthly";
-  return !fixed(contracts.current) || (contracts.scheduled !== null && !fixed(contracts.scheduled));
 }
 
 // 급여설정 직원 목록(/api/admin/payroll/users)과 같은 조건: 재직 중(is_active)이고 급여 대상.
@@ -1624,7 +1610,6 @@ export default function AdminUsersPage() {
             termination_date: draft.termination_date,
             work_start_time: draft.work_start_time,
             work_end_time: draft.work_end_time,
-            attendance_tracking_enabled: draft.attendance_tracking_enabled !== false,
             app_login_enabled: draft.app_login_enabled !== false,
           };
       if (original.role === "owner") {
@@ -1660,17 +1645,8 @@ export default function AdminUsersPage() {
 
       if (!res.ok || !result.ok || !result.user) {
         if (result.code === "ATTENDANCE_OPEN_RECORD_EXISTS") {
-          // 열린 출근 기록 충돌은 실제 저장 시도 후 서버가 반환했을 때만 여기서 alert로
-          // 알린다. draft(체크 해제 상태)는 그대로 두고 편집 화면도 닫지 않아, 관리자가
-          // 다시 판단할 수 있게 한다. 페이지 상단 메시지에는 중복 표시하지 않는다.
+          // 서버의 열린 근태 충돌 응답은 기존대로 알리고 편집 입력을 보존한다.
           window.alert(result.error || text.saveFailed);
-          return false;
-        }
-        // 식대·개근 보너스 대상이라 근태 OFF가 서버에서 차단된 경우: 내부 오류명 대신 지정 문구로 안내한다.
-        // 편집 화면·입력값은 그대로 두고(저장 성공으로 표시하지 않음), 차단 규칙 자체는 우회하지 않는다.
-        const blocked = attendanceDisableBlockCode(result);
-        if (blocked) {
-          window.alert(blocked === "ATTENDANCE_BONUS_ELIGIBLE_BLOCKS_ATTENDANCE_TRACKING_DISABLE" ? text.attendanceDisableBlockedBonus : text.attendanceDisableBlockedMeal);
           return false;
         }
         throw new Error(result.error || text.saveFailed);

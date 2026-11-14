@@ -22,11 +22,11 @@ test("part groups collapse: owner/inactive closed by default, user choice kept a
   assert.match(page, /users\.filter\(\(user\) => getActiveUserGroup\(user\) === groupKey\)/);
 });
 
-test("detail: work·pay holds attendance, 💰 contract, 🎁 benefits (level first) and the payroll exception in that order", () => {
+test("detail: work·pay holds work times, 💰 contract, 🎁 benefits (level first) and the payroll exception in that order", () => {
   const start = page.indexOf('<CollapsibleSection tone="workPay" emoji="⏰" title={text.workPayInfo} open={workOpen} onToggle={toggleWork}>');
   const end = page.indexOf('<SectionTitle emoji="🔐">{text.appAccess}</SectionTitle>');
   const work = page.slice(start, end);
-  const order = ["label={text.attendanceTracking}", "<PayrollContractStatus", '<SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>', 'emoji="📈"', "BENEFIT_ROWS.map", "{text.payrollException}</SubsectionTitle>"].map((needle) => work.indexOf(needle));
+  const order = ["<PayrollContractStatus", '<SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>', 'emoji="📈"', "BENEFIT_ROWS.map", "{text.payrollException}</SubsectionTitle>"].map((needle) => work.indexOf(needle));
   assert.ok(start > 0 && order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), String(order));
   // the contract is a subsection with its own 계약 관리 entry (no switch)
   assert.match(page, /return <div style=\{styles\.subsection\}>\n\s+<div style=\{styles\.sectionHead\}>\n\s+<SubsectionTitle emoji="💰">\{text\.payrollContract\}<\/SubsectionTitle>/);
