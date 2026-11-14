@@ -123,10 +123,23 @@ export function buildTableOverview(input: {
       paidByOrder.set(receipt.orderId, receipt);
     }
   }
+  // POS drops the table name once an order reaches Status 4, but the receipt collector may
+  // still hold that order's receipt as pending for up to one run. Its single active receipt
+  // still names the table: place the order there (that table stays unknown) rather than
+  // leaving it unlocated, which would mark every other table unknown until the next run.
+  const pendingTableByOrder = new Map<string, string>();
+  for (const order of orders) {
+    if (order.businessDate !== businessDate || order.tableName?.trim() || paidByOrder.has(order.orderId)
+      || classifyOrderStatus(order.status) !== "paid_candidate") continue;
+    const active = receipts.filter(receipt => receipt.orderId === order.orderId
+      && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+    if (active.length === 1 && active[0].tableName) pendingTableByOrder.set(order.orderId, active[0].tableName);
+  }
   const reviewIds = new Set(kpi.detailWarnings?.map(review => review.orderId) ?? []);
   const projected = orders.filter(order => order.businessDate === businessDate && classifyOrderStatus(order.status) !== "canceled").map((order): TableOrder => {
     const observedAge = order.providerObservedAt ? now.getTime() - Date.parse(order.providerObservedAt) : NaN;
-    return { id: order.orderId, number: order.orderNo, tableName: order.tableName?.trim() || paidByOrder.get(order.orderId)?.tableName || null,
+    return { id: order.orderId, number: order.orderNo, tableName: order.tableName?.trim() || paidByOrder.get(order.orderId)?.tableName
+      || pendingTableByOrder.get(order.orderId) || null,
       startedAt: order.orderDate, collectedAt: order.providerObservedAt ?? null, amount: order.totalAmount,
       verifiedOpen: snapshotOk && openIds.has(order.orderId) && observedAge >= 0 && observedAge <= DEFAULT_STALE_AFTER_MS
         && Date.parse(order.providerObservedAt!) <= Date.parse(sync!.lastSuccessAt!)

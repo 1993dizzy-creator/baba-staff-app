@@ -7,7 +7,12 @@ import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import styles from "./tables.module.css";
 
-const colors: Partial<Record<TableState, string>> = { occupied: "#22C55E", paid: "#3B82F6", reserved: "#A855F7" };
+// One class per state colors the whole tile, the legend swatch and the sheet badge alike.
+// Idle (and any never-produced state) stays white: color is not a vacancy claim.
+const stateClass: Partial<Record<TableState, string>> = {
+  occupied: styles.occupied, paid: styles.paid, reserved: styles.reserved, unknown: styles.unknown,
+};
+const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(" ");
 const money = (n: number) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(n);
 const timestamp = (value: string | null | undefined, lang: string) => value && Number.isFinite(Date.parse(value))
   ? new Intl.DateTimeFormat(lang === "ko" ? "ko-KR" : "vi-VN", { timeZone: "Asia/Ho_Chi_Minh", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value)) : "—";
@@ -68,6 +73,8 @@ export default function TablesPage() {
     : data.snapshotStatus === "waiting" ? t.waiting
     : data.snapshotStatus !== "ok" ? t.unavailable
     : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 ? t.partial : null : null;
+  // The basis is the last successful order collection that decided the states, never the browser clock.
+  const basisWarning = failed || !!data && (data.catalogStatus !== "ok" || !["ok", "waiting"].includes(data.snapshotStatus));
   const orderView = (order: TableOrder) => <article key={order.id} className={styles.order}>
     <h3>{t.order} {order.number ?? "—"}</h3>
     <small className={styles.orderId}>OrderId: {order.id}</small>
@@ -88,30 +95,30 @@ export default function TablesPage() {
     <header className={styles.overviewBar}>
       <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paid"] as const).map(key =>
         <div key={key}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}</dd></div>)}</dl>
+      <p className={cx(styles.basis, basisWarning && styles.basisWarning)}>
+        {basisWarning ? <span className={styles.warnMark} aria-hidden="true">!</span> : null}
+        {t.basis} <time dateTime={data?.snapshotAt ?? undefined} title={timestamp(data?.snapshotAt, lang)}>{clock(data?.snapshotAt)}</time>
+        {basisWarning ? <span className={styles.srOnly}>{t.basisWarning}</span> : null}
+      </p>
       <button className={styles.refresh} onClick={() => void load()} disabled={loading} aria-label={t.refresh} title={t.refresh}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
         </svg>
       </button>
     </header>
-    <p className={styles.timing}>
-      <span>{t.shortDate} <time dateTime={data?.businessDate} title={data?.businessDate}>{data?.businessDate.slice(5).replace("-", "/") ?? "—"}</time></span>
-      <span>{t.shortOrders} <time dateTime={data?.snapshotAt ?? undefined} title={timestamp(data?.snapshotAt, lang)}>{clock(data?.snapshotAt)}</time></span>
-      <span>{t.shortTables} <time dateTime={data?.catalogAt ?? undefined} title={timestamp(data?.catalogAt, lang)}>{clock(data?.catalogAt)}</time></span>
-    </p>
     {diagnostic ? <p role="status" className={styles.diagnostic}>{diagnostic}</p> : null}
     {loading && !data ? <p role="status" className={styles.notice}>{t.loading}</p> : null}
     {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
     <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}>
-      <i style={{ background: colors[state] }} aria-hidden="true" />{t[state]}</span>)}</div>
+      <i className={cx(styles.swatch, stateClass[state])} aria-hidden="true" />{t[state]}</span>)}</div>
     <div className={styles.areas}>{areas.map(area => {
       const areaTables = data?.tables.filter(item => item.area === area) ?? [];
       return <section key={area} className={styles.area}>
-      <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>{areaTables.length}{t.tableCountSuffix}</span></div>
-      <div className={`${styles.tiles} ${area === "bar" ? styles.barTiles : ""}`}>{areaTables.map(item => <button key={item.id}
-        className={`${styles.tile} ${item.state === "unknown" ? styles.unknown : ""}`}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}`} onClick={() => setSelected({ kind: "table", id: item.id })}>
-        {colors[item.state] ? <i className={styles.dot} style={{ background: colors[item.state] }} aria-hidden="true" /> : null}
+      <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>· {areaTables.length}{t.tableCountSuffix}</span></div>
+      <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => <button key={item.id}
+        className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}`} aria-haspopup="dialog"
+        onClick={() => setSelected({ kind: "table", id: item.id })}>
         <strong>{item.name}</strong>
       </button>)}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
@@ -122,8 +129,7 @@ export default function TablesPage() {
     </details> : null}
     <dialog ref={dialog} className={styles.sheet} aria-labelledby="table-detail-title" onCancel={() => setSelected(null)}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile?.name ?? unlinked?.tableName ?? t.details}</h2>
-        {tile ? <span className={`${styles.stateBadge} ${tile.state === "unknown" ? styles.unknown : ""}`}>
-          {colors[tile.state] ? <i style={{ background: colors[tile.state] }} aria-hidden="true" /> : null}{t[tile.state]}</span> : null}
+        {tile ? <span className={cx(styles.stateBadge, stateClass[tile.state])}>{t[tile.state]}</span> : null}
       </div><button onClick={() => setSelected(null)}>{t.close}</button></header>
       {tile ? <><p>{areaName(tile.area)} · {t.orders}: {tile.orders.filter(order => order.verifiedOpen).length}</p>
         <p className={styles.muted}>{t.sourceArea}: {tile.areaName}</p></> : null}

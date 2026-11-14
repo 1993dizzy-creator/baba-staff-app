@@ -13,7 +13,7 @@ export default function TablesLayout({ children }: { children: React.ReactNode }
   const t = tablesNavigationText[lang];
   const isOverview = pathname === "/tables" || pathname === "/tables/reservations";
 
-  return <>
+  const content = <>
     <div className={styles.navigation}>
       <nav aria-label={t.mainNavigation}>
         <SubNav tabs={[
@@ -33,4 +33,6 @@ export default function TablesLayout({ children }: { children: React.ReactNode }
     </div>
     {children}
   </>;
+  // Only the table overview sits on a gray canvas so its white area cards stand out.
+  return pathname === "/tables" ? <div className={styles.canvas}>{content}</div> : content;
 }

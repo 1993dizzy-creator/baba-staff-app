@@ -1,4 +1,6 @@
 .navigation { max-width:1200px; margin:0 auto; padding:0 10px; }
+/* Fills the space between the fixed header and the bottom navigation of the protected layout. */
+.canvas { min-height:calc(100dvh - 110px - env(safe-area-inset-top, 0px)); background:#f3f4f6; }
 .subNavigation { display:flex; gap:4px; padding:4px; border:1px solid #e5e7eb; border-radius:12px; background:#f9fafb; }
 .subTab { flex:1; min-width:0; padding:10px 8px; border:1px solid transparent; border-radius:9px; text-align:center; text-decoration:none; white-space:nowrap; font-size:14px; font-weight:600; color:#6b7280; }
 .subTab[aria-current="page"] { background:#eff6ff; border-color:#bfdbfe; color:#2563eb; font-weight:800; }
