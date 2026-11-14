@@ -14,12 +14,27 @@ import { PART_VALUES } from "@/lib/common/parts";
 import { EDITABLE_EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel } from "@/lib/common/roles";
 import { GENDER_VALUES, getGenderLabel } from "@/lib/common/genders";
 import { hireMonthBase } from "@/lib/employee-level/month";
-import { BenefitChoice, BenefitField, m } from "@/components/payroll/BenefitModalParts";
+import { BenefitChoice, m } from "@/components/payroll/BenefitModalParts";
 import { useLeaveGuard } from "@/components/payroll/payrollUnsaved";
+import { currencyAmount, formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
+import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
+import {
+  attendanceTrackingForPayKind,
+  contractMatchesRequest,
+  fixedMonthlyFirstMonthProration,
+  isNewEmployeeHireDate,
+  newEmployeeBonusEffectiveMonth,
+  newEmployeeContractRequest,
+  newEmployeeMealEffectiveFrom,
+  type NewEmployeeContractRequest,
+  type NewEmployeePayKind,
+  type NewEmployeePayUnit,
+} from "@/lib/payroll/new-employee-setup";
 
 type CreateResponse = {
   ok: boolean;
   error?: string;
+  code?: string;
   user?: { id?: number | string | null } | null;
 };
 
@@ -37,10 +52,13 @@ type FormState = {
   work_end_time: string;
   is_active: boolean;
   level_program_enabled: boolean;
-  level_base_mode: "hire_month" | "override_month";
-  level_base_month: string;
-  attendance_tracking_enabled: boolean;
   app_login_enabled: boolean;
+  // 급여계약(생성 직후 기존 계약 API로 저장). 근태 사용 여부는 계약 유형에서 정해진다.
+  pay_kind: NewEmployeePayKind;
+  pay_unit: NewEmployeePayUnit;
+  pay_amount: string;
+  meal_enabled: boolean;
+  bonus_enabled: boolean;
 };
 
 const roleOptions = EDITABLE_EMPLOYEE_ROLE_VALUES;
@@ -61,14 +79,152 @@ const initialForm: FormState = {
   work_end_time: "01:00",
   is_active: true,
   level_program_enabled: true,
-  level_base_mode: "hire_month",
-  level_base_month: "",
-  attendance_tracking_enabled: true,
   app_login_enabled: true,
+  pay_kind: "monthly",
+  pay_unit: "monthly",
+  pay_amount: "",
+  meal_enabled: false,
+  bonus_enabled: false,
 };
 
 type AdminUsersPageText = (typeof adminUsersText)[keyof typeof adminUsersText];
-type Created = { id: string | null; name: string };
+
+// ── 생성 후 단계별 설정(급여계약 → 식대 → 개근 보너스). 단일 트랜잭션은 Migration 없이 불가능하므로
+// 기존 API를 순서대로 부르고, 각 단계는 "이미 저장됐는지"를 먼저 확인해 재시도·응답 유실에도 중복 저장하지 않는다.
+type StepKey = "contract" | "meal" | "bonus";
+type StepStatus = "pending" | "running" | "done" | "failed";
+type SetupState = {
+  userId: string;
+  name: string;
+  // payroll: 급여 설정 진행 / owner: 사장 직급(급여 대상 아님) / inactive: 계정 OFF(계약 저장 불가) / noId: 생성 응답에 id 없음
+  mode: "payroll" | "owner" | "inactive" | "noId";
+  contract: NewEmployeeContractRequest | null;
+  meal: { effectiveFrom: string } | null;
+  bonus: { effectiveMonth: string } | null;
+  status: Partial<Record<StepKey, StepStatus>>;
+  errors: Partial<Record<StepKey, string>>;
+  proration: { amount: number; days: number; total: number } | null;
+};
+const SETUP_KEY = "baba:admin-users:create-setup";
+const STEP_ORDER: StepKey[] = ["contract", "meal", "bonus"];
+
+function readStoredSetup(): SetupState | null {
+  try {
+    const raw = window.sessionStorage.getItem(SETUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SetupState;
+    return parsed && typeof parsed.userId === "string" && parsed.mode ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSetup(setup: SetupState | null) {
+  try {
+    if (setup) window.sessionStorage.setItem(SETUP_KEY, JSON.stringify(setup));
+    else window.sessionStorage.removeItem(SETUP_KEY);
+  } catch {
+    // 저장소를 못 쓰면 이 화면 안에서만 이어서 설정할 수 있다.
+  }
+}
+
+function plannedSteps(setup: SetupState) {
+  return STEP_ORDER.filter((key) => setup[key] !== null);
+}
+
+function setupComplete(setup: SetupState) {
+  return setup.mode !== "inactive" && setup.mode !== "noId" && plannedSteps(setup).every((key) => setup.status[key] === "done");
+}
+
+async function readJson(response: Response) {
+  try {
+    return await response.json() as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function vietnamCurrentMonth() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
+}
+
+type StepResult = { ok: true } | { ok: false; message: string };
+
+/** 저장 전·실패 후 모두 같은 조회로 확인한다: 같은 값이 있으면 완료, 다른 값이 있으면 충돌(덮어쓰지 않음). */
+async function ensureStep<T>(input: {
+  read: () => Promise<T[]>;
+  matches: (row: T) => boolean;
+  write: () => Promise<Response>;
+  conflictMessage: string;
+  failureMessage: (data: Record<string, unknown> | null) => string;
+}): Promise<StepResult> {
+  let rows: T[];
+  try {
+    rows = await input.read();
+  } catch {
+    return { ok: false, message: input.failureMessage(null) };
+  }
+  if (rows.some(input.matches)) return { ok: true };
+  if (rows.length > 0) return { ok: false, message: input.conflictMessage };
+  let data: Record<string, unknown> | null = null;
+  try {
+    const response = await input.write();
+    data = await readJson(response);
+    if (response.ok && data?.ok === true) return { ok: true };
+  } catch {
+    data = null;
+  }
+  // 실패·응답 유실: 서버에 실제로 저장됐는지 다시 조회한다.
+  try {
+    if ((await input.read()).some(input.matches)) return { ok: true };
+  } catch {
+    // 확인하지 못하면 실패로 남겨 재시도하게 한다(재시도도 먼저 조회하므로 중복 저장되지 않는다).
+  }
+  return { ok: false, message: input.failureMessage(data) };
+}
+
+async function readHistory<T>(url: string): Promise<T[]> {
+  const response = await fetch(url, { cache: "no-store" });
+  const data = await readJson(response);
+  if (!response.ok || data?.ok !== true) throw new Error("READ_FAILED");
+  return (Array.isArray(data.history) ? data.history : []) as T[];
+}
+
+async function runStep(key: StepKey, setup: SetupState, lang: "ko" | "vi", text: AdminUsersPageText): Promise<StepResult> {
+  const userId = Number(setup.userId);
+  const json = (body: unknown) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (key === "contract" && setup.contract) {
+    const request = setup.contract;
+    return ensureStep<{ payType: string; calculationBasis: string; baseSalary: number; effectiveFrom: string }>({
+      read: () => readHistory(`/api/admin/payroll/contracts?userId=${userId}`),
+      matches: (contract) => contractMatchesRequest(contract, request),
+      write: () => fetch("/api/admin/payroll/contracts", json({ userId, ...request })),
+      conflictMessage: text.createStepConflict,
+      failureMessage: (data) => payrollContractErrorMessage(lang, data?.code, "PAYROLL_CONTRACT_CREATE_FAILED"),
+    });
+  }
+  if (key === "meal" && setup.meal) {
+    const effectiveFrom = setup.meal.effectiveFrom;
+    return ensureStep<{ isEligible: boolean; effectiveFrom: string }>({
+      read: () => readHistory(`/api/admin/payroll/meal-allowance/eligibility?userId=${userId}`),
+      matches: (row) => row.isEligible === true && row.effectiveFrom === effectiveFrom,
+      write: () => fetch("/api/admin/payroll/meal-allowance/eligibility", json({ userId, isEligible: true, effectiveFrom })),
+      conflictMessage: text.createStepConflict,
+      failureMessage: (data) => data?.code === "MEAL_ALLOWANCE_REQUIRES_ATTENDANCE_TRACKING" ? text.createBenefitFixedOff : text.createStepFailedGeneric,
+    });
+  }
+  if (key === "bonus" && setup.bonus) {
+    const effectiveMonth = setup.bonus.effectiveMonth;
+    return ensureStep<{ isEligible: boolean; effectiveMonth: string }>({
+      read: () => readHistory(`/api/admin/payroll/attendance-bonus/eligibility?userId=${userId}`),
+      matches: (row) => row.isEligible === true && row.effectiveMonth === effectiveMonth,
+      write: () => fetch("/api/admin/payroll/attendance-bonus/eligibility", json({ userId, isEligible: true, effectiveMonth })),
+      conflictMessage: text.createStepConflict,
+      failureMessage: (data) => data?.code === "ATTENDANCE_BONUS_REQUIRES_ATTENDANCE_TRACKING" ? text.createBenefitFixedOff : text.createStepFailedGeneric,
+    });
+  }
+  return { ok: true };
+}
 
 function getPartLabel(part: string, text: AdminUsersPageText) {
   if (part === "owner") return text.ownerGroup;
@@ -90,6 +246,60 @@ function shiftHours(start: string, end: string) {
 
 function isDirty(form: FormState) {
   return (Object.keys(initialForm) as (keyof FormState)[]).some((key) => form[key] !== initialForm[key]);
+}
+
+/** 사장 직급은 급여 대상이 아니고(owner 역할 = 월 고정급 대상), 근태는 기존 기본값(사용)을 유지한다. */
+function attendanceFor(form: FormState) {
+  return form.role === "owner" ? true : attendanceTrackingForPayKind(form.pay_kind);
+}
+
+function payrollApplies(form: FormState) {
+  return form.role !== "owner" && form.is_active;
+}
+
+/** 직원 생성 API 요청(기존 형식 그대로). 레벨 기준월은 항상 입사월 자동. */
+function createPayload(form: FormState, lang: string) {
+  return {
+    lang,
+    username: form.username,
+    password: form.password,
+    name: form.name,
+    full_name: form.full_name,
+    role: form.role,
+    part: form.part,
+    gender: form.gender,
+    birth_date: form.birth_date,
+    hire_date: form.hire_date,
+    work_start_time: form.work_start_time,
+    work_end_time: form.work_end_time,
+    is_active: form.is_active,
+    level_program_enabled: form.level_program_enabled,
+    level_base_mode: "hire_month" as const,
+    attendance_tracking_enabled: attendanceFor(form),
+    app_login_enabled: form.app_login_enabled,
+  };
+}
+
+function planSetup(form: FormState, userId: string | null): SetupState {
+  const name = form.name.trim();
+  const base = { userId: userId ?? "", name, contract: null, meal: null, bonus: null, status: {}, errors: {}, proration: null };
+  if (!userId) return { ...base, mode: "noId" };
+  if (form.role === "owner") return { ...base, mode: "owner" };
+  if (!form.is_active) return { ...base, mode: "inactive" };
+  const amount = Number(form.pay_amount);
+  const monthly = form.pay_kind === "monthly";
+  const proration = form.pay_kind === "fixed" ? fixedMonthlyFirstMonthProration(amount, form.hire_date) : null;
+  const setup: SetupState = {
+    ...base,
+    mode: "payroll",
+    contract: newEmployeeContractRequest({ kind: form.pay_kind, unit: form.pay_unit, amount, hireDate: form.hire_date }),
+    // 고정급(근태 미사용)은 식대·개근 보너스를 저장하지 않는다(화면 값과 무관하게 요청에서 제외).
+    meal: monthly && form.meal_enabled ? { effectiveFrom: newEmployeeMealEffectiveFrom(form.hire_date) } : null,
+    bonus: monthly && form.bonus_enabled ? { effectiveMonth: newEmployeeBonusEffectiveMonth(form.hire_date, vietnamCurrentMonth()) } : null,
+    proration: proration ? { amount: proration.amount, days: proration.employedDays, total: proration.totalDays } : null,
+  };
+  for (const key of plannedSteps(setup)) setup.status[key] = "pending";
+  return setup;
 }
 
 function UserNav({ active }: { active: "list" | "create" }) {
@@ -144,7 +354,7 @@ function SubsectionTitle({ emoji, children }: { emoji: string; children: ReactNo
 }
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
-  return <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} style={styles.toggleRow}>
+  return <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} style={{ ...styles.toggleRow, ...(disabled ? styles.toggleDisabled : null) }}>
     <span style={styles.toggleLabel}>{label}</span>
     <span style={styles.switchControl}><strong style={styles.switchText}>{checked ? "ON" : "OFF"}</strong>
       <span aria-hidden="true" style={{ ...styles.switchTrack, ...(checked ? styles.switchTrackOn : null) }}>
@@ -157,23 +367,37 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
 export default function AdminUserCreatePage() {
   const { lang } = useLanguage();
   const text = adminUsersText[lang];
+  const vi = lang === "vi";
   const router = useRouter();
   const [checked, setChecked] = useState(false);
   const [canAccess, setCanAccess] = useState(false);
   const [form, setForm] = useState<FormState>(initialForm);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [created, setCreated] = useState<Created | null>(null);
-  // 생성 요청은 한 번에 하나만 보낸다(더블 클릭·연타가 isSaving 반영 전에 두 번째 POST를 보내지 않게).
+  const [setup, setSetup] = useState<SetupState | null>(null);
+  // 생성·설정 요청은 한 번에 하나만 보낸다(더블 클릭·연타가 isSaving 반영 전에 두 번째 POST를 보내지 않게).
   const submitting = useRef(false);
+  // 생성 응답이 유실된 로그인 ID. 같은 ID로 다시 시도해 409가 나면 이미 생성됐는지 확인한다.
+  const ambiguousCreate = useRef<string | null>(null);
   const formRef = useRef(form);
   formRef.current = form;
+  const setupRef = useRef(setup);
+  setupRef.current = setup;
   const hours = shiftHours(form.work_start_time, form.work_end_time);
   const autoBaseMonth = hireMonthBase(form.hire_date);
+  const attendance = attendanceFor(form);
+  const applies = payrollApplies(form);
+  const monthlyPay = form.pay_kind === "monthly";
+  const hireValid = isNewEmployeeHireDate(form.hire_date);
+  const amount = Number(form.pay_amount || 0);
+  const contractPreview = applies && hireValid ? newEmployeeContractRequest({ kind: form.pay_kind, unit: form.pay_unit, amount, hireDate: form.hire_date }) : null;
+  const prorationPreview = applies && form.pay_kind === "fixed" && amount > 0 ? fixedMonthlyFirstMonthProration(amount, form.hire_date) : null;
 
-  // 등록 전 입력이 있으면 메뉴 링크·새로고침·창 닫기에서 확인한다(등록 성공 후에는 묻지 않는다).
-  const leaveMessage = !created && isDirty(form) ? text.createLeaveConfirm : null;
-  useLeaveGuard(leaveMessage, () => (!created && isDirty(formRef.current) ? text.createLeaveConfirm : null));
+  // 등록 전 입력, 또는 생성 후 설정이 끝나지 않은 경우 메뉴 링크·새로고침·창 닫기에서 확인한다.
+  const leaveFor = (currentSetup: SetupState | null, currentForm: FormState) =>
+    currentSetup ? (setupComplete(currentSetup) || currentSetup.mode !== "payroll" ? null : text.createSetupLeaveConfirm)
+      : isDirty(currentForm) ? text.createLeaveConfirm : null;
+  useLeaveGuard(leaveFor(setup, form), () => leaveFor(setupRef.current, formRef.current));
 
   useEffect(() => {
     const user = getUser();
@@ -183,10 +407,49 @@ export default function AdminUserCreatePage() {
     }
     setCanAccess(isAdmin(user));
     setChecked(true);
+    // 새로고침·이동 후 돌아와도 끝나지 않은 설정을 이어서 할 수 있다.
+    const stored = readStoredSetup();
+    if (stored) setSetup(stored);
   }, [router]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function setPayKind(kind: NewEmployeePayKind) {
+    // 고정급은 근태 미사용이라 식대·개근 보너스를 끈다. 월급제로 바꿔도 자동으로 켜지 않는다.
+    setForm((current) => ({ ...current, pay_kind: kind, ...(kind === "fixed" ? { meal_enabled: false, bonus_enabled: false } : null) }));
+  }
+
+  async function runSetup(start: SetupState) {
+    let current: SetupState = { ...start, status: { ...start.status }, errors: { ...start.errors } };
+    for (const key of plannedSteps(current)) {
+      if (current.status[key] === "done") continue;
+      current = { ...current, status: { ...current.status, [key]: "running" }, errors: { ...current.errors, [key]: undefined } };
+      setSetup(current);
+      const result = await runStep(key, current, lang, text);
+      current = {
+        ...current,
+        status: { ...current.status, [key]: result.ok ? "done" : "failed" },
+        errors: { ...current.errors, [key]: result.ok ? undefined : result.message },
+      };
+      setSetup(current);
+      storeSetup(current);
+    }
+    if (setupComplete(current) || current.mode !== "payroll") storeSetup(current);
+    return current;
+  }
+
+  async function findCreatedUser(payload: ReturnType<typeof createPayload>) {
+    try {
+      const response = await attendanceFetch("/api/admin/users");
+      const data = await readJson(response);
+      const users = Array.isArray(data?.users) ? data.users as Array<Record<string, unknown>> : [];
+      const found = users.find((user) => user.username === payload.username.trim() && user.name === payload.name.trim() && user.hire_date === payload.hire_date);
+      return found ? String(found.id) : null;
+    } catch {
+      return null;
+    }
   }
 
   async function submit() {
@@ -195,44 +458,59 @@ export default function AdminUserCreatePage() {
       setMessage(text.required);
       return;
     }
-
-    if (
-      form.attendance_tracking_enabled &&
-      (!form.work_start_time || !form.work_end_time)
-    ) {
+    // 입사일은 레벨 적용 여부와 관계없이 필수(생성 RPC 조건).
+    if (!hireValid) {
+      setMessage(text.createHireDateRequired);
+      return;
+    }
+    if (attendance && (!form.work_start_time || !form.work_end_time)) {
       setMessage(text.workTimeRequiredForTracking);
       return;
     }
-
-    if (form.level_program_enabled && !form.hire_date) {
-      setMessage(text.createLevelHireDateRequired);
+    if (applies && !(amount > 0)) {
+      setMessage(text.createAmountRequired);
       return;
     }
 
     submitting.current = true;
     setIsSaving(true);
     setMessage("");
+    const payload = createPayload(form, lang);
 
     try {
-      const res = await attendanceFetch("/api/admin/users/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lang,
-          ...form,
-        }),
-      });
-      const result = (await res.json()) as CreateResponse;
-
-      if (!res.ok || !result.ok) {
-        // 409(중복 ID)는 서버의 영문 오류 대신 화면 언어의 안내를 보여 준다.
-        throw new Error(res.status === 409 ? text.duplicateUsername : result.error || text.createFailed);
+      let userId: string | null = null;
+      let response: Response | null = null;
+      let result: CreateResponse | null = null;
+      try {
+        response = await attendanceFetch("/api/admin/users/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        result = await readJson(response) as CreateResponse | null;
+      } catch {
+        response = null;
       }
 
-      // 생성 RPC가 돌려준 직원 id로 직원 상세(근무·급여)를 연다. id가 없으면 목록으로 이동한다.
-      const id = result.user?.id;
-      setCreated({ id: id === undefined || id === null || id === "" ? null : String(id), name: form.name.trim() });
+      if (response && result?.ok) {
+        const id = result.user?.id;
+        userId = id === undefined || id === null || id === "" ? null : String(id);
+      } else if (response && result && !(response.status === 409 && ambiguousCreate.current === payload.username.trim())) {
+        // 409(중복 ID)는 서버의 영문 오류 대신 화면 언어의 안내를 보여 준다.
+        throw new Error(response.status === 409 ? text.duplicateUsername : result.error || text.createFailed);
+      } else {
+        // 응답 유실(또는 유실 뒤 재시도의 409): 이미 생성됐는지 직원 목록으로 확인한다. 확인 못 하면 생성하지 않은 것으로 본다.
+        ambiguousCreate.current = payload.username.trim();
+        userId = await findCreatedUser(payload);
+        if (!userId) throw new Error(text.createFailed);
+      }
+
+      ambiguousCreate.current = null;
+      const planned = planSetup(form, userId);
+      storeSetup(planned);
+      setSetup(planned);
       setForm(initialForm);
+      if (planned.mode === "payroll") await runSetup(planned);
     } catch (error) {
       // 실패 시 입력값은 그대로 둔다.
       setMessage(error instanceof Error ? error.message : text.createFailed);
@@ -240,6 +518,26 @@ export default function AdminUserCreatePage() {
       submitting.current = false;
       setIsSaving(false);
     }
+  }
+
+  async function retrySetup() {
+    if (submitting.current || !setup) return;
+    submitting.current = true;
+    setIsSaving(true);
+    try {
+      await runSetup(setup);
+    } finally {
+      submitting.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  function closeSetup(next: "detail" | "another") {
+    const current = setup;
+    storeSetup(null);
+    setSetup(null);
+    setMessage("");
+    if (next === "detail" && current) router.push(current.userId ? `/admin/users?userId=${encodeURIComponent(current.userId)}&section=payroll` : "/admin/users");
   }
 
   if (checked && !canAccess) {
@@ -251,28 +549,44 @@ export default function AdminUserCreatePage() {
     );
   }
 
-  if (created) {
+  if (setup) {
+    const complete = setupComplete(setup);
+    const stepLabel: Record<StepKey, string> = { contract: text.createStepContract, meal: text.benefitMeal, bonus: text.benefitBonus };
+    const statusLabel = (status: StepStatus | undefined) => status === "done" ? text.createStepDone : status === "failed" ? text.createStepFailed : status === "running" ? text.createStepRunning : text.createStepPending;
+    const incompletePayroll = setup.mode === "payroll" && !complete;
     return (
       <Container noPaddingTop>
         <UserNav active="create" />
         <section style={styles.card}>
-          <section role="status" style={{ ...styles.detailSection, ...SECTION_TONES.appAccess }}>
-            <strong style={styles.sectionTitle}><span aria-hidden="true">✅</span>{text.createSuccess}</strong>
-            <p style={styles.successText}>{text.createdNextStep.replace("{name}", created.name)}</p>
-            <p style={styles.modalHint}>{text.createPayrollNote}</p>
+          <section role="status" style={{ ...styles.detailSection, ...(incompletePayroll || setup.mode === "inactive" ? styles.warnTone : SECTION_TONES.appAccess) }}>
+            <strong style={styles.sectionTitle}><span aria-hidden="true">{incompletePayroll ? "⚠️" : "✅"}</span>{incompletePayroll ? text.createSetupIncompleteTitle : text.createSuccess}</strong>
+            {/* 진행 중·일부 실패는 아래 단계 목록이 저장 상태를 보여 준다(일부 저장된 항목을 "미설정"이라 하지 않음). */}
+            {incompletePayroll ? null : <p style={styles.successText}>
+              {setup.mode === "payroll" ? text.createdComplete.replace("{name}", setup.name) : text.createdNextStep.replace("{name}", setup.name)}
+            </p>}
+            {setup.mode === "owner" ? <p style={styles.modalHint}>{text.createOwnerNoPayroll}</p> : null}
+            {setup.mode === "inactive" ? <p style={styles.modalHint}>{text.createInactiveNoPayroll}</p> : null}
+            {setup.mode === "payroll" ? <ul style={styles.stepList} aria-label={text.createStepContract}>
+              <li style={styles.stepRow}><span>{text.createStepEmployee}</span><b style={styles.stepDone}>{text.createStepDone}</b></li>
+              {plannedSteps(setup).map((key) => <li key={key} style={styles.stepRow}>
+                <span>{stepLabel[key]}</span>
+                <b style={setup.status[key] === "done" ? styles.stepDone : setup.status[key] === "failed" ? styles.stepFailed : styles.stepPending}>{statusLabel(setup.status[key])}</b>
+                {setup.errors[key] ? <span role="alert" style={styles.stepError}>{setup.errors[key]}</span> : null}
+              </li>)}
+            </ul> : null}
+            {incompletePayroll ? <p style={styles.modalHint}>{text.createSetupIncompleteHelp}</p> : null}
+            {setup.mode === "payroll" && setup.proration && setup.status.contract === "done" ? <p style={styles.prorationNotice}>
+              {text.createFixedProrationNotice.replace("{amount}", currencyAmount(setup.proration.amount, vi)).replace("{days}", String(setup.proration.days)).replace("{total}", String(setup.proration.total))}
+            </p> : null}
+            {setup.mode === "payroll" ? <p style={styles.modalHint}>{text.createPayrollNote}</p> : null}
           </section>
-          <div style={styles.actionRow}>
-            <button type="button" style={styles.secondaryAction} onClick={() => { setCreated(null); setMessage(""); }}>
-              {text.createAnother}
-            </button>
-            <button
-              type="button"
-              style={styles.createButton}
-              onClick={() => router.push(created.id ? `/admin/users?userId=${encodeURIComponent(created.id)}&section=payroll` : "/admin/users")}
-            >
-              {text.createOpenPayroll}
-            </button>
-          </div>
+          {incompletePayroll ? <div style={styles.actionRow}>
+            <button type="button" style={styles.secondaryAction} disabled={isSaving} onClick={() => closeSetup("detail")}>{text.createSetupOpenDetail}</button>
+            <button type="button" style={styles.createButton} disabled={isSaving} onClick={retrySetup}>{isSaving ? text.createStepRunning : text.createSetupRetry}</button>
+          </div> : <div style={styles.actionRow}>
+            <button type="button" style={styles.secondaryAction} onClick={() => closeSetup("another")}>{text.createAnother}</button>
+            <button type="button" style={styles.createButton} onClick={() => closeSetup("detail")}>{setup.mode === "payroll" ? text.createOpenDetail : text.createOpenPayroll}</button>
+          </div>}
         </section>
       </Container>
     );
@@ -369,34 +683,72 @@ export default function AdminUserCreatePage() {
             <Field label={text.hireDate}>
               <input
                 type="date"
+                required
                 value={form.hire_date}
                 onChange={(event) => update("hire_date", event.target.value)}
                 style={styles.input}
               />
             </Field>
-            <Toggle label={text.attendanceTracking} checked={form.attendance_tracking_enabled} onChange={(value) => update("attendance_tracking_enabled", value)} />
-            {form.attendance_tracking_enabled ? (
-              <div style={styles.fieldRow2}>
-                <Field label={text.workStartTime}>
-                  <input
-                    type="time"
-                    value={form.work_start_time}
-                    onChange={(event) => update("work_start_time", event.target.value)}
-                    style={styles.input}
-                  />
-                </Field>
-                <Field label={text.workEndTime}>
-                  <input
-                    type="time"
-                    value={form.work_end_time}
-                    onChange={(event) => update("work_end_time", event.target.value)}
-                    style={styles.input}
-                  />
-                </Field>
-              </div>
-            ) : null}
 
-            {/* 📈 장기근무 레벨: 직원 상세 레벨 설정과 같은 2분할 선택(적용 = 초록, 기준 선택 = 중립 회색). 신규 직원이라 이력·예약·현재 급여는 없다. */}
+            {/* 💰 급여계약: 고정급 / 월급제. 근태 기록 사용 여부는 유형에서 자동으로 정해진다(독립 스위치 없음). */}
+            <div style={styles.subsection}>
+              <SubsectionTitle emoji="💰">{text.payrollContract}</SubsectionTitle>
+              {form.role === "owner" ? <span style={styles.helpText}>{text.createOwnerNoPayroll}</span> : <>
+                <BenefitChoice
+                  tone="neutral"
+                  label={text.createPayKind}
+                  value={form.pay_kind === "fixed"}
+                  onLabel={text.createPayFixed}
+                  offLabel={text.createPayMonthly}
+                  onChange={(fixed) => setPayKind(fixed ? "fixed" : "monthly")}
+                />
+                {monthlyPay ? <BenefitChoice
+                  tone="neutral"
+                  label={text.createPayUnit}
+                  value={form.pay_unit === "monthly"}
+                  onLabel={text.createPayUnitMonthly}
+                  offLabel={text.createPayUnitHourly}
+                  onChange={(monthlyUnit) => update("pay_unit", monthlyUnit ? "monthly" : "hourly")}
+                /> : null}
+                {applies ? <>
+                  <Field label={monthlyPay && form.pay_unit === "hourly" ? text.createAmountHourly : text.createAmountMonthly}>
+                    <input
+                      inputMode="numeric"
+                      value={formatIntegerInput(form.pay_amount)}
+                      onChange={(event) => update("pay_amount", integerInputDigits(event.target.value))}
+                      style={styles.input}
+                    />
+                  </Field>
+                  {contractPreview ? <span style={styles.helpText}>{text.createContractEffective.replace("{date}", contractPreview.effectiveFrom)}</span> : null}
+                  {prorationPreview ? <span role="status" style={styles.prorationNotice}>
+                    {text.createFixedProrationNotice.replace("{amount}", currencyAmount(prorationPreview.amount, vi)).replace("{days}", String(prorationPreview.employedDays)).replace("{total}", String(prorationPreview.totalDays))}
+                  </span> : null}
+                </> : <span style={styles.fieldNotice}>{text.createInactiveNoPayroll}</span>}
+              </>}
+              <span role="status" style={styles.attendanceLine}>{attendance ? text.createAttendanceOnByPay : text.createAttendanceOffByPay}</span>
+              {attendance ? (
+                <div style={styles.fieldRow2}>
+                  <Field label={text.workStartTime}>
+                    <input
+                      type="time"
+                      value={form.work_start_time}
+                      onChange={(event) => update("work_start_time", event.target.value)}
+                      style={styles.input}
+                    />
+                  </Field>
+                  <Field label={text.workEndTime}>
+                    <input
+                      type="time"
+                      value={form.work_end_time}
+                      onChange={(event) => update("work_end_time", event.target.value)}
+                      style={styles.input}
+                    />
+                  </Field>
+                </div>
+              ) : null}
+            </div>
+
+            {/* 📈 장기근무 레벨: 적용/미적용만. 기준월은 입사일로 자동 계산(1~15일 입사월, 16일~ 다음 달). */}
             <div style={styles.subsection}>
               <SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>
               <BenefitChoice
@@ -406,25 +758,8 @@ export default function AdminUserCreatePage() {
                 offLabel={text.levelDisabled}
                 onChange={(enabled) => update("level_program_enabled", enabled)}
               />
-              {form.level_program_enabled ? <>
-                <BenefitChoice
-                  tone="neutral"
-                  label={text.levelBasisShort}
-                  value={form.level_base_mode === "hire_month"}
-                  onLabel={text.levelAutoShort}
-                  offLabel={text.levelDirectShort}
-                  onChange={(auto) => setForm((current) => ({
-                    ...current,
-                    level_base_mode: auto ? "hire_month" : "override_month",
-                    level_base_month: !auto && !current.level_base_month ? hireMonthBase(current.hire_date) ?? "" : current.level_base_month,
-                  }))}
-                />
-                {form.level_base_mode === "hire_month"
-                  ? <p style={m.muted}>{text.hireDate} {form.hire_date || "-"} → {text.levelBaseMonth} {autoBaseMonth ?? "-"}</p>
-                  : <BenefitField label={text.levelBaseMonth}><input type="month" min={form.hire_date ? form.hire_date.slice(0, 7) : undefined} value={form.level_base_month} onChange={(event) => update("level_base_month", event.target.value)} style={m.input} /></BenefitField>}
-                {!form.hire_date ? <span style={styles.fieldNotice}>{text.createLevelHireDateRequired}</span> : null}
-              </> : null}
-              {hours !== null && hours < 9 ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
+              {form.level_program_enabled ? <p style={m.muted}>{text.hireDate} {form.hire_date || "-"} → {text.levelBaseMonth} {autoBaseMonth ?? "-"}</p> : null}
+              {hours !== null && hours < 9 && attendance ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
               <details style={m.details}>
                 <summary style={m.summary}>{text.levelHelp}</summary>
                 <ul style={styles.helpList}>
@@ -435,11 +770,16 @@ export default function AdminUserCreatePage() {
               </details>
             </div>
 
-            {/* 💰 급여계약·복리후생은 등록 후 직원 상세에서 설정한다(생성 단계에서는 저장하지 않음). */}
-            <div style={styles.subsection}>
-              <SubsectionTitle emoji="💰">{text.payrollContract} · {text.benefits}</SubsectionTitle>
+            {/* 🎁 복리후생: 식대·개근 보너스는 ON/OFF만(적용일은 입사일 기준 자동). 고정급은 대상 아님. 보험·TNCN은 상세에서. */}
+            {form.role !== "owner" ? <div style={styles.subsection}>
+              <SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>
+              <Toggle label={text.benefitMeal} checked={monthlyPay && form.meal_enabled} disabled={!monthlyPay || !applies} onChange={(value) => update("meal_enabled", value)} />
+              {monthlyPay && applies && form.meal_enabled && hireValid ? <span style={styles.helpText}>{text.createMealFrom.replace("{date}", newEmployeeMealEffectiveFrom(form.hire_date))}</span> : null}
+              <Toggle label={text.benefitBonus} checked={monthlyPay && form.bonus_enabled} disabled={!monthlyPay || !applies} onChange={(value) => update("bonus_enabled", value)} />
+              {monthlyPay && applies && form.bonus_enabled && hireValid ? <span style={styles.helpText}>{text.createBonusFrom.replace("{month}", newEmployeeBonusEffectiveMonth(form.hire_date, vietnamCurrentMonth()))}</span> : null}
+              {!monthlyPay ? <span style={styles.helpText}>{text.createBenefitFixedOff}</span> : null}
               <span style={styles.helpText}>{text.createPayrollNote}</span>
-            </div>
+            </div> : null}
           </Section>
 
           {/* ③ 앱 접근 */}
@@ -555,6 +895,17 @@ const styles = {
     gap: 6,
   },
   // ── 생성 화면 전용 ──
+  // 비활성 스위치(고정급의 식대·개근 보너스)는 눌러 볼 수 있는 것처럼 보이지 않게 흐리게 표시한다.
+  toggleDisabled: { opacity: 0.55, cursor: "not-allowed" },
+  attendanceLine: { fontSize: 11, lineHeight: 1.45, fontWeight: 800, color: "#0f172a" },
+  prorationNotice: { margin: 0, padding: 8, borderRadius: 8, background: "#fffbeb", color: "#92400e", fontSize: 11, lineHeight: 1.5, overflowWrap: "anywhere" },
+  warnTone: { background: "#fffbeb", borderColor: "#fde68a" },
+  stepList: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 },
+  stepRow: { display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: "2px 8px", padding: "6px 8px", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, color: "#111827" },
+  stepDone: { color: "#15803d", fontSize: 12 },
+  stepFailed: { color: "#b91c1c", fontSize: 12 },
+  stepPending: { color: "#6b7280", fontSize: 12 },
+  stepError: { flexBasis: "100%", fontSize: 11, fontWeight: 700, color: "#b91c1c", overflowWrap: "anywhere" },
   // 주요 버튼은 직원 상세 저장 버튼과 같은 색(ui.button)에 터치 영역 44px 이상.
   createButton: { ...ui.button, minHeight: 44, padding: "8px 12px", fontSize: 14, fontWeight: 800, borderRadius: 10 },
   secondaryAction: { ...ui.subButton, minHeight: 44, padding: "8px 12px", fontSize: 13, borderRadius: 10 },

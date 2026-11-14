@@ -83,9 +83,10 @@ export async function POST(req: Request) {
     const position = toLegacyEmployeePosition(role);
 
     const hireDate = nullableDate(body.hire_date);
-    if (levelProgramEnabled && !hireDate) {
+    // 생성 RPC는 레벨 적용 여부와 관계없이 입사일을 요구한다(HIRE_DATE_REQUIRED). 여기서 먼저 400으로 안내한다.
+    if (!hireDate) {
       return NextResponse.json(
-        { ok: false, error: lang === "vi" ? "Cần có ngày vào làm để áp dụng cấp." : "레벨을 적용하려면 입사일이 필요합니다." },
+        { ok: false, code: "HIRE_DATE_REQUIRED", error: lang === "vi" ? "Vui lòng nhập ngày vào làm." : "입사일을 입력해주세요." },
         { status: 400 },
       );
     }

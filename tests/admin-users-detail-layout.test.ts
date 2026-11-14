@@ -145,16 +145,16 @@ test("create page: new employees get month bases only (auto hire month / direct 
   assert.doesNotMatch(createPage, /levelHireDateMode/);
   assert.doesNotMatch(createPage, /levelOverrideMode\b/);
   assert.doesNotMatch(createPage, /levelCalculationStartDate/);
-  const enabledBlock = createPage.slice(createPage.indexOf("{form.level_program_enabled ? <>"), createPage.indexOf("</> : null}", createPage.indexOf("{form.level_program_enabled ? <>")));
-  // 2026-11: same labels and 2-way choice as the detail level modal (auto hire month / direct month, neutral tone).
-  assert.match(enabledBlock, /tone="neutral"/);
-  assert.match(enabledBlock, /text\.levelBasisShort/);
-  assert.match(enabledBlock, /text\.levelAutoShort/);
-  assert.match(enabledBlock, /text\.levelDirectShort/);
-  assert.match(enabledBlock, /type="month"/);
-  assert.doesNotMatch(enabledBlock, /text\.levelSalaryRaise/);
+  // 2026-11 5차: 신규 생성은 적용/미적용만 고르고 기준월은 항상 입사월 자동(1~15일 입사월, 16일~ 다음 달).
+  // 직접 기준월 지정은 기존 직원 상세 레벨 설정에만 있다.
+  const levelBlock = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="📈">'), createPage.indexOf('<SubsectionTitle emoji="🎁">'));
+  assert.match(levelBlock, /\{form\.level_program_enabled \? <p style=\{m\.muted\}>\{text\.hireDate\} \{form\.hire_date \|\| "-"\} → \{text\.levelBaseMonth\} \{autoBaseMonth \?\? "-"\}<\/p> : null\}/);
+  assert.doesNotMatch(levelBlock, /type="month"|text\.levelDirectShort|text\.levelOverrideMonthMode|override_month/);
+  assert.doesNotMatch(levelBlock, /text\.levelSalaryRaise/);
+  assert.match(createPage, /const autoBaseMonth = hireMonthBase\(form\.hire_date\);/);
   assert.match(createPage, /text\.levelAutomaticRaise/);
-  assert.match(createPage, /level_base_mode: "hire_month"/);
+  assert.match(createPage, /level_base_mode: "hire_month" as const,/);
+  assert.doesNotMatch(createPage, /level_base_month/);
   assert.match(createPage, /text\.levelEnabled/);
   assert.match(createPage, /text\.levelDisabled/);
   assert.match(createPage, /text\.levelPolicyHelp/);

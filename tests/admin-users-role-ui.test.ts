@@ -90,14 +90,17 @@ test("create page: role drives the level default and labels; there is no positio
   assert.doesNotMatch(createPage, /previewPosition|text\.preview\b/);
   assert.match(createPage, /level_program_enabled: role !== "owner"/);
   assert.match(createPage, /getEmployeeRoleLabel\(role, lang\)/);
-  assert.match(createPage, /\{form\.attendance_tracking_enabled \? \(/);
+  // 5차: 근무시간은 급여계약 유형에서 정해지는 근태 사용 여부로만 보인다.
+  assert.match(createPage, /\{attendance \? \(\n\s+<div style=\{styles\.fieldRow2\}>\n\s+<Field label=\{text\.workStartTime\}>/);
   assert.doesNotMatch(createPage, /form\.position/);
 });
 
 test("create page: the submit payload never includes a user-selected position field", () => {
-  const submitStart = createPage.indexOf("async function submit()");
-  const submitEnd = createPage.indexOf("\n  }", createPage.indexOf("body: JSON.stringify", submitStart));
-  const submitBody = createPage.slice(submitStart, submitEnd);
+  // 5차: 요청은 createPayload()가 필드를 명시적으로 고른다(position 없음).
+  const submitBody = createPage.slice(createPage.indexOf("async function submit()"), createPage.indexOf("async function retrySetup()"));
   assert.doesNotMatch(submitBody, /position/);
-  assert.match(submitBody, /\.\.\.form/);
+  assert.match(submitBody, /const payload = createPayload\(form, lang\);/);
+  const payload = createPage.slice(createPage.indexOf("function createPayload("), createPage.indexOf("function planSetup("));
+  assert.doesNotMatch(payload, /position/);
+  assert.match(payload, /role: form\.role,/);
 });

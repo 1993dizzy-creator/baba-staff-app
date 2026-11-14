@@ -669,6 +669,10 @@ function UserCard({
               {text.terminationDeactivationNotice}
             </span>
           ) : null}
+          {/* 입사일을 바꿔도 이미 저장된 계약·식대·개근 보너스 적용일은 자동으로 바꾸지 않는다(안내만). */}
+          {(draft.hire_date || null) !== (user.hire_date || null) ? (
+            <span role="status" style={styles.fieldNotice}>{text.hireDateChangeNotice}</span>
+          ) : null}
           <div style={styles.statusRow}>
             <span style={styles.fieldLabel}>{text.employmentStatus}</span>
             <span style={styles.statusActions}>
