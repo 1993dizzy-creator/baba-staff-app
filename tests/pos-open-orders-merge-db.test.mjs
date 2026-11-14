@@ -10,6 +10,7 @@ import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 import { calculateStoreBusinessDate, addStoreDays } from '../lib/store-settings/business-time-core.ts';
 import { buildTableOverview } from '../lib/sales/table-overview.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
+import { PREREQUISITES } from './helpers/pos-open-orders-native-fixture.mjs';
 
 const dir = 'supabase/' + 'migrations/';
 const base = readFileSync(dir + '20261109210000_pos_open_orders_v1.sql', 'utf8');
@@ -43,13 +44,18 @@ const mergedDetails = [['item-a', 2, 170000], ['item-b', 3, 90000], ['item-c', 1
   ['item-f', 1, 60000], ['item-g', 1, 180000]].map(([ItemID, Quantity, UnitPrice], i) => ({ RefDetailType: 1, ItemID, Quantity, UnitPrice,
   Amount: Quantity * UnitPrice, OrderDetailID: `reissued-${i}`, PromotionAmount: 0, PromotionRate: 0, DiscountRate: 0, SAInvoicePromotionAmount: 0 }));
 
+const history = new Map([[receiptEvidence, ['20261110170329', 'pos_open_orders_vanished_receipt_evidence']],
+  [merged, ['20261114161500', 'pos_open_orders_merged_receipt_evidence']]]);
+// Production-like prerequisites (receipt column types/nullability, roles, migration history).
 async function database(migrations = [receiptEvidence, merged]) {
   const db = new PGlite();
-  await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
-    create table public.pos_sales_receipts(id bigint primary key, source text, branch_id text, business_date date, payment_status integer,
-      is_canceled boolean, total_amount numeric, discount_amount numeric, raw_json jsonb);`);
+  await db.exec(PREREQUISITES);
   await db.exec(base);
-  for (const sql of migrations) await db.exec(sql);
+  await db.query("insert into supabase_migrations.schema_migrations(version, name) values ('20261109210000', 'pos_open_orders_v1')");
+  for (const sql of migrations) {
+    await db.exec(sql);
+    await db.query('insert into supabase_migrations.schema_migrations(version, name) values ($1, $2)', history.get(sql));
+  }
   return db;
 }
 async function rpc(db, name, args) {
@@ -221,6 +227,13 @@ const rejectCases = {
   duplicate_active: { extra: [{ id: 502, status: 1 }] },
   member_own_receipt: { extra: [{ id: 503, orderId: 'order-a', status: 1, details: mergedDetails.slice(1, 2) }] },
   transient_detail_error: { vanished: { Success: false, Code: 102, ErrorType: 102 } },
+  // Not a definitive "this order is gone" answer: provider business errors and HTTP failures
+  // (outages, 5xx, gateway errors) never close an order, even with a perfect merge receipt.
+  provider_failure_detail: { vanished: { Success: false, Code: 500, ErrorType: 1 } },
+  provider_http_failure_detail: { vanished: () => ({ status: 503, json: null }) },
+  // order_id_invalid shapes other than the empty GUID stay hard failures.
+  numeric_id_detail: { vanished: { Success: true, Data: { Id: 18, Date: at(5), Status: 4, TotalAmount: 0 } } },
+  object_id_detail: { vanished: { Success: true, Data: { Id: { value: 'x' }, Date: at(5), Status: 4, TotalAmount: 0 } } },
   wrong_identity_detail: { vanished: () => ({ status: 200, json: { Success: true, Data: { Id: 'order-zzz', Date: at(5), Status: 4, TotalAmount: 0 } } }) },
 };
 for (const [name, c] of Object.entries(rejectCases)) {
@@ -239,6 +252,50 @@ for (const [name, c] of Object.entries(rejectCases)) {
     } finally { await db.close(); }
   });
 }
+
+// Production 2026-11-14 22:17+ diagnostic: vanished_detail / order_id_invalid / orders_invalid_row,
+// vanishedCount 2, confirmedCount 0. The merged-away orders' detail carries the empty GUID as Id.
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+const emptyGuidShapes = {
+  default_object: { Success: true, Data: { Id: EMPTY_GUID, Date: '0001-01-01T00:00:00', Status: 0, TotalAmount: 0, OrderDetails: [] } },
+  id_only: { Success: true, Data: { Id: EMPTY_GUID } },
+  upper_case_padded: { Success: true, Data: { Id: ` ${EMPTY_GUID.toUpperCase()} `, Date: at(5), Status: 4, TotalAmount: 0 } },
+};
+for (const [shape, response] of Object.entries(emptyGuidShapes)) {
+  test(`production log shape (${shape}): empty-GUID detail with an exact merge receipt commits the merge`, async () => {
+    const db = await seeded();
+    try {
+      await receipt(db);
+      const diagnostics = [];
+      const result = await run(db, transport({ vanished: response }), { onDiagnostic: d => diagnostics.push(d) });
+      assert.equal(result.status, 'committed', JSON.stringify({ result, diagnostics }));
+      const after = await read(db);
+      assert.deepEqual(['order-a', 'order-b'].map(id => [byId(after, id).closureMergedIntoOrderId, byId(after, id).status]), [['order-t', 1], ['order-t', 1]]);
+    } finally { await db.close(); }
+  });
+}
+
+test('production log shape without merge evidence still fails with exactly the observed diagnostic', async () => {
+  const db = await seeded();
+  try {
+    const diagnostics = [];
+    const result = await run(db, transport({ vanished: emptyGuidShapes.default_object }), { onDiagnostic: d => diagnostics.push(d) });
+    assert.equal(result.code, 'orders_vanished_unconfirmed');
+    assert.deepEqual(diagnostics, [{ code: 'orders_vanished_unconfirmed', stage: 'vanished_detail', reason: 'order_id_invalid',
+      causeCode: 'orders_invalid_row', vanishedCount: 2, confirmedCount: 0 }]);
+  } finally { await db.close(); }
+});
+
+test('empty-GUID detail never closes an order through an amount-only or unpaid receipt', async () => {
+  for (const variant of [{ status: 1 }, { details: [{ RefDetailType: 1, ItemID: 'item-z', Quantity: 1, UnitPrice: 1090000, Amount: 1090000 }] }]) {
+    const db = await seeded();
+    try {
+      await receipt(db, variant);
+      const result = await run(db, transport({ vanished: emptyGuidShapes.default_object }));
+      assert.equal(result.code, 'orders_vanished_unconfirmed', JSON.stringify(variant));
+    } finally { await db.close(); }
+  }
+});
 
 test('ambiguity: two vanished look-alike orders that could each explain the receipt are never closed', async () => {
   const db = await database();
@@ -369,8 +426,9 @@ test('preflight -> apply -> postflight all pass; documented rollback restores co
   try {
     assert.deepEqual(await checks(db, 'preflight'), []);
     await db.exec(merged);
+    await db.query("insert into supabase_migrations.schema_migrations(version, name) values ('20261114161500', 'pos_open_orders_merged_receipt_evidence')");
     assert.deepEqual(await checks(db, 'postflight'), []);
-    assert.ok((await checks(db, 'preflight')).includes('merge columns are not present yet'));
+    assert.ok((await checks(db, 'preflight')).some(name => name.startsWith('A4 ')));
     // A merge closure exists when rolling back: it is cleared, provider facts stay.
     await commit(db, [target, memberA, memberB, other]);
     await receipt(db);
@@ -380,6 +438,9 @@ test('preflight -> apply -> postflight all pass; documented rollback restores co
     assert.equal(after.recoveryContractVersion, 2);
     assert.deepEqual([byId(after, 'order-a').closureReceiptId, byId(after, 'order-a').status, 'closureMergedIntoOrderId' in byId(after, 'order-a')], [null, 1, false]);
     assert.equal((await db.query("select count(*)::int n from pg_proc where proname like 'merge\_%'")).rows[0].n, 0);
+    // The history row stays until a separately approved `migration repair`; nothing else differs.
+    assert.deepEqual((await checks(db, 'preflight')).map(name => name.slice(0, 3)), ['A2 ']);
+    await db.query("delete from supabase_migrations.schema_migrations where version = '20261114161500'");
     assert.deepEqual(await checks(db, 'preflight'), []);
     // Back to the pre-fix guard for merged orders (never a silent pass) ...
     assert.equal((await run(db)).code, 'orders_vanished_unconfirmed');

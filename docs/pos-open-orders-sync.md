@@ -372,10 +372,118 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
   5. 첫 정상 수집의 `receiptClosures`와 KPI·`/tables`를 대조한다.
 - 앱보다 Migration이 먼저 적용되어도 안전하다. 기존 앱은 계약 버전 2 이상에서 단건 증거만 보내며 합치기 필드를 보내지 않는다.
 - Migration 없이 앱만 배포돼도 안전하다. 계약 2에서는 합치기 증거를 보내지 않는다.
-- 위험 1: 실제 상세 재조회의 실패 종류가 위 허용 목록 밖(예: timeout 반복)이면 이번 경로가 동작하지 않는다. 운영 진단 로그로 reason/causeCode를 확인해야 한다.
+- 위험 1: (2026-11-15 확인) 운영 로그는 `order_id_invalid`였다. 아래 "빈 GUID 응답" 절에서 반영했다.
 - 위험 2: 할인·옵션·합치기 후 추가 주문이 섞인 합치기는 계속 미확인으로 남는다. 이는 의도된 보호다.
-- 위험 3: 동시성 검증은 PGlite 단일 연결(lease·소유권·writer fence·원자적 거부)로만 했다. 영수증 SHARE 잠금은 기존 단건 경로와 같은 구문을 재사용했지만, native PostgreSQL 독립 연결 검증은 이번 환경에 PostgreSQL이 없어 수행하지 않았다.
+- 위험 3: (2026-11-15 해소) 격리 PostgreSQL 17.12 다중 연결 검증을 아래 최종 감사에서 수행했다.
 - 2026-11-10 장애(22:17 `orders_invalid_row` 후 반복)는 같은 오류 코드 사례일 뿐이다. 주문 합치기가 원인이었다고 가정하지 않는다(당시 스냅샷이 남아 있지 않다).
+
+### 2026-11-15 운영 적용 전 최종 감사 (Migration 내용 변경 없음)
+
+**결론: Migration·앱 코드에서 기능 결함은 발견되지 않았다.** 아래 검증 SQL 3건과 롤백만 보완했다.
+
+**보완한 항목**
+
+- 구조 postflight에 데이터 상태 검사(`existing snapshot rows carry no merge proof yet`)가 섞여 있었다. 첫 정상 수집에서 합치기 증거가 생기면 구조가 정상이어도 실패하는 결함이다.
+  - 구조 검사만 남기고, 데이터 검사는 `pos-open-orders-merged-receipt-evidence-functional-check.sql`로 분리했다.
+  - 격리 PostgreSQL에서 합치기 증거 기록 후에도 구조 postflight가 통과하는 것을 확인했다.
+- preflight를 6건에서 25건으로 강화했다. 각 행에 실제 값(detail)을 출력한다.
+  - Migration 이력: 20261110170329 존재, 20261114161500 및 같은 이름 부재, 더 새 버전 부재.
+  - 부분 적용 부재: 컬럼·제약조건·helper.
+  - 함수 7개: 정확한 시그니처의 `md5(pg_proc.prosrc)`, SECURITY DEFINER/INVOKER, `search_path=""`, 소유자 postgres, API 역할 권한.
+  - 영수증 컬럼 9개의 타입·NULL 허용, orders 기존 제약조건 4개의 정의, 실행 중 lease 여부.
+  - 계약 버전은 함수 실행 대신 `read_v1` 소스로 확인한다. 읽기 전용 역할은 `read_v1` 실행 권한이 없어 실행 방식이 실패했기 때문이다.
+- 기준 해시는 운영 읽기 전용 조회값과 같다. 저장소의 20261109210000 + 20261110170329를 격리 PostgreSQL에 적용한 결과와도 같다(commit_v1 `d4b4af9c…`, read_v1 `ac855dec…`, commit_snapshot_v1 `bf813f29…`).
+- postflight는 22건으로 재구성했다.
+  - 대상: 이력, 컬럼 타입, 제약조건이 정확한 테이블에 붙었는지와 정의, 기존 제약 4개, 함수 10개의 해시·보안·권한, 계약 버전 3.
+  - 새 함수 해시: commit_v1 `9a56ebf8…`, read_v1 `a1c3dcbf…`, helper `9fb8e4da…`/`89fe0b90…`/`490cf4e5…`.
+  - 변경 금지 함수 5개(commit_snapshot_v1·public 래퍼 4개)는 기준 해시 그대로여야 한다.
+- 롤백 보강
+  - 트랜잭션 안에서 `runs`를 EXCLUSIVE로 잠가 새 claim/commit을 막는다.
+  - lease가 살아 있는 collecting run이 있으면 `open_orders_rollback_blocked_active_run`으로 거부한다.
+  - Migration 이력은 바꾸지 않는다고 명시했다(`supabase migration repair --status reverted 20261114161500`은 별도 승인). 롤백 후 preflight는 A2만 실패해야 한다.
+
+**적용 방법별 안전 조건**
+
+| 방법 | 원자성 | 확인 근거 |
+|---|---|---|
+| Supabase CLI `db push`/`migration up` | 파일과 이력 행이 하나의 트랜잭션 | 2026-11-11 CLI 3.1.0 실측(위 절): 잠금 timeout 시 컬럼·함수·이력 모두 원복. 이번 작업에서는 BABA 정책 훅이 CLI를 차단해 재실행하지 않았다 |
+| SQL Editor 등 파일 전체 1회 실행(simple query) | 다중 문장 암묵 트랜잭션, 이력 행 없음 | 격리 PG 17.12: 후반 실패 시 전체 원복, `set local lock_timeout`이 적용되어 5,008ms에 중단 |
+| 문장 단위 분할 실행 | 보장 안 됨 | 금지 |
+
+- 파일에는 BEGIN/COMMIT을 넣지 않는다. CLI 트랜잭션 안에서 COMMIT이 실행되면 파일 변경만 먼저 확정되고, 이력 기록과 원자성이 깨지기 때문이다.
+- 권장 경로는 CLI다. SQL Editor로 적용하면 이력 행이 남지 않는다. 그 경우 이력 정합화(`migration repair --status applied 20261114161500`)를 별도 승인 절차로 진행해야 한다.
+- 실패 후 재실행 절차:
+  1. 오류 확인
+  2. preflight 재실행. 원자적으로 원복됐다면 전부 PASS여야 한다.
+  3. 원인 제거(예: 실행 중 Cron 종료 대기)
+  4. 다시 적용
+  5. postflight 실행
+
+**격리 PostgreSQL 다중 연결 검증** (`tests/pos-open-orders-merge-native.test.mjs`, opt-in)
+
+- 환경: 기존 QA 수명주기 도구, 로컬 PostgreSQL 17.12, 루프백, 임시 DB. 운영은 17.6으로 같은 메이저 버전이다. 13/13 PASS, 모든 시나리오에서 데드락 0건.
+- 1·9 결제 상태 변경 중 커밋: 미확정 영수증 UPDATE가 있으면 합치기 커밋이 SHARE 잠금에서 대기한다. 상대가 롤백하면 거부되고 커밋하면 성공한다(확정 상태 기준).
+- 2·9 취소·재발행 경합: 진행 중인 합치기 커밋 트랜잭션 뒤에서 영수증 쓰기가 대기했다(≈210ms, 테스트에서 일부러 열어 둔 시간만큼). 커밋 후 다음 수집은 바뀐 증거를 거부했다.
+- 3·8 같은 run의 동시 커밋: advisory 잠금으로 직렬화됐다. 두 번째는 replay이고 감사 기록 중복은 없다. 동시 claim은 busy다.
+- 4 같은 영수증으로 다른 그룹 종료 또는 단건 증거 겸용: 거부된다.
+- 5 영수증 잠금 timeout: 10초 후 `open_orders_vanished`로 깨끗하게 실패하고 스냅샷은 그대로다. 증거 없는 일반 커밋은 영수증 잠금을 전혀 잡지 않아 대기 0이다.
+- 6·7 lease 만료, 다른 소유 토큰, 더 새 run 이후의 늦은 커밋: 모두 거부되고 변경이 없다.
+- 10 커밋 성공 후 트랜잭션 중단: 스냅샷·성공 상태·run 상태·영수증이 모두 원복된다.
+- Migration 원자성:
+  - 후반 함수 생성 실패 시 컬럼·제약·helper·이력이 모두 없음.
+  - 수집 커밋이 orders를 잡고 있으면 5초 timeout 후 전체 원복.
+  - 원인 제거 후 재적용이 성공한다.
+- 롤백:
+  - 수집 중이면 거부된다.
+  - 후반 실패(의존 view)에는 전체 원복된다.
+  - 성공하면 commit_v1/read_v1 해시가 운영 기준으로 돌아오고, 권한·소유자·계약 2가 복원된다. 주문·품목은 불변이고 합치기 증거만 지워진다.
+  - 이후 기존 보호(사라진 주문 거부)로 돌아간다. preflight는 이력 정합화 전 A2만 실패한다.
+
+**DB가 앱 증거를 과신하는지 재감사**
+
+- DB가 앱에서 받는 것은 "그룹 구성원·남은 주문·POS 목록에서 사라졌다는 사실"뿐이다.
+- 영수증 상태·지점·영업일·품목은 DB가 영수증 테이블에서 직접 읽는다. 대상 주문 품목은 직전 스냅샷에서, 증거 hash는 DB 자신이 계산한다.
+- 앱이 보낸 Status·품목·금액은 무시하고 직전 스냅샷 값을 그대로 저장한다.
+- 같은 영수증은 한 그룹만 쓸 수 있다. 사라진 주문은 모두 payload에 있어야 한다(기존 vanished guard). 그래서 다른 조합이 같은 영수증으로 동시에 닫힐 수 없다.
+
+**남은 위험**
+
+- 운영 진단 로그의 실제 상세 실패 사유(reason/causeCode)는 아직 확보하지 못했다. 허용 목록 밖 사유라면 이번 경로가 동작하지 않고 기존처럼 실패한다.
+- 합치기 이후 그 영업일의 모든 수집 커밋이 영수증 SHARE 잠금을 잡는다(carried 재검증).
+  - 영수증 수집 트랜잭션이 10초 넘게 열려 있으면 그 회차는 실패한다. 두 Cron은 서로 2분 이상 떨어져 있다.
+  - 잠금 시간은 커밋 트랜잭션 동안(수십 ms)뿐이다.
+- 영업일 전환 전후의 실제 운영 데이터 흐름은 배포 후 functional-check로 확인해야 한다.
+
+### 2026-11-15 운영 진단 로그 반영: 빈 GUID 응답 (이전 합치기 허용 조건 설명보다 우선)
+
+**확보한 운영 로그**
+
+- `[OPEN_ORDERS_SYNC_DIAGNOSTIC]` 값: `orders_vanished_unconfirmed` / stage `vanished_detail` / reason `order_id_invalid` / causeCode `orders_invalid_row` / vanishedCount 2 / confirmedCount 0.
+- 이전 합치기 허용 조건(`order_id_missing`, `detail_data_missing`, `provider_failure`, `provider_http_failure`)에는 이 조합이 없다. 그래서 이전 수정만으로는 운영 장애가 해결되지 않았다.
+
+**`order_id_invalid`가 나오는 형태 (`normalizeOrderSummary`)**
+
+- `Id`가 있으나 쓸 수 없는 경우뿐이다. 즉 문자열이 아닌 값(숫자·불리언·객체·배열)이거나, 빈 GUID `00000000-0000-0000-0000-000000000000`(대소문자·공백 무관)이다.
+- null·빈 문자열은 `order_id_missing`이다. 다른 주문의 실제 Id는 `vanished_id_mismatch`가 된다.
+- CUKCUK의 `Id`는 GUID 필드다. 사라진 주문에 대해 기본 객체를 돌려주면 빈 GUID가 된다. 운영 응답 원문은 받지 않았고 CUKCUK도 새로 호출하지 않았다. 따라서 빈 GUID는 가장 유력한 형태로 판단한 것이고, 확정은 아니다.
+
+**수정 (앱 코드만, Migration·DB 변경 없음)**
+
+- 빈 GUID일 때만 오류 객체에 내부 표시(`emptyIdentity`)를 단다. 로그에는 남지 않고 로그 reason은 그대로 `order_id_invalid`다. 이 경우만 "식별자 없음"으로 보고 합치기 후보로 인정한다.
+- 숫자·객체 등 다른 `order_id_invalid`, 그리고 `orders_invalid_row` 전체는 계속 즉시 실패한다.
+- 재감사 결과 `provider_failure`·`provider_http_failure`를 합치기 후보에서 제외했다. 근거 없이 넣었던 조건이다. 이 둘은 일시 장애·5xx·게이트웨이 오류일 수 있으므로 "주문이 없어졌다"는 확정 응답이 아니다.
+- 단건 결제완료 대체 경로(자기 OrderId 영수증)는 바꾸지 않았다. 빈 GUID는 합치기 증거 경로에서만 인정한다.
+
+**검증**
+
+- RED: 수정 전 코드에 빈 GUID 응답 3형태(기본 객체·Id만·대문자+공백)와 정확한 합치기 영수증을 넣었다.
+  - 운영 로그와 똑같은 진단 `{stage: vanished_detail, reason: order_id_invalid, causeCode: orders_invalid_row, vanishedCount: 2, confirmedCount: 0}`으로 실패했다.
+  - `provider_failure`·`provider_http_failure`는 합치기로 닫히는 과허용이 재현됐다.
+- GREEN:
+  - PGlite 36/36: 빈 GUID 3형태는 허용된다.
+  - 다음은 모두 거부된다: 숫자·객체 Id, provider_failure, HTTP 503, 102, 다른 Id 응답, 빈 GUID와 미결제 영수증, 빈 GUID와 금액만 일치하는 영수증.
+  - 증거가 없으면 운영과 같은 진단으로 실패한다.
+- 격리 PostgreSQL 17.12 14/14: 실제 수집기와 빈 GUID 응답, 운영과 같은 DB 구조로 끝까지(end-to-end) 커밋되고 기능 점검 SQL을 통과했다.
 
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.

@@ -56,6 +56,8 @@ export type OpenOrderSyncDiagnostic = OpenOrderDiagnosticContext & { code: strin
 export class OpenOrderSyncError extends Error {
   code: OpenOrderErrorCode;
   diagnostic?: OpenOrderDiagnosticContext;
+  /** Internal only (never logged): the provider sent the empty GUID as the order Id. */
+  emptyIdentity?: boolean;
   constructor(code: OpenOrderErrorCode, detail?: string, diagnostic?: OpenOrderDiagnosticContext) {
     super(detail ? `${code}: ${detail}` : code);
     this.name = "OpenOrderSyncError";
@@ -214,9 +216,14 @@ export function normalizeOrderSummary(row: unknown): OrderSummary {
   const orderId = toId(rawId);
   const orderDate = pick(row, ["Date", "OrderDate"]);
   const totalAmount = toFiniteNumber(pick(row, ["TotalAmount", "Amount"]));
-  if (!orderId) throw new OpenOrderSyncError("orders_invalid_row", undefined, {
-    reason: rawId === undefined || (typeof rawId === "string" && !rawId.trim()) ? "order_id_missing" : "order_id_invalid",
-  });
+  if (!orderId) {
+    const error = new OpenOrderSyncError("orders_invalid_row", undefined, {
+      reason: rawId === undefined || (typeof rawId === "string" && !rawId.trim()) ? "order_id_missing" : "order_id_invalid",
+    });
+    // The empty GUID is "no identity", unlike a number/object Id (malformed) or another order's Id.
+    if (typeof rawId === "string" && rawId.trim().toLowerCase() === ZERO_UUID) error.emptyIdentity = true;
+    throw error;
+  }
   if (typeof orderDate !== "string" || !Number.isFinite(Date.parse(orderDate))) {
     throw new OpenOrderSyncError("orders_invalid_row", undefined, { reason: "order_date_invalid" });
   }
@@ -796,10 +803,12 @@ export async function collectOpenOrderSnapshot(
         ...(error instanceof OpenOrderSyncError ? {} : { reason: "unexpected_error" as const }),
         causeCode: error instanceof OpenOrderSyncError ? error.code : undefined };
       if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw withDiagnostic(error, context);
-      // Only a definitive "no such order" style answer may be explained by a merge; timeouts,
-      // busy/credential errors and wrong identity/day responses stay hard failures.
+      // Only a successful detail response without an order identity may be explained by a merge:
+      // missing Id/Data, or the empty GUID the POS returns for a merged-away order (production
+      // 2026-11-14: order_id_invalid / orders_invalid_row). Provider/HTTP failures, timeouts,
+      // malformed (non-GUID) Ids and wrong identity/day responses stay hard failures.
       const mergeEligible = Boolean(input.loadMergeReceiptEvidence) && error instanceof OpenOrderSyncError
-        && (missingIdentity || error.code === "provider_failure" || error.code === "provider_http_failure")
+        && (missingIdentity || (error.emptyIdentity === true && error.diagnostic?.reason === "order_id_invalid"))
         && previous?.businessDate === input.businessDate && Array.isArray(previous.lines);
       if (mergeEligible && previous) { mergeCandidates.push({ previous, context }); continue; }
       throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, context);
