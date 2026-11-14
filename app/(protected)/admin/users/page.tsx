@@ -1268,7 +1268,7 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
         </fieldset>
         {levelDraft.included ? <fieldset style={{ ...styles.modalField, ...m.form }} disabled={readOnly}>
           <legend style={styles.modalLabel}>{text.levelBasisShort}</legend>
-          <BenefitChoice label={text.levelBasisShort} value={levelDraft.baseDateMode === baseModeOptions[0]} onLabel={text.levelAutoShort} offLabel={text.levelDirectShort}
+          <BenefitChoice tone="neutral" label={text.levelBasisShort} value={levelDraft.baseDateMode === baseModeOptions[0]} onLabel={text.levelAutoShort} offLabel={text.levelDirectShort}
             onChange={(auto) => { const mode = auto ? baseModeOptions[0] : baseModeOptions[1]; setLevelDraft(current => ({ ...current, baseDateMode: mode, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth })); }} />
           {levelDraft.baseDateMode === "hire_month"
             ? <p style={m.muted}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>

@@ -38,11 +38,16 @@ export function BenefitStatusLine({ status, vi, onLabel, offLabel, unsetLabel }:
 
 /**
  * 적용/미적용 2분할 선택(라디오 그룹). onDisabled: 기존 정책상 적용을 고를 수 없을 때(예: 근태 미사용).
- * 선택은 색만이 아니라 흰 표면·테두리·그림자와 ✓ 표시로 구분한다(진한 회색 홈 위의 흰 버튼).
+ * 선택은 색만이 아니라 흰 표면·테두리·그림자와 ✓ 표시로 구분한다(홈 위의 흰 버튼).
+ * tone "status"(기본, 적용 여부): 적용·가입을 고르면 홈 전체가 초록(#15803D), 미적용·미가입이면 회색(#CBD5E1).
+ * 고른 값(편집 중 초안)을 따르며 저장 전 서버 상태는 상단 상태 줄이 그대로 보여 준다.
+ * tone "neutral": 적용 여부가 아닌 선택(예: 레벨 기준 입사월 자동/직접 지정)은 항상 중립 회색.
  */
-export function BenefitChoice({ label, value, onChange, onLabel, offLabel, onDisabled = false }: {
+export function BenefitChoice({ label, value, onChange, onLabel, offLabel, onDisabled = false, tone = "status" }: {
   label: string; value: boolean; onChange: (value: boolean) => void; onLabel: string; offLabel: string; onDisabled?: boolean;
+  tone?: "status" | "neutral";
 }) {
+  const on = tone === "status" && value;
   const option = (optionValue: boolean, text: string, disabled: boolean) => (
     <button
       type="button"
@@ -50,14 +55,14 @@ export function BenefitChoice({ label, value, onChange, onLabel, offLabel, onDis
       aria-checked={value === optionValue}
       disabled={disabled}
       onClick={() => onChange(optionValue)}
-      style={{ ...m.choice, ...(value === optionValue ? m.choiceSelected : null), ...(disabled ? m.choiceDisabled : null) }}
+      style={{ ...m.choice, ...(value === optionValue ? m.choiceSelected : on ? m.choiceOnGroupIdle : null), ...(disabled ? m.choiceDisabled : null) }}
     >
       {value === optionValue ? <span aria-hidden="true" style={m.choiceCheck}>✓</span> : null}
       {text}
     </button>
   );
   return (
-    <div role="radiogroup" aria-label={label} style={m.choiceGroup}>
+    <div role="radiogroup" aria-label={label} data-tone={on ? "on" : tone === "status" ? "off" : "neutral"} style={{ ...m.choiceGroup, ...(on ? m.choiceGroupOn : null) }}>
       {option(true, onLabel, onDisabled && !value)}
       {option(false, offLabel, false)}
     </div>
@@ -104,6 +109,10 @@ export const m = {
   form: { display: "grid", gap: 12, minWidth: 0 },
   // 홈(진한 중립 회색 #CBD5E1)과 선택 버튼(흰 표면)의 대비로 모달 배경과 구분한다.
   choiceGroup: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, padding: 4, borderRadius: 12, background: "#cbd5e1", minWidth: 0 },
+  // 적용·가입 선택 시 홈 전체를 초록으로(흰 글씨 대비 5.0:1).
+  choiceGroupOn: { background: "#15803d" },
+  // 초록 홈 위의 선택되지 않은 버튼: 투명 배경 + 흰 글씨.
+  choiceOnGroupIdle: { color: "#fff" },
   choice: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, minWidth: 0, minHeight: 44, padding: "6px 8px", boxSizing: "border-box", border: "1px solid transparent", borderRadius: 9, background: "transparent", color: "#475569", fontFamily: "inherit", fontSize: 14, fontWeight: 700, lineHeight: 1.25, textAlign: "center", cursor: "pointer", overflowWrap: "anywhere" },
   // border는 단축 속성으로만 바꾼다(borderColor 단독 지정은 선택 해제 때 React가 색을 지워 검은 테두리가 남는다).
   choiceSelected: { border: "1px solid #94a3b8", background: "#fff", color: "#0f172a", fontWeight: 900, boxShadow: "0 1px 3px rgba(15,23,42,.18)" },
