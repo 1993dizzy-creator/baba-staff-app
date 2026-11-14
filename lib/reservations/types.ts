@@ -1,0 +1,26 @@
+export const reservationStatuses = ["pending", "confirmed", "arrived", "completed", "cancelled", "no_show"] as const;
+export type ReservationStatus = typeof reservationStatuses[number];
+export const inboxStatuses = ["received", "quarantined", "linked", "dismissed"] as const;
+export type InboxStatus = typeof inboxStatuses[number];
+export type ReservationPermissions = { view: boolean; manage: boolean; inbox: boolean; reveal: boolean; confirm: boolean };
+export type ReservationTable = { id: string; name: string; area: string };
+export type Reservation = {
+  id: number; status: ReservationStatus; partySize: number; reservedAt: string; businessDate: string;
+  durationMinutes: number; version: number; confirmedBy: number | null; confirmedAt: string | null;
+  piiPurged: boolean; tables: { linkId: number; tableId: string }[];
+  customerName?: string; customerContact?: string | null; contactMasked?: boolean;
+  note?: string | null; cancelReason?: string | null;
+};
+export type ReservationEvent = { id: number; type: string; fromStatus: string | null; toStatus: string | null;
+  actorUserId: number | null; createdAt: string; changes: Record<string, unknown> };
+export type ReservationDetail = { reservation: Reservation; events: ReservationEvent[];
+  tableHistory: { linkId: number; tableId: string; plannedFrom: string; plannedTo: string;
+    linkedAt: string; releasedAt: string | null; releaseReason?: string | null }[] };
+export type ReservationList = { items: Reservation[]; today: string; permissions: ReservationPermissions; tables: ReservationTable[];
+  summary: { total: number; pending: number; guests: number }; truncated: boolean };
+export type InboxItem = { id: number; status: InboxStatus; quarantineReason: string | null;
+  senderName?: string | null; messageText?: string | null; originalText?: string | null;
+  messageAt: string | null; receivedAt: string; businessDate: string; deliveryCount: number;
+  payloadMismatchCount: number; reprocessCount: number; piiPurged: boolean; reservationIds: number[];
+  reviewNote?: string | null };
+export type InboxDetail = { item: InboxItem; linkedReservations: ReservationDetail[]; processingHistoryAvailable: false };
