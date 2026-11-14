@@ -1,13 +1,13 @@
 "use client";
-// /admin/users 복리후생 설정 모달 전용 표시 부품(식대·개근 보너스·보험·TNCN 공통).
-// 저장·검증·조회 로직은 각 설정 카드가 그대로 갖고, 여기서는 모양만 맞춘다. 급여설정 화면은 쓰지 않는다.
+// /admin/users 복리후생 설정 모달 전용 표시 부품(식대·개근 보너스·보험·TNCN 공통, 장기근무 레벨 모달은 모양만 재사용).
+// 저장·검증·조회 로직은 각 설정 카드(레벨은 직원 상세)가 그대로 갖고, 여기서는 모양만 맞춘다. 급여설정 화면은 쓰지 않는다.
 import { type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /** 현재 적용 상태(급여 계산·스위치와 같은 pick 규칙의 적용 버전)와 예약된 다음 버전. */
 export type BenefitModalStatus = {
   /** 적용 중인 버전이 없으면 null(미설정) */
-  applied: { on: boolean; since: string; detail?: string } | null;
+  applied: { on: boolean; since?: string | null; detail?: string } | null;
   scheduled: { on: boolean; from: string } | null;
 };
 
@@ -22,7 +22,7 @@ export function BenefitStatusLine({ status, vi, onLabel, offLabel, unsetLabel }:
       <div style={m.statusRow}>
         <span style={m.statusCaption}>{vi ? "Hiện tại" : "현재"}</span>
         <b style={applied?.on ? m.badgeOn : m.badgeOff}>{nowLabel}</b>
-        {applied ? <span style={m.statusSince}>{vi ? `từ ${applied.since}` : `${applied.since}부터`}</span> : null}
+        {applied?.since ? <span style={m.statusSince}>{vi ? `từ ${applied.since}` : `${applied.since}부터`}</span> : null}
       </div>
       {applied?.detail ? <span style={m.statusDetail}>{applied.detail}</span> : null}
       {scheduled ? (
@@ -36,7 +36,10 @@ export function BenefitStatusLine({ status, vi, onLabel, offLabel, unsetLabel }:
   );
 }
 
-/** 적용/미적용 2분할 선택(라디오 그룹). onDisabled: 기존 정책상 적용을 고를 수 없을 때(예: 근태 미사용). */
+/**
+ * 적용/미적용 2분할 선택(라디오 그룹). onDisabled: 기존 정책상 적용을 고를 수 없을 때(예: 근태 미사용).
+ * 선택은 색만이 아니라 흰 표면·테두리·그림자와 ✓ 표시로 구분한다(진한 회색 홈 위의 흰 버튼).
+ */
 export function BenefitChoice({ label, value, onChange, onLabel, offLabel, onDisabled = false }: {
   label: string; value: boolean; onChange: (value: boolean) => void; onLabel: string; offLabel: string; onDisabled?: boolean;
 }) {
@@ -47,8 +50,9 @@ export function BenefitChoice({ label, value, onChange, onLabel, offLabel, onDis
       aria-checked={value === optionValue}
       disabled={disabled}
       onClick={() => onChange(optionValue)}
-      style={{ ...m.choice, ...(value === optionValue ? (optionValue ? m.choiceOn : m.choiceOff) : null), ...(disabled ? m.choiceDisabled : null) }}
+      style={{ ...m.choice, ...(value === optionValue ? m.choiceSelected : null), ...(disabled ? m.choiceDisabled : null) }}
     >
+      {value === optionValue ? <span aria-hidden="true" style={m.choiceCheck}>✓</span> : null}
       {text}
     </button>
   );
@@ -98,11 +102,13 @@ export const m = {
   badgeOff: { padding: "2px 8px", borderRadius: 999, background: "#e5e7eb", color: "#374151", fontSize: 12, fontWeight: 900 },
   schedule: { color: "#92400e", fontWeight: 800, overflowWrap: "anywhere" },
   form: { display: "grid", gap: 12, minWidth: 0 },
-  choiceGroup: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, padding: 4, borderRadius: 12, background: "#f1f5f9" },
-  choice: { minWidth: 0, minHeight: 44, padding: "6px 8px", border: 0, borderRadius: 9, background: "transparent", color: "#4b5563", fontFamily: "inherit", fontSize: 14, fontWeight: 800, cursor: "pointer", overflowWrap: "anywhere" },
-  choiceOn: { background: "#16a34a", color: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.12)" },
-  choiceOff: { background: "#fff", color: "#111827", boxShadow: "0 1px 2px rgba(0,0,0,.12)" },
-  choiceDisabled: { color: "#9ca3af", cursor: "not-allowed" },
+  // 홈(진한 중립 회색 #CBD5E1)과 선택 버튼(흰 표면)의 대비로 모달 배경과 구분한다.
+  choiceGroup: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 4, padding: 4, borderRadius: 12, background: "#cbd5e1", minWidth: 0 },
+  choice: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, minWidth: 0, minHeight: 44, padding: "6px 8px", boxSizing: "border-box", border: "1px solid transparent", borderRadius: 9, background: "transparent", color: "#475569", fontFamily: "inherit", fontSize: 14, fontWeight: 700, lineHeight: 1.25, textAlign: "center", cursor: "pointer", overflowWrap: "anywhere" },
+  // border는 단축 속성으로만 바꾼다(borderColor 단독 지정은 선택 해제 때 React가 색을 지워 검은 테두리가 남는다).
+  choiceSelected: { border: "1px solid #94a3b8", background: "#fff", color: "#0f172a", fontWeight: 900, boxShadow: "0 1px 3px rgba(15,23,42,.18)" },
+  choiceCheck: { flexShrink: 0, fontSize: 13, fontWeight: 900 },
+  choiceDisabled: { color: "#64748b", cursor: "not-allowed" },
   field: { display: "grid", gap: 5, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#374151" },
   input: { width: "100%", minWidth: 0, boxSizing: "border-box", minHeight: 44, padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", fontSize: 14 },
   textarea: { width: "100%", minWidth: 0, boxSizing: "border-box", minHeight: 64, padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 10, fontSize: 14, resize: "vertical" },

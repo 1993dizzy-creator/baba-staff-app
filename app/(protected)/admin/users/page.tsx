@@ -41,6 +41,7 @@ import { formatContractRate } from "@/lib/payroll/payroll-page-money";
 import { attendanceDisableBlockCode } from "@/lib/employee/attendance-disable-block";
 import { NO_PAYROLL_UNSAVED, hasPayrollUnsaved, payrollLeaveMessage, useLeaveGuard, type PayrollUnsavedState } from "@/components/payroll/payrollUnsaved";
 import { isTopModal, useModalFocusTrap } from "@/components/payroll/useModalFocusTrap";
+import { BenefitChoice, BenefitField, BenefitStatusLine, m } from "@/components/payroll/BenefitModalParts";
 import { payrollApplicabilityIcons, type PayrollApplicabilityEmployee, type PayrollApplicabilityIcon } from "@/lib/payroll/applicability-icons";
 import { vietnamCurrentMonthStart } from "@/lib/payroll/ui-dates";
 import { scheduledMinutesPerDay } from "@/lib/payroll/work-schedule";
@@ -742,7 +743,6 @@ function UserCard({
               {canManagePayroll ? BENEFIT_ROWS.map((row) => {
                 const status = benefits.status(row.key);
                 const director = row.key === "insurance" && isDirectorManagedInsurance(user.username);
-                const on = status.state === "ready" && status.on;
                 // 근태 미사용 직원은 식대·개근을 켤 수 없다(기존 서버 검증과 같다). 아이콘·이름으로 상세 확인·해제는 가능하다.
                 const needsAttendance = (row.key === "meal" || row.key === "bonus") && status.state === "ready" && !status.on && status.attendanceTrackingEnabled === false;
                 return <BenefitTile
@@ -755,8 +755,9 @@ function UserCard({
                   stateLabel={director ? text.benefitCommonManaged : benefitUnsetLabel(row.key, status, text)}
                   disabled={isSaving || director}
                   switchDisabled={needsAttendance}
-                  // 스위치: 반대 상태로 바꾸려는 모달(목표 상태를 미리 채움). 아이콘·이름: 현재 상태 그대로 편집 모달.
-                  onSwitch={() => openSheet(row.key, { enable: !on })}
+                  // 스위치·아이콘·이름 모두 같은 편집 모달을 연다. 모달은 서버의 현재 적용 상태로 시작한다
+                  // (스위치만으로 반대 상태를 고르거나 저장하지 않음). 저장은 모달에서 상태를 바꾼 뒤에만 가능하다.
+                  onSwitch={() => openSheet(row.key)}
                   onDetail={() => openSheet(row.key)}
                   onRetry={() => benefits.reload(row.key)}
                 />;
@@ -935,7 +936,7 @@ function levelBenefitStatus(user: UserRow): Extract<BenefitStatus, { state: "rea
 /**
  * 복리후생 타일: 일반 컨테이너 안에 형제 버튼 두 개(중첩 버튼 없음).
  * - 아이콘·이름 버튼: 현재 상태 그대로 그 설정의 편집 모달을 연다.
- * - 슬라이딩 스위치(role=switch): 반대 상태로 바꾸려는 모달을 연다. 스위치는 저장하지 않으며,
+ * - 슬라이딩 스위치(role=switch): 같은 편집 모달을 현재 상태 그대로 연다(반대 상태를 미리 고르지 않음). 스위치는 저장하지 않으며,
  *   모달 저장 후 다시 조회한 실제 상태만 표시한다(예약 변경은 현재 상태 + 적용/해제 예정).
  * 조회 중·조회 실패·공통 관리(권한 없음)는 OFF 스위치로 표시하지 않는다(확인 중 / 조회 실패+재조회 / 상태 글자).
  */
@@ -1230,45 +1231,69 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
     : displayInfo.eligible ? text.highestLevel : "-";
   const amount = (value: number) => value.toLocaleString("vi-VN") + "₫";
 
-  return createPortal(<dialog ref={dialogRef} aria-label={text.levelSettings} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
+  const employeeName = draft.name || draft.full_name || user.username;
+  // 상단 상태 줄: 실제 적용 중인 정책(타일과 같은 levelBenefitStatus)과 예약(켜기/끄기)을 따로 보여 준다.
+  const levelStatus = levelBenefitStatus(user);
+  const readOnly = Boolean(user.termination_date);
+
+  return createPortal(<dialog ref={dialogRef} aria-label={`${text.longTermLevel} · ${employeeName}`} onCancel={event => { event.preventDefault(); onCancel(); }} style={styles.dialog}>
     <form style={styles.modalForm} onSubmit={event => { event.preventDefault(); if (valid) onApply({ ...levelDraft, effectiveMonth: hasChanges ? "next" : "current", applied: hasChanges, salaryRaiseEnabled: hasChanges && levelDraft.included ? true : levelDraft.salaryRaiseEnabled }); }}>
       <header style={styles.modalHeader}>
-        <div style={{ minWidth: 0 }}>
-          <strong style={styles.modalTitle}>{text.longTermLevel}</strong>
-          <div style={styles.modalMuted}>{draft.name || draft.full_name || user.username} · {user.levelInfo.displayLabel ?? text.levelDisabled}</div>
-        </div>
+        <strong style={styles.sheetTitle}>📈 {text.longTermLevel} · {employeeName}</strong>
         <button type="button" aria-label={text.levelClose} onClick={onCancel} style={styles.modalClose}>×</button>
       </header>
       <div style={styles.modalBody}>
-        <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
+        <BenefitStatusLine
+          vi={lang === "vi"}
+          onLabel={text.levelEnabled}
+          offLabel={text.levelDisabled}
+          unsetLabel={text.levelDisabled}
+          status={{
+            applied: {
+              on: levelStatus.on,
+              since: user.levelProgramPolicy?.currentEffectiveFrom?.slice(0, 7) ?? null,
+              detail: levelStatus.on ? `${text.currentLevel} ${user.levelInfo.displayLabel ?? "-"}` : undefined,
+            },
+            scheduled: levelStatus.scheduled,
+          }}
+        />
+        {/* 켜기/끄기가 아닌 예약(기준월 변경 등)도 현재 상태와 따로 알린다. */}
+        {scheduledDate && !levelStatus.scheduled ? <p role="status" style={m.notice}>{text.levelScheduledPolicy}: {dateLabel(scheduledDate)}</p> : null}
+        {transitionConflict ? <p role="alert" style={m.error}>{text.levelMonthTransitionConflict}</p> : null}
+        {readOnly ? <p role="alert" style={m.notice}>{text.terminatedLevelReadOnly}</p> : null}
+        <fieldset style={styles.modalField} disabled={readOnly}>
           <legend style={styles.modalLabel}>{text.levelParticipation}</legend>
-          <div style={styles.segmented}>
-            {[true, false].map((enabled) => <label key={String(enabled)} style={levelDraft.included === enabled ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-" + user.id} checked={levelDraft.included === enabled} onChange={() => setLevelDraft((current) => ({ ...current, included: enabled, salaryRaiseEnabled: enabled ? true : current.salaryRaiseEnabled }))} />
-              {enabled ? text.levelEnabled : text.levelDisabled}
-            </label>)}
-          </div>
+          <BenefitChoice label={text.levelParticipation} value={levelDraft.included} onLabel={text.levelEnabled} offLabel={text.levelDisabled}
+            onChange={(enabled) => setLevelDraft((current) => ({ ...current, included: enabled, salaryRaiseEnabled: enabled ? true : current.salaryRaiseEnabled }))} />
         </fieldset>
-        {levelDraft.included ? <fieldset style={styles.modalField} disabled={Boolean(user.termination_date)}>
+        {levelDraft.included ? <fieldset style={{ ...styles.modalField, ...m.form }} disabled={readOnly}>
           <legend style={styles.modalLabel}>{text.levelBasisShort}</legend>
-          <div style={styles.segmented}>
-            {baseModeOptions.map((mode) => <label key={mode} style={levelDraft.baseDateMode === mode ? styles.segmentActive : styles.segment}>
-              <input type="radio" name={"level-base-" + user.id} checked={levelDraft.baseDateMode === mode} onChange={() => setLevelDraft(current => ({ ...current, baseDateMode: mode, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth }))} />
-              {mode === "hire_month" ? text.levelAutoShort : text.levelDirectShort}
-            </label>)}
-          </div>
+          <BenefitChoice label={text.levelBasisShort} value={levelDraft.baseDateMode === baseModeOptions[0]} onLabel={text.levelAutoShort} offLabel={text.levelDirectShort}
+            onChange={(auto) => { const mode = auto ? baseModeOptions[0] : baseModeOptions[1]; setLevelDraft(current => ({ ...current, baseDateMode: mode, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled, baseMonth: mode === "override_month" && !current.baseMonth ? draftHireMonth ?? "" : current.baseMonth })); }} />
           {levelDraft.baseDateMode === "hire_month"
-            ? <p style={styles.modalHint}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>
-            : <Field label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled }))} style={styles.input} /></Field>}
-        </fieldset> : <section style={styles.levelOffCard} aria-label={text.levelChangeSummary} aria-live="polite">
-          <strong style={styles.levelOffCardLabel}>{text.levelOffEmpty}</strong>
-          {hasChanges ? <span style={styles.modalMuted}>{text.levelStartsAt}: {dateLabel(effectiveFrom)}</span> : null}
-        </section>}
-        {scheduledDate ? <p role="status" style={styles.modalMuted}>{text.levelScheduledPolicy}: {dateLabel(scheduledDate)}</p> : null}
-        {transitionConflict ? <p role="alert" style={styles.fieldNotice}>{text.levelMonthTransitionConflict}</p> : null}
-        {user.termination_date ? <p role="alert" style={styles.fieldNotice}>{text.terminatedLevelReadOnly}</p> : null}
-        <details style={styles.modalHelp}>
-          <summary style={styles.modalHelpTitle}>{text.levelHelp}</summary>
+            ? <p style={m.muted}>{text.hireDate} {draft.hire_date ?? "-"} → {text.levelBaseMonth} {!hasChanges && comparedBase.mode === "hire_month" ? comparedBase.baseDate?.slice(0, 7) ?? "-" : draftHireMonth ?? "-"}</p>
+            : <BenefitField label={text.levelBaseMonth}><input type="month" required min={draft.hire_date?.slice(0, 7)} max={draft.termination_date?.slice(0, 7)} value={levelDraft.baseMonth} onChange={event => setLevelDraft(current => ({ ...current, baseMonth: event.target.value, salaryRaiseEnabled: current.included ? true : current.salaryRaiseEnabled }))} style={m.input} /></BenefitField>}
+        </fieldset> : null}
+        {/* 현재(변경이 있으면 변경 후) 레벨과 다음 승급 요약 */}
+        {levelDraft.included ? <dl style={styles.levelModalSummary} aria-label={hasChanges ? text.levelPreviewTitle : text.levelCurrentPolicy}>
+          <div style={styles.levelModalSummaryItem}><dt style={styles.levelModalSummaryLabel}>{hasChanges ? text.levelAfter : text.currentLevel}</dt><dd style={styles.levelModalSummaryValue}>{displayInfo.displayLabel ?? text.levelDisabled}</dd></div>
+          <div style={styles.levelModalSummaryItem}><dt style={styles.levelModalSummaryLabel}>{text.levelNextPromotion}</dt><dd style={styles.levelModalSummaryValue}>{nextLabel}</dd></div>
+        </dl> : null}
+        {/* 변경 미리보기: 실제 변경이 있을 때만(변경은 다음 달 1일부터 적용) */}
+        {hasChanges ? <section style={styles.levelPreview} aria-label={text.levelChangeSummary} aria-live="polite">
+          <strong>{text.levelPreviewTitle}</strong>
+          <span>{text.levelStartsAt}: <b>{dateLabel(effectiveFrom)}</b></span>
+          {!levelDraft.included ? <span>{text.levelOffEmpty}</span> : null}
+          {levelDraft.included && (raiseDelta === null || raiseDelta !== 0) ? <span>{contract?.payType === "hourly" ? text.levelHourlyDelta : contract ? text.levelRaiseDelta : text.levelRaisePreview}: <b>{raiseDelta === null ? text.levelContractReview : (raiseDelta > 0 ? "+" : "") + amount(raiseDelta)}</b></span> : null}
+          {showComparison ? <details style={m.details}>
+            <summary style={m.summary}>{text.levelCompareDetails}</summary>
+            {levelChanged ? <p style={m.muted}>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</p> : null}
+            {nextDateChanged ? <p style={m.muted}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
+            {raiseDelta !== null && raiseDelta !== 0 && raiseBefore !== null && raiseAfter !== null ? <p style={m.muted}>{contract?.payType === "hourly" ? text.levelHourlyDelta : text.levelRaisePreview}: {amount(raiseBefore)} → {amount(raiseAfter)}</p> : null}
+          </details> : null}
+        </section> : null}
+        <details style={m.details}>
+          <summary style={m.summary}>{text.levelHelp}</summary>
           <ul style={styles.levelHelpRules}>
             <li>{text.levelHelpBase}</li>
             <li>{text.levelHelpPromotion}</li>
@@ -1277,31 +1302,19 @@ function LevelSettingsModal({ user, draft, initial, text, onCancel, onApply }: {
             <li>{text.levelHelpTwoYears}</li>
           </ul>
         </details>
-        {levelDraft.included ? <section style={styles.modalSummary} aria-label={text.levelChangeSummary} aria-live="polite">
-          <strong>{hasChanges ? text.levelPreviewTitle : text.levelCurrentPolicy}</strong>
-          {hasChanges ? <span style={styles.modalMuted}>{text.levelStartsAt}: {dateLabel(effectiveFrom)}</span> : null}
-          <dl style={styles.modalSummaryGrid}>
-            <dt>{hasChanges ? text.levelAfter : text.currentLevel}</dt><dd style={styles.modalValue}>{displayInfo.displayLabel ?? text.levelDisabled}</dd>
-            <dt>{text.levelNextPromotion}</dt><dd style={styles.modalValue}>{nextLabel}</dd>
-            {hasChanges && (raiseDelta === null || raiseDelta !== 0) ? <><dt>{contract?.payType === "hourly" ? text.levelHourlyDelta : contract ? text.levelRaiseDelta : text.levelRaisePreview}</dt><dd style={styles.modalValue}>{raiseDelta === null ? text.levelContractReview : (raiseDelta > 0 ? "+" : "") + amount(raiseDelta)}</dd></> : null}
-          </dl>
-          {showComparison ? <details>
-            <summary style={styles.modalMuted}>{text.levelCompareDetails}</summary>
-            {levelChanged ? <p style={styles.modalHint}>{text.currentLevel}: {before.displayLabel ?? text.levelDisabled} → {after.displayLabel ?? text.levelDisabled}</p> : null}
-            {nextDateChanged ? <p style={styles.modalHint}>{text.nextLevelShort}: {before.nextLevelDate ?? "-"} → {after.nextLevelDate ?? "-"}</p> : null}
-            {raiseDelta !== null && raiseDelta !== 0 && raiseBefore !== null && raiseAfter !== null ? <p style={styles.modalHint}>{contract?.payType === "hourly" ? text.levelHourlyDelta : text.levelRaisePreview}: {amount(raiseBefore)} → {amount(raiseAfter)}</p> : null}
-          </details> : null}
-        </section> : null}
-        <details style={styles.modalHelp}>
-          <summary style={styles.modalHelpTitle}>{text.levelHistory}</summary>
-          {historyError ? <><p role="alert">{text.levelHistoryError}</p><button type="button" style={styles.secondaryButton} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status">{text.loading}</p> :
-            <LevelHistoryView history={history.history} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
+        <details style={m.details}>
+          <summary style={m.summary}>{text.levelHistory}</summary>
+          <div style={styles.levelHistoryScroll}>
+            {historyError ? <><p role="alert" style={m.error}>{text.levelHistoryError}</p><button type="button" style={m.cancel} onClick={() => setHistoryAttempt(value => value + 1)}>{text.retry}</button></> : !history?.history ? <p role="status" style={m.muted}>{text.loading}</p> :
+              <LevelHistoryView history={history.history} currentInfo={user.levelInfo} terminationDate={user.termination_date} pending={hasChanges || Boolean(scheduledDate)} text={text} />}
+          </div>
         </details>
       </div>
-      {hasChanges ? <p style={{ ...styles.modalHint, margin: 0, padding: "6px 14px", flexShrink: 0 }}>{text.levelApplyHelp}</p> : null}
+      {/* '적용'은 직원 상세 편집에만 반영한다(DB 저장 아님). 최종 저장은 직원 상세의 저장 버튼으로만 한다. */}
       <footer style={styles.modalFooter}>
-        <button type="button" onClick={onCancel} style={styles.secondaryButton}>{text.cancel}</button>
-        <button type="submit" disabled={!valid || Boolean(user.termination_date)} style={styles.primaryButton}>{text.levelApply}</button>
+        <p role="status" style={m.hint}>{text.levelApplyHelp}</p>
+        <button type="button" onClick={onCancel} style={m.cancel}>{text.cancel}</button>
+        <button type="submit" disabled={!valid || readOnly} style={{ ...m.save, ...(!valid || readOnly ? m.saveDisabled : null) }}>{text.levelApply}</button>
       </footer>
     </form>
   </dialog>, document.body);
@@ -1982,10 +1995,16 @@ const styles = {
     maxWidth: "none", maxHeight: "calc(var(--level-vh, 100dvh) - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)))",
     overflow: "hidden", padding: 0, border: "1px solid #d1d5db", borderRadius: 12, boxSizing: "border-box", fontSize: 12, color: "#1f2937" },
   modalForm: { display: "flex", flexDirection: "column", maxHeight: "min(760px, calc(var(--level-vh, 100dvh) - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - 2px))", minHeight: 0 },
-  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
-  modalTitle: { display: "block", fontSize: 15, marginBottom: 3 },
+  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 14px", borderBottom: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   modalClose: { display: "grid", placeItems: "center", flexShrink: 0, width: 36, height: 36, border: 0, borderRadius: 8, background: "#f3f4f6", color: "#374151", fontSize: 24, cursor: "pointer" },
-  modalBody: { display: "grid", gap: 14, overflowY: "auto", overscrollBehavior: "contain", minHeight: 0, padding: 14 },
+  // 레벨 모달: 복리후생 시트와 같은 본문 배경·간격(카드 테두리 없이 섹션 간격으로 구분).
+  modalBody: { display: "grid", alignContent: "start", gap: 14, overflowY: "auto", overscrollBehavior: "contain", minHeight: 0, minWidth: 0, padding: 12, background: "#f9fafb" },
+  levelModalSummary: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, margin: 0, padding: "10px 12px", borderRadius: 12, background: "#f1f5f9", minWidth: 0 },
+  levelModalSummaryItem: { display: "grid", gap: 2, minWidth: 0 },
+  levelModalSummaryLabel: { color: "#6b7280", fontSize: 12, fontWeight: 700 },
+  levelModalSummaryValue: { margin: 0, color: "#111827", fontSize: 15, fontWeight: 900, overflowWrap: "anywhere" },
+  levelPreview: { display: "grid", gap: 4, minWidth: 0, padding: "10px 12px", borderRadius: 12, background: "#eef2ff", color: "#312e81", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" },
+  levelHistoryScroll: { maxHeight: "min(360px, 50vh)", overflowY: "auto", overscrollBehavior: "contain", marginTop: 6, minWidth: 0 },
   levelHelpRules: { margin: "8px 0", paddingLeft: 18, display: "grid", gap: 6, lineHeight: 1.6 },
   levelTimelinePanel: { display: "flex", flexDirection: "column", maxHeight: "min(420px, calc(var(--level-vh, 100dvh) * 0.55))", minHeight: 0 },
   levelTimelineCurrent: { display: "grid", gap: 5, paddingBottom: 10, flexShrink: 0 },
@@ -1997,15 +2016,9 @@ const styles = {
   modalLabel: { padding: 0, marginBottom: 6, fontSize: 12, fontWeight: 800, color: "#374151" },
   modalHint: { margin: "7px 0 0", fontSize: 11, color: "#6b7280", lineHeight: 1.5, overflowWrap: "anywhere" },
   modalMuted: { color: "#6b7280", fontSize: 11, fontWeight: 500, overflowWrap: "anywhere" },
-  modalHelp: { color: "#111827", fontSize: 11, lineHeight: 1.5 },
   modalHelpTitle: { color: "#111827", fontWeight: 700, cursor: "pointer" },
-  levelOffCard: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, minHeight: 96, padding: 10, border: "1px solid #e5e7eb", borderRadius: 8, background: "#f9fafb", textAlign: "center" },
-  levelOffCardLabel: { fontSize: 14, fontWeight: 800, color: "#374151" },
   levelTimelineCurrentRow: { fontWeight: 800, color: "#1d4ed8" },
-  modalSummary: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 8, background: "#f9fafb" },
-  modalSummaryGrid: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "6px 8px", margin: 0, fontSize: 11, alignItems: "start" },
-  modalValue: { margin: 0, fontWeight: 800, textAlign: "right" },
-  modalFooter: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px 14px", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
+  modalFooter: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, padding: "10px 14px calc(10px + env(safe-area-inset-bottom))", borderTop: "1px solid #e5e7eb", flexShrink: 0, background: "#fff" },
   detailSection: { display: "grid", gap: 8, padding: 10, border: "1px solid #e5e7eb", borderRadius: 9, minWidth: 0 },
   toggle: { width: "100%", justifyContent: "space-between", textAlign: "left" },
   statusRow: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "4px 8px", minWidth: 0 },

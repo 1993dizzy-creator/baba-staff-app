@@ -39,11 +39,11 @@ export type EmployeeInsuranceLoadState = {
 };
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-// intent: 스위치로 연 모달의 목표 가입 상태(없으면 현재 상태). 가입으로 채울 때 기준급여가 없으면 폼의 기존 기본값을 쓴다.
-function insuranceFormBaseline(setting: PayrollInsuranceSettingVersion | null, intent: boolean | null = null) {
-  const enrolled = intent ?? setting?.isEnrolled ?? false;
-  const base = setting?.insuranceBaseAmount ?? 0;
-  return { enrolled, base: String(intent === true && base < 1 ? 5000000 : base), effectiveMonth: currentMonth(), note: "" };
+// 모달(이름·스위치 어느 쪽으로 열어도)은 서버에서 확인한 현재 가입 상태로 시작한다.
+// 가입을 새로 고르면 기준급여가 없을 때 폼의 기존 기본값(5,000,000)을 채운다(선택 onChange).
+function insuranceFormBaseline(setting: PayrollInsuranceSettingVersion | null) {
+  const enrolled = setting?.isEnrolled ?? false;
+  return { enrolled, base: String(setting?.insuranceBaseAmount ?? 0), effectiveMonth: currentMonth(), note: "" };
 }
 
 export default function EmployeeInsuranceSettings({
@@ -78,7 +78,6 @@ export default function EmployeeInsuranceSettings({
   const [current, setCurrent] =
     useState<PayrollInsuranceSettingVersion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [enrolled, setEnrolled] = useState(false);
   const [base, setBase] = useState("0");
   const [effectiveMonth, setEffectiveMonth] = useState(currentMonth);
@@ -88,8 +87,8 @@ export default function EmployeeInsuranceSettings({
   const [loaded, setLoaded] = useState(false);
 
   const resetForm = useCallback(
-    (setting: PayrollInsuranceSettingVersion | null, intent: boolean | null = null) => {
-      const baseline = insuranceFormBaseline(setting, intent);
+    (setting: PayrollInsuranceSettingVersion | null) => {
+      const baseline = insuranceFormBaseline(setting);
       setEnrolled(baseline.enrolled);
       setBase(baseline.base);
       setEffectiveMonth(baseline.effectiveMonth);
@@ -126,12 +125,9 @@ export default function EmployeeInsuranceSettings({
         const request = formRequestRef.current;
         if (request && !autoOpenedRef.current) {
           autoOpenedRef.current = true;
-          resetForm(nextCurrent, request.enable);
-          setFormIntent(request.enable);
           setFormOpen(true);
-        } else {
-          resetForm(nextCurrent);
         }
+        resetForm(nextCurrent);
         onLoadStateChange?.(userId, { current: nextCurrent, history: data.history ?? [], error: false, loading: false });
         setLoaded(true);
       } catch (loadError: unknown) {
@@ -175,18 +171,16 @@ export default function EmployeeInsuranceSettings({
     };
   }, [load, resetForm, userId, vi]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ enrolled, base, effectiveMonth, note }, insuranceFormBaseline(current, formIntent))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ enrolled, base, effectiveMonth, note }, insuranceFormBaseline(current))), onDirtyChange);
 
   function openForm() {
     resetForm(current);
-    setFormIntent(null);
     setFormOpen(true);
   }
 
   function cancelForm() {
     setFormOpen(false);
     resetForm(current);
-    setFormIntent(null);
     onFormFinish?.("cancelled");
   }
 
@@ -226,7 +220,6 @@ export default function EmployeeInsuranceSettings({
     await load();
     if (!mounted.current) return;
     setFormOpen(false);
-    setFormIntent(null);
     onFormFinish?.("saved");
   }
 

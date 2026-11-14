@@ -44,9 +44,10 @@ test("status reads are lazy, per employee, abortable, and a failure is never sho
   assert.match(page, /aria-busy=\{loading \|\| undefined\}/);
 });
 
-test("a switch never saves: it opens that setting's modal with the intent; saving uses the card's existing API, then re-reads", () => {
-  // switch = the opposite state as intent; icon/name = the current values
-  assert.match(page, /onSwitch=\{\(\) => openSheet\(row\.key, \{ enable: !on \}\)\}/);
+test("a switch never saves: it opens that setting's modal at the current state; saving uses the card's existing API, then re-reads", () => {
+  // 3차: switch and icon/name open the same modal; neither pre-selects the opposite state
+  assert.match(page, /onSwitch=\{\(\) => openSheet\(row\.key\)\}/);
+  assert.doesNotMatch(page, /enable: !on/);
   assert.match(page, /onDetail=\{\(\) => openSheet\(row\.key\)\}/);
   assert.doesNotMatch(page, /fetch\([^)]*(meal-allowance|attendance-bonus|insurance|tax-settings)[^)]*method/, "no setting writes from the employee page");
   assert.match(page, /benefits\.reload\(view\);\n\s+if \(view === "meal"\) payroll\.onMealChanged\(\);/);
@@ -66,19 +67,21 @@ test("a switch never saves: it opens that setting's modal with the intent; savin
   assert.match(tile, /\{shortTitle \?\? title\}/);
 });
 
-test("setting cards: modal mode opens the form once after load, prefilled with the intent as its unsaved baseline; cancel/save report back", () => {
+test("setting cards: modal mode opens the form once after load at the server's current state (its unsaved baseline); cancel/save report back", () => {
   for (const [name, source] of cards) {
     assert.match(source, /formRequest\?: PayrollSettingFormRequest \| null;/, name);
     assert.match(source, /const formRequestRef = useRef\(formRequest \?\? null\);\n\s+const autoOpenedRef = useRef\(false\);/, name);
     assert.match(source, /if \(request && !autoOpenedRef\.current\) \{\n\s+autoOpenedRef\.current = true;/, name);
-    assert.match(source, /FormBaseline\([^)]*formIntent\)\)\), onDirtyChange\);/, `${name}: unsaved = differs from the (intent) baseline`);
+    // unsaved / save-enable baseline = the current server state (no switch intent)
+    assert.match(source, /FormBaseline\((state\?\.current \?\? null|current|current, employeeName)\)\)\), onDirtyChange\);/, `${name}: unsaved = differs from the current-state baseline`);
+    assert.doesNotMatch(source, /formIntent|request\.enable/, `${name}: no switch intent prefill`);
     assert.match(source, /onFormFinish\?\.\("saved"\);/, name);
     assert.match(source, /onFormFinish\?\.\("cancelled"\);/, name);
     assert.match(source, /defaultOpen=\{Boolean\(formRequest\)\}/, name);
   }
-  // attendance-OFF employees cannot be prefilled to 대상 (same as the existing server rule)
+  // attendance-OFF employees still cannot choose 대상 in the modal (same as the existing server rule)
   for (const [name, source] of cards.filter(([name]) => /Meal|AttendanceBonus/.test(name))) {
-    assert.match(source, /const intent = request\.enable === true && !next\.attendanceTrackingEnabled \? null : request\.enable;/, name);
+    assert.match(source, /onDisabled=\{disabledByAttendanceTracking\}/, name);
   }
 });
 

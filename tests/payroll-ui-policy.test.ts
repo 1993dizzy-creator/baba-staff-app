@@ -95,9 +95,9 @@ test("employee selector has accessible selected styling and complete empty state
 test("employee insurance form is collapsed and resets from the current setting per employee", () => {
   assert.match(employeeInsurance, /const \[formOpen, setFormOpen\] = useState\(false\)/);
   // P0: the reset values live in insuranceFormBaseline (shared with the unsaved-input check); resetForm applies them.
-  // 4차: a switch intent (enrol / unenrol) can prefill the form; without one the reset is the current setting as before.
-  assert.match(employeeInsurance, /const enrolled = intent \?\? setting\?\.isEnrolled \?\? false;\n\s+const base = setting\?\.insuranceBaseAmount \?\? 0;\n\s+return \{ enrolled, base: String\(intent === true && base < 1 \? 5000000 : base\), effectiveMonth: currentMonth\(\), note: "" \};/);
-  assert.match(employeeInsurance, /const baseline = insuranceFormBaseline\(setting, intent\);\n      setEnrolled\(baseline\.enrolled\);\n      setBase\(baseline\.base\);\n      setEffectiveMonth\(baseline\.effectiveMonth\);\n      setNote\(baseline\.note\);/);
+  // 3차(복리후생 모달): no switch intent — the form always resets from the current setting (가입 선택 시 기본 기준급여는 선택 onChange가 채운다).
+  assert.match(employeeInsurance, /const enrolled = setting\?\.isEnrolled \?\? false;\n\s+return \{ enrolled, base: String\(setting\?\.insuranceBaseAmount \?\? 0\), effectiveMonth: currentMonth\(\), note: "" \};/);
+  assert.match(employeeInsurance, /const baseline = insuranceFormBaseline\(setting\);\n      setEnrolled\(baseline\.enrolled\);\n      setBase\(baseline\.base\);\n      setEffectiveMonth\(baseline\.effectiveMonth\);\n      setNote\(baseline\.note\);/);
   assert.match(employeeInsurance, /setFormOpen\(false\)/);
   assert.match(employeeInsurance, /resetForm\(null\)/);
   assert.match(employeeInsurance, /\[onLoadStateChange, resetForm, userId, vi\]/);

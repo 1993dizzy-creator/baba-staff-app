@@ -37,9 +37,9 @@ type MealAllowanceState = {
 };
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-// intent: 스위치로 연 모달의 목표 상태(없으면 현재 상태).
-function mealFormBaseline(current: MealAllowanceVersion | null, intent: boolean | null = null) {
-  return { isEligible: intent ?? current?.isEligible ?? false, effectiveFrom: vietnamToday(), note: "" };
+// 모달(이름·스위치 어느 쪽으로 열어도)은 서버에서 확인한 현재 적용 상태로 시작한다.
+function mealFormBaseline(current: MealAllowanceVersion | null) {
+  return { isEligible: current?.isEligible ?? false, effectiveFrom: vietnamToday(), note: "" };
 }
 
 function vietnamToday() {
@@ -60,7 +60,7 @@ export default function EmployeeMealAllowanceSettings({
   onHistoryStateChange?: (state: SettingHistoryState<MealAllowanceVersion>) => void;
   /** 폼을 연 뒤 값이 바뀌었거나 저장 중이면 true. */
   onDirtyChange?: (dirty: boolean) => void;
-  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 enable 값으로 미리 채운다(그 값이 미저장 판정 기준). */
+  /** /admin/users 설정 모달: 조회가 끝나면 폼을 바로 열고 현재 적용 상태로 채운다(그 값이 미저장 판정 기준). */
   formRequest?: PayrollSettingFormRequest | null;
   /** 모달 모드에서 폼 저장 완료(재조회 후) 또는 취소를 알린다. */
   onFormFinish?: (result: PayrollSettingFormResult) => void;
@@ -80,7 +80,6 @@ export default function EmployeeMealAllowanceSettings({
 
   const [state, setState] = useState<MealAllowanceState | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [isEligible, setIsEligible] = useState(false);
   const [effectiveFrom, setEffectiveFrom] = useState(vietnamToday);
   const [note, setNote] = useState("");
@@ -88,8 +87,8 @@ export default function EmployeeMealAllowanceSettings({
   const [error, setError] = useState("");
   const [blockedCode, setBlockedCode] = useState("");
 
-  const resetForm = useCallback((current: MealAllowanceVersion | null, intent: boolean | null = null) => {
-    const baseline = mealFormBaseline(current, intent);
+  const resetForm = useCallback((current: MealAllowanceVersion | null) => {
+    const baseline = mealFormBaseline(current);
     setIsEligible(baseline.isEligible);
     setEffectiveFrom(baseline.effectiveFrom);
     setNote(baseline.note);
@@ -125,14 +124,9 @@ export default function EmployeeMealAllowanceSettings({
         const request = formRequestRef.current;
         if (request && !autoOpenedRef.current) {
           autoOpenedRef.current = true;
-          // 근태 미사용이면 대상으로 바꿀 수 없으므로(기존 검증) 목표 상태를 미리 채우지 않는다.
-          const intent = request.enable === true && !next.attendanceTrackingEnabled ? null : request.enable;
-          resetForm(next.current, intent);
-          setFormIntent(intent);
           setFormOpen(true);
-        } else {
-          resetForm(next.current);
         }
+        resetForm(next.current);
         reportHistoryRef.current?.({ status: "ready", history: next.history });
       } catch (loadError: unknown) {
         if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
@@ -155,18 +149,16 @@ export default function EmployeeMealAllowanceSettings({
     };
   }, [load]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null, formIntent))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ isEligible, effectiveFrom, note }, mealFormBaseline(state?.current ?? null))), onDirtyChange);
 
   function openForm() {
     resetForm(state?.current ?? null);
-    setFormIntent(null);
     setFormOpen(true);
   }
 
   function cancelForm() {
     setFormOpen(false);
     resetForm(state?.current ?? null);
-    setFormIntent(null);
     onFormFinish?.("cancelled");
   }
 
@@ -200,7 +192,6 @@ export default function EmployeeMealAllowanceSettings({
     await load();
     if (!mounted.current) return;
     setFormOpen(false);
-    setFormIntent(null);
     onFormFinish?.("saved");
   }
 

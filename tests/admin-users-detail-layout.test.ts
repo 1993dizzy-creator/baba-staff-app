@@ -129,7 +129,7 @@ test("modal state is local until apply; detail cancel and saving preserve the bo
 test("list page: toggling included back to true does not reset baseDateMode/baseDateOverride draft state (no reset side effect on the included radio)", () => {
   assert.match(
     listPage,
-    /onChange=\{\(\) => setLevelDraft\(\(current\) => \(\{ \.\.\.current, included: enabled, salaryRaiseEnabled: enabled \? true : current\.salaryRaiseEnabled \}\)\)\}/
+    /onChange=\{\(enabled\) => setLevelDraft\(\(current\) => \(\{ \.\.\.current, included: enabled, salaryRaiseEnabled: enabled \? true : current\.salaryRaiseEnabled \}\)\)\}/
   );
 });
 

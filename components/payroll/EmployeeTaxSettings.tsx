@@ -14,13 +14,13 @@ function currentMonth() {
 }
 
 // 설정 변경 폼을 열 때의 기준값. resetForm과 미저장 판정이 같은 값을 쓴다.
-// intent: 스위치로 연 모달의 목표 상태(true = 거주자 누진세 적용, false = 미적용, null = 현재 방식).
-function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName: string, intent: boolean | null = null): {
+// 모달(이름·스위치 어느 쪽으로 열어도)은 서버에서 확인한 현재 적용 방식으로 시작한다.
+function taxFormBaseline(setting: PayrollTaxSettingVersion | null, employeeName: string): {
   taxMode: PayrollTaxMode; dependentCount: string; burdenMode: PayrollTaxBurdenMode; insuranceMode: PayrollTaxInsuranceDeductionMode;
   manualInsurance: string; accountingName: string; effectiveMonth: string; note: string;
 } {
   return {
-    taxMode: intent === true ? "resident_progressive" : intent === false ? "not_applicable" : setting?.taxMode ?? "not_applicable",
+    taxMode: setting?.taxMode ?? "not_applicable",
     dependentCount: String(setting?.dependentCount ?? 0),
     burdenMode: setting?.burdenMode ?? "employee_deducted",
     insuranceMode: setting?.insuranceDeductionMode ?? "none",
@@ -54,7 +54,6 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   const [history, setHistory] = useState<PayrollTaxSettingVersion[]>([]);
   const [current, setCurrent] = useState<PayrollTaxSettingVersion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [formIntent, setFormIntent] = useState<boolean | null>(null);
   const [taxMode, setTaxMode] = useState<PayrollTaxMode>("not_applicable");
   const [dependentCount, setDependentCount] = useState("0");
   const [burdenMode, setBurdenMode] = useState<PayrollTaxBurdenMode>("employee_deducted");
@@ -67,8 +66,8 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
 
-  const resetForm = useCallback((setting: PayrollTaxSettingVersion | null, intent: boolean | null = null) => {
-    const baseline = taxFormBaseline(setting, employeeName, intent);
+  const resetForm = useCallback((setting: PayrollTaxSettingVersion | null) => {
+    const baseline = taxFormBaseline(setting, employeeName);
     setTaxMode(baseline.taxMode);
     setDependentCount(baseline.dependentCount);
     setBurdenMode(baseline.burdenMode);
@@ -94,12 +93,9 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
       const request = formRequestRef.current;
       if (request && !autoOpenedRef.current) {
         autoOpenedRef.current = true;
-        resetForm(nextCurrent, request.enable);
-        setFormIntent(request.enable);
         setFormOpen(true);
-      } else {
-        resetForm(nextCurrent);
       }
+      resetForm(nextCurrent);
       reportHistoryRef.current?.({ status: "ready", history: data.history ?? [] });
     } catch (loadError) {
       if (signal?.aborted || !mounted.current || (loadError instanceof Error && loadError.name === "AbortError")) return;
@@ -121,12 +117,11 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
     return () => { mounted.current = false; controller.abort(); };
   }, [load, resetForm]);
 
-  useReportDirty(formOpen && (saving || formValuesChanged({ taxMode, dependentCount, burdenMode, insuranceMode, manualInsurance, accountingName, effectiveMonth, note }, taxFormBaseline(current, employeeName, formIntent))), onDirtyChange);
+  useReportDirty(formOpen && (saving || formValuesChanged({ taxMode, dependentCount, burdenMode, insuranceMode, manualInsurance, accountingName, effectiveMonth, note }, taxFormBaseline(current, employeeName))), onDirtyChange);
 
   function cancelForm() {
     setFormOpen(false);
     resetForm(current);
-    setFormIntent(null);
     onFormFinish?.("cancelled");
   }
 
@@ -164,7 +159,6 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
       await load();
       if (mounted.current) {
         setFormOpen(false);
-        setFormIntent(null);
         onFormFinish?.("saved");
       }
     } catch (saveError) {
@@ -238,7 +232,7 @@ export default function EmployeeTaxSettings({ userId, employeeName, vi, onHistor
   return <EmployeeSettingCard title={vi ? "Thuế TNCN nhân viên" : "직원 TNCN"} applied={loaded ? current !== null && current.taxMode !== "not_applicable" : null} vi={vi} defaultOpen={Boolean(formRequest)}>
     <div style={s.head}>
       <p style={s.help}>{help}</p>
-      <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormIntent(null); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
+      <button type="button" style={s.secondary} onClick={() => { resetForm(current); setFormOpen(true); }}>{vi ? "Thay đổi cài đặt TNCN" : "TNCN 설정 변경"}</button>
     </div>
     {current ? <div style={s.current}>
       <Summary label={vi ? "Nhân viên" : "직원"} value={employeeName} />
