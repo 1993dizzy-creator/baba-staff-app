@@ -15,6 +15,7 @@ import {
   runOpenOrderSync,
   type OrderRequest,
   type OrderTransport,
+  type MergeReceiptEvidence,
   type ReceiptLink,
 } from "./open-orders-core";
 
@@ -96,6 +97,26 @@ async function loadReceiptEvidence(businessDate: string): Promise<ReceiptLink[]>
     isCanceled: row.is_canceled, businessDate: row.business_date }));
 }
 
+/**
+ * Existing POS receipts with the menu a merge proof compares (SAInvoiceDetails and header
+ * discounts). Never calls CUKCUK, never reads customer fields, never logged.
+ */
+async function loadMergeReceiptEvidence(businessDate: string): Promise<MergeReceiptEvidence[]> {
+  type Row = { id: number; branch_id: string | null; business_date: string; payment_status: number | null; is_canceled: boolean | null;
+    total_amount: number | string | null; discount_amount: number | string | null; order_id: string | null;
+    discount_total: unknown; promotion_total: unknown; promotion_items_total: unknown; details: unknown };
+  const { data, error } = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
+    .select("id,branch_id,business_date,payment_status,is_canceled,total_amount,discount_amount,order_id:raw_json->>OrderId,discount_total:raw_json->DiscountAmount,promotion_total:raw_json->PromotionAmount,promotion_items_total:raw_json->PromotionItemsAmount,details:raw_json->SAInvoiceDetails", { count: "exact" })
+    .eq("source", "cukcuk").in("business_date", [businessDate, addStoreDays(businessDate, 1)])
+    .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(OPEN_ORDERS_REQUEST_TIMEOUT_MS)).range(from, to));
+  if (error || !data) throw new Error("receipt_evidence_unavailable");
+  const amount = (value: number | string | null) => value === null || value === "" ? null : Number(value);
+  return data.map((row) => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
+    isCanceled: row.is_canceled, businessDate: row.business_date, branchId: row.branch_id,
+    totalAmount: amount(row.total_amount), discountAmount: amount(row.discount_amount),
+    headerDiscounts: [row.discount_total, row.promotion_total, row.promotion_items_total], details: row.details }));
+}
+
 /** One central run for the current configured business date. */
 export async function runCentralOpenOrderSync(now = new Date()) {
   if (!openOrdersSyncEnabled()) return { status: "not_enabled" };
@@ -105,7 +126,7 @@ export async function runCentralOpenOrderSync(now = new Date()) {
   // Business day D starts at D cutoff (Asia/Ho_Chi_Minh, +07:00, no DST).
   const windowFrom = new Date(`${businessDate}T${cutoff}:00+07:00`).toISOString();
   return runOpenOrderSync(
-    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID, loadReceiptEvidence,
+    { rpc, transport: createCukcukOrderTransport(), uuid: randomUUID, loadReceiptEvidence, loadMergeReceiptEvidence,
       onDiagnostic: (diagnostic) => console.error("[OPEN_ORDERS_SYNC_DIAGNOSTIC]", diagnostic) },
     { scope: openOrdersScope(), branchId: openOrdersBranchId(), businessDate, windowFrom, cutoff }
   );
