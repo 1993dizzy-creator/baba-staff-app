@@ -70,12 +70,18 @@ test("create page: gender | birthDate share one fieldRow2 wrapper, left to right
   assert.match(createPage, twoColumnRow("gender", "birthDate"));
 });
 
-test("create page: birthDate now lives in the same Section as role/part/gender, not workInfo", () => {
-  const accessSectionStart = createPage.indexOf('Section title={text.accessInfo}');
-  const workSectionStart = createPage.indexOf('Section title={text.workInfo}');
+test("create page: birthDate lives in the basic-info Section with role/part/gender, before work·pay and app access", () => {
+  // 2026-11 생성 화면 리뉴얼: ① 기본정보 ② 근무·급여 ③ 앱 접근(직원 상세와 같은 순서·톤).
+  const basicSectionStart = createPage.indexOf('<Section tone="basic" emoji="🪪" title={text.basicInfo}>');
+  const workSectionStart = createPage.indexOf('<Section tone="workPay" emoji="⏰" title={text.workPayInfo}>');
+  const accessSectionStart = createPage.indexOf('<Section tone="appAccess" emoji="🔐" title={text.appAccess}>');
   const birthDateIndex = createPage.indexOf("text.birthDate");
-  assert.ok(accessSectionStart > -1 && workSectionStart > accessSectionStart);
-  assert.ok(birthDateIndex > accessSectionStart && birthDateIndex < workSectionStart);
+  assert.ok(basicSectionStart > -1 && workSectionStart > basicSectionStart && accessSectionStart > workSectionStart);
+  assert.ok(birthDateIndex > basicSectionStart && birthDateIndex < workSectionStart);
+  const hireDateIndex = createPage.indexOf("<Field label={text.hireDate}>");
+  assert.ok(hireDateIndex > workSectionStart && hireDateIndex < accessSectionStart, "hire date is a work·pay field");
+  const usernameIndex = createPage.indexOf("<Field label={text.username}>");
+  assert.ok(usernameIndex > accessSectionStart, "login ID / password live in app access");
 });
 
 for (const [name, page] of [
@@ -140,9 +146,11 @@ test("create page: new employees get month bases only (auto hire month / direct 
   assert.doesNotMatch(createPage, /levelOverrideMode\b/);
   assert.doesNotMatch(createPage, /levelCalculationStartDate/);
   const enabledBlock = createPage.slice(createPage.indexOf("{form.level_program_enabled ? <>"), createPage.indexOf("</> : null}", createPage.indexOf("{form.level_program_enabled ? <>")));
-  assert.match(enabledBlock, /text\.levelCalculationBasis/);
-  assert.match(enabledBlock, /text\.levelHireMonthMode/);
-  assert.match(enabledBlock, /text\.levelOverrideMonthMode/);
+  // 2026-11: same labels and 2-way choice as the detail level modal (auto hire month / direct month, neutral tone).
+  assert.match(enabledBlock, /tone="neutral"/);
+  assert.match(enabledBlock, /text\.levelBasisShort/);
+  assert.match(enabledBlock, /text\.levelAutoShort/);
+  assert.match(enabledBlock, /text\.levelDirectShort/);
   assert.match(enabledBlock, /type="month"/);
   assert.doesNotMatch(enabledBlock, /text\.levelSalaryRaise/);
   assert.match(createPage, /text\.levelAutomaticRaise/);

@@ -85,9 +85,12 @@ test("create page: FormState has no user-input position field, and the generatio
   assert.match(roleOptionsLine, /EDITABLE_EMPLOYEE_ROLE_VALUES/);
 });
 
-test("create page: the preview title and work-time visibility are role-based, not position-based", () => {
-  assert.match(createPage, /const previewPosition = getEmployeeRoleLabel\(form\.role, lang\);/);
-  assert.match(createPage, /form\.role === "owner" \|\| !form\.attendance_tracking_enabled/);
+test("create page: role drives the level default and labels; there is no position-based UI", () => {
+  // 2026-11 생성 화면 리뉴얼: 미리보기 블록은 제거했다. 직급 선택이 레벨 기본값(사장 OFF)을 정하고, 근무시간은 근태 사용 여부로만 보인다.
+  assert.doesNotMatch(createPage, /previewPosition|text\.preview\b/);
+  assert.match(createPage, /level_program_enabled: role !== "owner"/);
+  assert.match(createPage, /getEmployeeRoleLabel\(role, lang\)/);
+  assert.match(createPage, /\{form\.attendance_tracking_enabled \? \(/);
   assert.doesNotMatch(createPage, /form\.position/);
 });
 
