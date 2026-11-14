@@ -147,15 +147,13 @@ test("create page: new employees get month bases only (auto hire month / direct 
   assert.doesNotMatch(createPage, /levelCalculationStartDate/);
   // 2026-11 5차: 신규 생성은 적용/미적용만 고르고 기준월은 항상 입사월 자동(1~15일 입사월, 16일~ 다음 달).
   // 직접 기준월 지정은 기존 직원 상세 레벨 설정에만 있다.
-  const levelBlock = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="📈">'), createPage.indexOf('<SubsectionTitle emoji="🎁">'));
-  assert.match(levelBlock, /\{form\.level_program_enabled \? <p style=\{m\.muted\}>\{text\.hireDate\} \{form\.hire_date \|\| "-"\} → \{text\.levelBaseMonth\} \{autoBaseMonth \?\? "-"\}<\/p> : null\}/);
+  const levelBlock = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="🎁">'), createPage.indexOf('{/* ③ 앱 접근 */}'));
+  assert.match(levelBlock, /monthlyPay && form\.level_program_enabled \? <span style=\{styles\.helpText\}>\{text\.levelBaseMonth\} \{autoBaseMonth \?\? "-"\}/);
   assert.doesNotMatch(levelBlock, /type="month"|text\.levelDirectShort|text\.levelOverrideMonthMode|override_month/);
   assert.doesNotMatch(levelBlock, /text\.levelSalaryRaise/);
   assert.match(createPage, /const autoBaseMonth = hireMonthBase\(form\.hire_date\);/);
-  assert.match(createPage, /text\.levelAutomaticRaise/);
+  assert.match(createPage, /text\.levelHelpBase/);
   assert.match(createPage, /level_base_mode: "hire_month" as const,/);
   assert.doesNotMatch(createPage, /level_base_month/);
-  assert.match(createPage, /text\.levelEnabled/);
-  assert.match(createPage, /text\.levelDisabled/);
-  assert.match(createPage, /text\.levelPolicyHelp/);
+  assert.match(levelBlock, /<Toggle label=\{text\.longTermLevel\}/);
 });

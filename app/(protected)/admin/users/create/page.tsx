@@ -14,7 +14,7 @@ import { PART_VALUES } from "@/lib/common/parts";
 import { EDITABLE_EMPLOYEE_ROLE_VALUES, getEmployeeRoleLabel } from "@/lib/common/roles";
 import { GENDER_VALUES, getGenderLabel } from "@/lib/common/genders";
 import { hireMonthBase } from "@/lib/employee-level/month";
-import { BenefitChoice, m } from "@/components/payroll/BenefitModalParts";
+import { BenefitChoice } from "@/components/payroll/BenefitModalParts";
 import { useLeaveGuard } from "@/components/payroll/payrollUnsaved";
 import { currencyAmount, formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
 import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
@@ -50,9 +50,7 @@ type FormState = {
   hire_date: string;
   work_start_time: string;
   work_end_time: string;
-  is_active: boolean;
   level_program_enabled: boolean;
-  app_login_enabled: boolean;
   // 급여계약(생성 직후 기존 계약 API로 저장). 근태 사용 여부는 계약 유형에서 정해진다.
   pay_kind: NewEmployeePayKind;
   pay_unit: NewEmployeePayUnit;
@@ -77,9 +75,7 @@ const initialForm: FormState = {
   hire_date: "",
   work_start_time: "16:00",
   work_end_time: "01:00",
-  is_active: true,
-  level_program_enabled: true,
-  app_login_enabled: true,
+  level_program_enabled: false,
   pay_kind: "monthly",
   pay_unit: "monthly",
   pay_amount: "",
@@ -258,7 +254,7 @@ function attendanceFor(form: FormState) {
 }
 
 function payrollApplies(form: FormState) {
-  return form.role !== "owner" && form.is_active;
+  return form.role !== "owner";
 }
 
 /** 직원 생성 API 요청(기존 형식 그대로). 레벨 기준월은 항상 입사월 자동. */
@@ -276,12 +272,12 @@ function createPayload(form: FormState, lang: string) {
     hire_date: form.hire_date,
     work_start_time: form.work_start_time,
     work_end_time: form.work_end_time,
-    is_active: form.is_active,
-    level_program_enabled: form.level_program_enabled,
+    is_active: true,
+    level_program_enabled: form.role !== "owner" && form.pay_kind === "monthly" && form.level_program_enabled,
     level_base_mode: "hire_month" as const,
     attendance_tracking_enabled: attendanceFor(form),
     first_month_proration: payrollApplies(form) && form.pay_kind === "fixed",
-    app_login_enabled: form.app_login_enabled,
+    app_login_enabled: true,
   };
 }
 
@@ -290,7 +286,6 @@ function planSetup(form: FormState, userId: string | null): SetupState {
   const base = { userId: userId ?? "", name, contract: null, meal: null, bonus: null, status: {}, errors: {}, proration: null };
   if (!userId) return { ...base, mode: "noId" };
   if (form.role === "owner") return { ...base, mode: "owner" };
-  if (!form.is_active) return { ...base, mode: "inactive" };
   const amount = Number(form.pay_amount);
   const monthly = form.pay_kind === "monthly";
   const proration = form.pay_kind === "fixed" ? calendarProration(amount, form.hire_date) : null;
@@ -422,8 +417,8 @@ export default function AdminUserCreatePage() {
   }
 
   function setPayKind(kind: NewEmployeePayKind) {
-    // 고정급은 근태 미사용이라 식대·개근 보너스를 끈다. 월급제로 바꿔도 자동으로 켜지 않는다.
-    setForm((current) => ({ ...current, pay_kind: kind, ...(kind === "fixed" ? { meal_enabled: false, bonus_enabled: false } : null) }));
+    // 고정급은 세 복리후생을 실제 상태에서도 지운다. 월급제로 돌아와도 자동 복원하지 않는다.
+    setForm((current) => ({ ...current, pay_kind: kind, ...(kind === "fixed" ? { level_program_enabled: false, meal_enabled: false, bonus_enabled: false } : null) }));
   }
 
   async function runSetup(start: SetupState) {
@@ -631,7 +626,7 @@ export default function AdminUserCreatePage() {
                     setForm((current) => ({
                       ...current,
                       role,
-                      level_program_enabled: role !== "owner",
+                      level_program_enabled: role !== "owner" && current.pay_kind === "monthly" && current.level_program_enabled,
                     }));
                   }}
                   style={styles.input}
@@ -753,31 +748,13 @@ export default function AdminUserCreatePage() {
               ) : null}
             </div>
 
-            {/* 📈 장기근무 레벨: 적용/미적용만. 기준월은 입사일로 자동 계산(1~15일 입사월, 16일~ 다음 달). */}
-            <div style={styles.subsection}>
-              <SubsectionTitle emoji="📈">{text.longTermLevel}</SubsectionTitle>
-              <BenefitChoice
-                label={text.levelParticipation}
-                value={form.level_program_enabled}
-                onLabel={text.levelEnabled}
-                offLabel={text.levelDisabled}
-                onChange={(enabled) => update("level_program_enabled", enabled)}
-              />
-              {form.level_program_enabled ? <p style={m.muted}>{text.hireDate} {form.hire_date || "-"} → {text.levelBaseMonth} {autoBaseMonth ?? "-"}</p> : null}
-              {hours !== null && hours < 9 && attendance ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
-              <details style={m.details}>
-                <summary style={m.summary}>{text.levelHelp}</summary>
-                <ul style={styles.helpList}>
-                  <li>{text.levelHireMonthRule}</li>
-                  <li>{text.levelPolicyHelp}</li>
-                  <li>{text.levelAutomaticRaise}</li>
-                </ul>
-              </details>
-            </div>
+            {hours !== null && hours < 9 && attendance ? <span style={styles.shortShiftNotice}>{text.shortShiftNotice.replace("{hours}", String(hours))}</span> : null}
 
             {/* 🎁 복리후생: 식대·개근 보너스는 ON/OFF만(적용일은 입사일 기준 자동). 고정급은 대상 아님. 보험·TNCN은 상세에서. */}
             {form.role !== "owner" ? <div style={styles.subsection}>
               <SubsectionTitle emoji="🎁">{text.benefits}</SubsectionTitle>
+              <Toggle label={text.longTermLevel} checked={monthlyPay && form.level_program_enabled} disabled={!monthlyPay || !applies} onChange={(value) => update("level_program_enabled", value)} />
+              {monthlyPay && form.level_program_enabled ? <span style={styles.helpText}>{text.levelBaseMonth} {autoBaseMonth ?? "-"} · {text.levelHelpBase}</span> : null}
               <Toggle label={text.benefitMeal} checked={monthlyPay && form.meal_enabled} disabled={!monthlyPay || !applies} onChange={(value) => update("meal_enabled", value)} />
               {monthlyPay && applies && form.meal_enabled && hireValid ? <span style={styles.helpText}>{text.createMealFrom.replace("{date}", newEmployeeMealEffectiveFrom(form.hire_date))}</span> : null}
               <Toggle label={text.benefitBonus} checked={monthlyPay && form.bonus_enabled} disabled={!monthlyPay || !applies} onChange={(value) => update("bonus_enabled", value)} />
@@ -808,10 +785,6 @@ export default function AdminUserCreatePage() {
                 />
               </Field>
             </div>
-            {/* 앱 로그인 허용과 계정 활성은 서로 다른 필드다(합치지 않음). */}
-            <Toggle label={text.appLoginEnabled} checked={form.app_login_enabled} onChange={(value) => update("app_login_enabled", value)} />
-            <span style={styles.helpText}>{text.appLoginEnabledHelp}</span>
-            <Toggle label={text.activeStatus} checked={form.is_active} onChange={(value) => update("is_active", value)} />
           </Section>
 
           {message ? <p role="alert" style={styles.message}>{message}</p> : null}

@@ -47,25 +47,24 @@ test("create page uses sliding switches and shared 2-way choices instead of chec
   // 5차: 근태 기록 사용은 독립 스위치가 아니라 급여계약 유형에서 정해진다(고정급 OFF, 월급제 ON).
   assert.doesNotMatch(createPage, /<Toggle label=\{text\.attendanceTracking\}/);
   assert.match(createPage, /return form\.role === "owner" \? true : attendanceTrackingForPayKind\(form\.pay_kind\);/);
-  // 앱 로그인 허용과 계정 활성은 별도 필드(합치지 않음)
-  assert.match(createPage, /<Toggle label=\{text\.appLoginEnabled\} checked=\{form\.app_login_enabled\} onChange=\{\(value\) => update\("app_login_enabled", value\)\} \/>/);
-  assert.match(createPage, /<Toggle label=\{text\.activeStatus\} checked=\{form\.is_active\} onChange=\{\(value\) => update\("is_active", value\)\} \/>/);
-  // 5차: 레벨은 적용/미적용만(기준월 직접 지정 없음). 급여계약 유형·금액 기준은 중립 2분할.
-  const level = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="📈">'), createPage.indexOf('<SubsectionTitle emoji="🎁">'));
-  assert.match(level, /<BenefitChoice\s+label=\{text\.levelParticipation\}\s+value=\{form\.level_program_enabled\}/);
-  assert.doesNotMatch(level, /levelBasisShort|levelDirectShort|type="month"/);
-  const pay = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="💰">'), createPage.indexOf('<SubsectionTitle emoji="📈">'));
+  assert.doesNotMatch(createPage, /<Toggle label=\{text\.(appLoginEnabled|activeStatus)\}/);
+  assert.doesNotMatch(createPage, /<SubsectionTitle emoji="📈">|label=\{text\.levelParticipation\}/);
+  assert.match(createPage, /<Toggle label=\{text\.longTermLevel\} checked=\{monthlyPay && form\.level_program_enabled\} disabled=\{!monthlyPay \|\| !applies\}/);
+  assert.doesNotMatch(createPage, /levelBasisShort|levelDirectShort|type="month"/);
+  const pay = createPage.slice(createPage.indexOf('<SubsectionTitle emoji="💰">'), createPage.indexOf('<SubsectionTitle emoji="🎁">'));
   assert.match(pay, /tone="neutral"\s+label=\{text\.createPayKind\}/);
   assert.match(pay, /tone="neutral"\s+label=\{text\.createPayUnit\}/);
   assert.doesNotMatch(pay, /"daily"/, "no daily option for new employees");
 });
 
 test("create page keeps the create API contract: same defaults, explicit payload (hire-month base), client checks", () => {
-  assert.match(createPage, /work_start_time: "16:00",\n {2}work_end_time: "01:00",\n {2}is_active: true,\n {2}level_program_enabled: true,\n {2}app_login_enabled: true,\n {2}pay_kind: "monthly",\n {2}pay_unit: "monthly",\n {2}pay_amount: "",\n {2}meal_enabled: false,\n {2}bonus_enabled: false,/);
+  assert.match(createPage, /work_start_time: "16:00",\n {2}work_end_time: "01:00",\n {2}level_program_enabled: false,\n {2}pay_kind: "monthly",\n {2}pay_unit: "monthly",\n {2}pay_amount: "",\n {2}meal_enabled: false,\n {2}bonus_enabled: false,/);
   assert.match(createPage, /attendanceFetch\("\/api\/admin\/users\/create", \{\n\s+method: "POST",/);
   assert.match(createPage, /body: JSON\.stringify\(payload\),/);
   const payload = createPage.slice(createPage.indexOf("function createPayload("), createPage.indexOf("function planSetup("));
   assert.match(payload, /level_base_mode: "hire_month" as const,/);
+  assert.match(payload, /is_active: true,/);
+  assert.match(payload, /app_login_enabled: true,/);
   assert.match(payload, /attendance_tracking_enabled: attendanceFor\(form\),/);
   assert.doesNotMatch(payload, /pay_amount|pay_unit|meal|bonus|position|level_base_month/);
   assert.match(payload, /first_month_proration: payrollApplies\(form\) && form\.pay_kind === "fixed"/);
@@ -73,11 +72,11 @@ test("create page keeps the create API contract: same defaults, explicit payload
   assert.match(createPage, /if \(!hireValid\) \{\n\s+setMessage\(text\.createHireDateRequired\);/);
   assert.match(createPage, /if \(attendance && \(!form\.work_start_time \|\| !form\.work_end_time\)\)/);
   assert.match(createPage, /if \(applies && !\(amount > 0\)\)/);
-  assert.match(createPage, /level_program_enabled: role !== "owner"/);
+  assert.match(createPage, /level_program_enabled: role !== "owner" && current\.pay_kind === "monthly" && current\.level_program_enabled/);
 });
 
 test("fixed pay turns meal/bonus OFF, disables them and never plans their requests", () => {
-  assert.match(createPage, /pay_kind: kind, \.\.\.\(kind === "fixed" \? \{ meal_enabled: false, bonus_enabled: false \} : null\)/);
+  assert.match(createPage, /pay_kind: kind, \.\.\.\(kind === "fixed" \? \{ level_program_enabled: false, meal_enabled: false, bonus_enabled: false \} : null\)/);
   assert.match(createPage, /<Toggle label=\{text\.benefitMeal\} checked=\{monthlyPay && form\.meal_enabled\} disabled=\{!monthlyPay \|\| !applies\}/);
   assert.match(createPage, /<Toggle label=\{text\.benefitBonus\} checked=\{monthlyPay && form\.bonus_enabled\} disabled=\{!monthlyPay \|\| !applies\}/);
   assert.match(createPage, /meal: monthly && form\.meal_enabled \?/);
@@ -109,8 +108,8 @@ test("first payroll setup reuses the existing APIs, checks before writing and is
   assert.match(createPage, /return setup\.mode !== "inactive" && setup\.mode !== "noId" && plannedSteps\(setup\)\.every\(\(key\) => setup\.status\[key\] === "done"\);/);
   assert.match(createPage, /if \(current\.status\[key\] === "done"\) continue;/);
   assert.match(createPage, /window\.sessionStorage\.setItem\(SETUP_KEY, JSON\.stringify\(setup\)\)/);
-  // owner / inactive accounts never call the contract API (existing constraints are not bypassed)
-  assert.match(createPage, /if \(form\.role === "owner"\) return \{ \.\.\.base, mode: "owner" \};\n\s+if \(!form\.is_active\) return \{ \.\.\.base, mode: "inactive" \};/);
+  // New accounts are active; owner still has no payroll contract.
+  assert.match(createPage, /if \(form\.role === "owner"\) return \{ \.\.\.base, mode: "owner" \};/);
   // the users page opens ?userId=&section=payroll as the detail with 근무·급여 expanded
   assert.match(createPage, /router\.push\(current\.userId \? `\/admin\/users\?userId=\$\{encodeURIComponent\(current\.userId\)\}&section=payroll` : "\/admin\/users"\)/);
   assert.match(listPage, /const userId = search\.get\("userId"\);/);

@@ -50,7 +50,13 @@ export async function POST(req: Request) {
     const name = normalizeText(body.name);
     const role = normalizeText(body.role) || "staff";
     const lang = getLang(body.lang);
-    const levelProgramEnabled = typeof body.level_program_enabled === "boolean"
+    // 신규 고정급은 기존 요청의 일할 정책/근태 미사용 표식으로 식별한다.
+    const fixedPay = body.first_month_proration === true || body.attendance_tracking_enabled === false;
+    if (fixedPay && body.level_program_enabled === true) return NextResponse.json({
+      ok: false, code: "FIXED_PAY_LEVEL_NOT_ALLOWED",
+      error: lang === "vi" ? "Nhân viên lương cố định không áp dụng cấp thâm niên." : "고정급 직원은 장기근무 레벨을 적용할 수 없습니다.",
+    }, { status: 400 });
+    const levelProgramEnabled = fixedPay ? false : typeof body.level_program_enabled === "boolean"
       ? body.level_program_enabled
       : !["owner", "master"].includes(role);
     const automaticChangeReason = levelProgramEnabled
@@ -132,7 +138,6 @@ export async function POST(req: Request) {
     if (enrollProration && !firstMonthEnrollmentEnabled()) return NextResponse.json({ok:false,code:"FIRST_MONTH_POLICY_NOT_ENABLED",
       error: lang === "vi" ? "Tính lương tháng đầu chưa được bật. Chưa tạo nhân viên; vui lòng liên hệ quản trị viên." : "입사월 자동 일할 기능이 아직 활성화되지 않았습니다. 직원은 생성되지 않았습니다. 관리자에게 확인해주세요."}, {status:409});
     const attendanceTrackingEnabled = body.attendance_tracking_enabled !== false;
-    const appLoginEnabled = body.app_login_enabled !== false;
 
     const { data, error } = await supabaseServer.rpc(
       enrollProration ? "employee_create_with_proration_v1" : "employee_create_with_schedule_v6",
@@ -150,10 +155,10 @@ export async function POST(req: Request) {
         termination_date: null,
         work_start_time: nullableTime(body.work_start_time),
         work_end_time: nullableTime(body.work_end_time),
-        is_active: body.is_active === false ? false : true,
+        is_active: true,
         is_system_account: false,
         attendance_tracking_enabled: attendanceTrackingEnabled,
-        app_login_enabled: appLoginEnabled,
+        app_login_enabled: true,
       }, p_level_program_enabled: levelProgramEnabled,
         p_base_date_mode: levelBaseMode,
         p_base_date_override: levelBaseMonth ? `${levelBaseMonth}-01` : null,
