@@ -78,6 +78,7 @@ test("August overview keeps live contract, part, position and pay for abbreviate
     assert.equal(visible.amounts, current.amounts);
     assert.equal(visible.name, "Khoi");
   }
-  assert.match(overviewRoute, /const visibleEmployee=payment\?\.payment_status==="paid"/);
+  assert.match(overviewRoute, /const visibleEmployee=frozen\?\?\(payment\?\.payment_status==="paid"/);
+  assert.match(overviewRoute, /paidFirstMonthEmployee\(payment\?\.payment_status,payment\?\.calculation_snapshot\)/);
   assert.match(overviewRoute, /lockPaidExtraWorkReview\(employee,/);
 });

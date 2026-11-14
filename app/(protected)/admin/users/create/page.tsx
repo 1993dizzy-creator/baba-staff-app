@@ -18,10 +18,10 @@ import { BenefitChoice, m } from "@/components/payroll/BenefitModalParts";
 import { useLeaveGuard } from "@/components/payroll/payrollUnsaved";
 import { currencyAmount, formatIntegerInput, integerInputDigits } from "@/lib/payroll/contract-form";
 import { payrollContractErrorMessage } from "@/lib/payroll/contract-errors";
+import { calendarProration } from "@/lib/payroll/first-month-proration";
 import {
   attendanceTrackingForPayKind,
   contractMatchesRequest,
-  fixedMonthlyFirstMonthProration,
   isNewEmployeeHireDate,
   newEmployeeBonusEffectiveMonth,
   newEmployeeContractRequest,
@@ -155,6 +155,7 @@ async function ensureStep<T>(input: {
   read: () => Promise<T[]>;
   matches: (row: T) => boolean;
   write: () => Promise<Response>;
+  repairMatching?: (row: T) => boolean;
   conflictMessage: string;
   failureMessage: (data: Record<string, unknown> | null) => string;
 }): Promise<StepResult> {
@@ -165,12 +166,12 @@ async function ensureStep<T>(input: {
     return { ok: false, message: input.failureMessage(null) };
   }
   if (rows.some(input.matches)) return { ok: true };
-  if (rows.length > 0) return { ok: false, message: input.conflictMessage };
+  if (rows.length > 0 && !rows.every(row => input.repairMatching?.(row))) return { ok: false, message: input.conflictMessage };
   let data: Record<string, unknown> | null = null;
   try {
     const response = await input.write();
     data = await readJson(response);
-    if (response.ok && data?.ok === true) return { ok: true };
+    if (response.ok && data?.ok === true && !input.repairMatching) return { ok: true };
   } catch {
     data = null;
   }
@@ -195,12 +196,15 @@ async function runStep(key: StepKey, setup: SetupState, lang: "ko" | "vi", text:
   const json = (body: unknown) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (key === "contract" && setup.contract) {
     const request = setup.contract;
-    return ensureStep<{ payType: string; calculationBasis: string; baseSalary: number; effectiveFrom: string }>({
+    return ensureStep<{ payType: string; calculationBasis: string; baseSalary: number; effectiveFrom: string; fixedRaiseAmount:number; standardWorkdays:number|null; firstMonthPolicy?: {status:string;firstContractId:number;hireDate:string;hireDateMatches:boolean;rehired:boolean}; id:number }>({
       read: () => readHistory(`/api/admin/payroll/contracts?userId=${userId}`),
-      matches: (contract) => contractMatchesRequest(contract, request),
+      matches: (contract) => contractMatchesRequest(contract, request) && (!request.firstMonthProration
+        || (contract.firstMonthPolicy?.status === "active" && contract.firstMonthPolicy.firstContractId === contract.id
+          && contract.firstMonthPolicy.hireDateMatches && !contract.firstMonthPolicy.rehired)),
       write: () => fetch("/api/admin/payroll/contracts", json({ userId, ...request })),
       conflictMessage: text.createStepConflict,
-      failureMessage: (data) => payrollContractErrorMessage(lang, data?.code, "PAYROLL_CONTRACT_CREATE_FAILED"),
+      repairMatching: request.firstMonthProration ? (contract) => contractMatchesRequest(contract, request) : undefined,
+      failureMessage: (data) => request.firstMonthProration ? text.createStepConflict : payrollContractErrorMessage(lang, data?.code, "PAYROLL_CONTRACT_CREATE_FAILED"),
     });
   }
   if (key === "meal" && setup.meal) {
@@ -276,6 +280,7 @@ function createPayload(form: FormState, lang: string) {
     level_program_enabled: form.level_program_enabled,
     level_base_mode: "hire_month" as const,
     attendance_tracking_enabled: attendanceFor(form),
+    first_month_proration: payrollApplies(form) && form.pay_kind === "fixed",
     app_login_enabled: form.app_login_enabled,
   };
 }
@@ -288,7 +293,7 @@ function planSetup(form: FormState, userId: string | null): SetupState {
   if (!form.is_active) return { ...base, mode: "inactive" };
   const amount = Number(form.pay_amount);
   const monthly = form.pay_kind === "monthly";
-  const proration = form.pay_kind === "fixed" ? fixedMonthlyFirstMonthProration(amount, form.hire_date) : null;
+  const proration = form.pay_kind === "fixed" ? calendarProration(amount, form.hire_date) : null;
   const setup: SetupState = {
     ...base,
     mode: "payroll",
@@ -391,7 +396,7 @@ export default function AdminUserCreatePage() {
   const hireValid = isNewEmployeeHireDate(form.hire_date);
   const amount = Number(form.pay_amount || 0);
   const contractPreview = applies && hireValid ? newEmployeeContractRequest({ kind: form.pay_kind, unit: form.pay_unit, amount, hireDate: form.hire_date }) : null;
-  const prorationPreview = applies && form.pay_kind === "fixed" && amount > 0 ? fixedMonthlyFirstMonthProration(amount, form.hire_date) : null;
+  const prorationPreview = applies && hireValid && form.pay_kind === "fixed" && amount > 0 ? calendarProration(amount, form.hire_date) : null;
 
   // 등록 전 입력, 또는 생성 후 설정이 끝나지 않은 경우 메뉴 링크·새로고침·창 닫기에서 확인한다.
   const leaveFor = (currentSetup: SetupState | null, currentForm: FormState) =>
@@ -575,7 +580,7 @@ export default function AdminUserCreatePage() {
               </li>)}
             </ul> : null}
             {incompletePayroll ? <p style={styles.modalHint}>{text.createSetupIncompleteHelp}</p> : null}
-            {setup.mode === "payroll" && setup.proration && setup.status.contract === "done" ? <p style={styles.prorationNotice}>
+            {setup.mode === "payroll" && setup.contract?.firstMonthProration && setup.proration && setup.status.contract === "done" ? <p style={styles.prorationNotice}>
               {text.createFixedProrationNotice.replace("{amount}", currencyAmount(setup.proration.amount, vi)).replace("{days}", String(setup.proration.days)).replace("{total}", String(setup.proration.total))}
             </p> : null}
             {setup.mode === "payroll" ? <p style={styles.modalHint}>{text.createPayrollNote}</p> : null}

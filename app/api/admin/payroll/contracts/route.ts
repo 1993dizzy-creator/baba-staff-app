@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase/server";
+import { loadFirstMonthPolicies } from "@/lib/payroll/first-month-proration-server";
 import { mapContract } from "@/lib/payroll/db-mappers";
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { applyEmployeeLevelProgramVersion, getEmployeeLevelInfo, loadEmployeeLevelProgramVersions } from "@/lib/employee-level/server";
@@ -45,10 +46,11 @@ export async function GET(request: Request) {
     list.push({ id: Number(audit.id), action: String(audit.action), actorUserId, actorName: actorNames.get(actorUserId) ?? null, reason: audit.reason ? String(audit.reason) : null, createdAt: String(audit.created_at) });
     auditsByContract.set(contractId, list);
   }
+  const firstMonthPolicy = (await loadFirstMonthPolicies([userId])).get(userId);
   const contracts = (data ?? []).map((row) => {
     const contract = mapContract(row as Record<string, unknown>);
     const auditLogs = auditsByContract.get(contract.id) ?? [];
-    return { ...contract, createdByName: contract.createdBy ? actorNames.get(contract.createdBy) ?? null : null, auditVersion: auditLogs.at(-1)?.id ?? null, auditLogs };
+    return { ...contract, ...(firstMonthPolicy?{firstMonthPolicy}:{}), createdByName: contract.createdBy ? actorNames.get(contract.createdBy) ?? null : null, auditVersion: auditLogs.at(-1)?.id ?? null, auditLogs };
   });
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const versions = await loadEmployeeLevelProgramVersions([Number(user.id)], today);
@@ -93,6 +95,16 @@ export async function POST(request: Request) {
   const currentFixedRaiseAmount = Number(currentContract?.fixed_raise_amount ?? 0);
   const fixedRaiseReason = resolveFixedRaiseReason(currentFixedRaiseAmount, fixedRaiseAmount, body.note);
   if (!fixedRaiseReason.valid) return payrollJson({ ok: false, code: "FIXED_RAISE_REASON_REQUIRED" }, 400);
+  const firstMonthPolicy = (await loadFirstMonthPolicies([validId(body.userId)!])).get(validId(body.userId)!);
+  if (body.firstMonthProration === true || firstMonthPolicy?.status === "pending") {
+    if (!firstMonthPolicy || body.payType !== "monthly" || body.calculationBasis !== "fixed_monthly") return payrollJson({ok:false,code:"FIRST_MONTH_POLICY_REVIEW_REQUIRED"},409);
+    const {data,error}=await supabaseServer.rpc("payroll_link_first_month_contract_v1",{
+      p_user_id:validId(body.userId),p_base_salary:body.baseSalary,p_fixed_raise_amount:fixedRaiseAmount,
+      p_standard_workdays:body.standardWorkdays||null,p_effective_from:body.effectiveFrom,p_actor_user_id:auth.actor.id});
+    const result=data as {status?:string;contract?:Record<string,unknown>}|null;
+    if(error||result?.status!=="created"||!result.contract)return payrollJson({ok:false,code:"FIRST_MONTH_POLICY_REVIEW_REQUIRED"},409);
+    return payrollJson({ok:true,contract:mapContract(result.contract),firstMonthPolicy:"active"},201);
+  }
   const { data, error } = await supabaseServer.rpc("payroll_create_contract_version_v6", {
     p_user_id: validId(body.userId), p_pay_type: body.payType,
     p_base_salary: body.baseSalary, p_fixed_raise_amount: fixedRaiseAmount, p_standard_workdays: body.standardWorkdays || null,

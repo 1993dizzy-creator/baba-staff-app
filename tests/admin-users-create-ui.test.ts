@@ -67,7 +67,8 @@ test("create page keeps the create API contract: same defaults, explicit payload
   const payload = createPage.slice(createPage.indexOf("function createPayload("), createPage.indexOf("function planSetup("));
   assert.match(payload, /level_base_mode: "hire_month" as const,/);
   assert.match(payload, /attendance_tracking_enabled: attendanceFor\(form\),/);
-  assert.doesNotMatch(payload, /pay_|meal|bonus|position|level_base_month/);
+  assert.doesNotMatch(payload, /pay_amount|pay_unit|meal|bonus|position|level_base_month/);
+  assert.match(payload, /first_month_proration: payrollApplies\(form\) && form\.pay_kind === "fixed"/);
   assert.match(createPage, /if \(!form\.username\.trim\(\) \|\| !form\.password\.trim\(\) \|\| !form\.name\.trim\(\)\)/);
   assert.match(createPage, /if \(!hireValid\) \{\n\s+setMessage\(text\.createHireDateRequired\);/);
   assert.match(createPage, /if \(attendance && \(!form\.work_start_time \|\| !form\.work_end_time\)\)/);
@@ -103,7 +104,7 @@ test("first payroll setup reuses the existing APIs, checks before writing and is
   const ensure = createPage.slice(createPage.indexOf("async function ensureStep"), createPage.indexOf("async function readHistory"));
   // read first: same value → done (no write), different value → conflict (no overwrite); after a failed/lost write read again
   assert.ok(ensure.indexOf("rows.some(input.matches)") < ensure.indexOf("input.write()"));
-  assert.match(ensure, /if \(rows\.length > 0\) return \{ ok: false, message: input\.conflictMessage \};/);
+  assert.match(ensure, /rows\.length > 0 && !rows\.every\(row => input\.repairMatching\?\.\(row\)\)/);
   assert.ok(ensure.lastIndexOf("input.read()") > ensure.indexOf("input.write()"));
   assert.match(createPage, /return setup\.mode !== "inactive" && setup\.mode !== "noId" && plannedSteps\(setup\)\.every\(\(key\) => setup\.status\[key\] === "done"\);/);
   assert.match(createPage, /if \(current\.status\[key\] === "done"\) continue;/);

@@ -7,6 +7,8 @@
 //   월급제 · 시급 기준 = pay_type "hourly"  + calculation_basis "minute"        (근태 ON, 기존 시급제와 같은 계산)
 // pay_type은 금액의 단위(월급/시급)이고, calculation_basis가 계산 방식(고정 지급/실근무)이다.
 
+import { calendarProration } from "./first-month-proration.ts";
+
 export type NewEmployeePayKind = "fixed" | "monthly";
 export type NewEmployeePayUnit = "monthly" | "hourly";
 
@@ -30,6 +32,7 @@ export function attendanceTrackingForPayKind(kind: NewEmployeePayKind) {
 }
 
 export type NewEmployeeContractRequest = {
+  firstMonthProration?: boolean;
   payType: "monthly" | "hourly";
   calculationBasis: "fixed_monthly" | "minute";
   baseSalary: number;
@@ -49,7 +52,7 @@ function clampEffectiveFrom(date: string) {
  */
 export function newEmployeeContractRequest(input: { kind: NewEmployeePayKind; unit: NewEmployeePayUnit; amount: number; hireDate: string }): NewEmployeeContractRequest {
   if (input.kind === "fixed") {
-    return { payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: input.amount, fixedRaiseAmount: 0,
+    return { firstMonthProration: true, payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: input.amount, fixedRaiseAmount: 0,
       standardWorkdays: NEW_EMPLOYEE_STANDARD_WORKDAYS, effectiveFrom: clampEffectiveFrom(`${input.hireDate.slice(0, 7)}-01`) };
   }
   const hourly = input.unit === "hourly";
@@ -58,9 +61,10 @@ export function newEmployeeContractRequest(input: { kind: NewEmployeePayKind; un
 }
 
 /** 이미 저장된 계약이 이 요청과 같은 계약인지(재시도·응답 유실 시 중복 저장 방지). */
-export function contractMatchesRequest(contract: { payType: string; calculationBasis: string; baseSalary: number; effectiveFrom: string }, request: NewEmployeeContractRequest) {
+export function contractMatchesRequest(contract: { payType: string; calculationBasis: string; baseSalary: number; effectiveFrom: string; fixedRaiseAmount?: number; standardWorkdays?: number | null }, request: NewEmployeeContractRequest) {
   return contract.payType === request.payType && contract.calculationBasis === request.calculationBasis
-    && Number(contract.baseSalary) === request.baseSalary && contract.effectiveFrom === request.effectiveFrom;
+    && Number(contract.baseSalary) === request.baseSalary && contract.effectiveFrom === request.effectiveFrom
+    && (!request.firstMonthProration || (contract.fixedRaiseAmount === request.fixedRaiseAmount && contract.standardWorkdays === request.standardWorkdays));
 }
 
 /** 식대는 입사일부터 적용한다. */
@@ -74,21 +78,16 @@ export function newEmployeeBonusEffectiveMonth(hireDate: string, currentMonth: s
   return hireMonth < currentMonth ? currentMonth : hireMonth;
 }
 
-function daysInMonth(date: string) {
-  const [year, month] = date.split("-").map(Number);
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
+
 
 /**
  * 고정급 입사월 일할 금액(안내용): 계약 월급 × (입사일 포함 재직 달력일수 / 해당 월 일수), VND 반올림.
- * 급여 계산 엔진은 아직 고정급을 일할하지 않으므로, 월중 입사 시 화면에서 조정이 필요한 금액을 보여 주는 데만 쓴다.
+ * 서버의 신규 정책 등록과 최초 계약 연결이 완료된 경우에만 자동 계산이 활성화된다.
  * 1일 입사는 일할이 없으므로 null.
  */
 export function fixedMonthlyFirstMonthProration(amount: number, hireDate: string) {
   if (!isNewEmployeeHireDate(hireDate)) return null;
   const day = Number(hireDate.slice(8, 10));
   if (day === 1) return null;
-  const total = daysInMonth(hireDate);
-  const employedDays = total - day + 1;
-  return { employedDays, totalDays: total, amount: Math.round((amount * employedDays) / total) };
+  return calendarProration(amount, hireDate);
 }

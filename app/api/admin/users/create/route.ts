@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { firstMonthEnrollmentEnabled } from "@/lib/payroll/first-month-proration-server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/server-auth";
 import { toLegacyEmployeePosition } from "@/lib/common/roles";
@@ -127,11 +128,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const enrollProration = body.first_month_proration === true;
+    if (enrollProration && !firstMonthEnrollmentEnabled()) return NextResponse.json({ok:false,code:"FIRST_MONTH_POLICY_NOT_ENABLED",
+      error: lang === "vi" ? "Tính lương tháng đầu chưa được bật. Chưa tạo nhân viên; vui lòng liên hệ quản trị viên." : "입사월 자동 일할 기능이 아직 활성화되지 않았습니다. 직원은 생성되지 않았습니다. 관리자에게 확인해주세요."}, {status:409});
     const attendanceTrackingEnabled = body.attendance_tracking_enabled !== false;
     const appLoginEnabled = body.app_login_enabled !== false;
 
     const { data, error } = await supabaseServer.rpc(
-      "employee_create_with_schedule_v6",
+      enrollProration ? "employee_create_with_proration_v1" : "employee_create_with_schedule_v6",
       { p_employee: {
         username,
         password,
@@ -159,6 +163,8 @@ export async function POST(req: Request) {
     );
 
     if (error) {
+      if(enrollProration)return NextResponse.json({ok:false,code:"FIRST_MONTH_POLICY_REVIEW_REQUIRED",
+        error:lang==="vi"?"Chưa tạo nhân viên. Cần quản trị viên kiểm tra chính sách tháng đầu và ngày vào làm.":"직원은 생성되지 않았습니다. 입사월 정책과 입사일을 관리자에게 확인해주세요."},{status:409});
       throw new Error(`Failed to create user: ${error.message}`);
     }
 

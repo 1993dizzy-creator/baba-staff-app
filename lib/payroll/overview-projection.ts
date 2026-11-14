@@ -14,7 +14,8 @@ export function buildPayrollOverviewProjectedSummary(
   directorInsuranceAmount: number,
 ): PayrollOverviewProjectedSummary | null {
   const included = employees.flatMap((employee) => {
-    const contractMonthlyAmount = getPayrollHeaderAmount(employee);
+    if (employee.firstMonthPolicyReview) return [];
+    const contractMonthlyAmount = employee.firstMonthProration?.amount ?? getPayrollHeaderAmount(employee);
     if (contractMonthlyAmount === null || employee.tax.status === "requires_review") return [];
     const preInsurancePayoutAmount = Math.max(0,
         contractMonthlyAmount

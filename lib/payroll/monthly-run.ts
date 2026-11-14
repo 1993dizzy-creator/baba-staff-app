@@ -17,6 +17,8 @@ import { getPayrollOverviewPeriod } from "./overview-period";
 import { addStoreDays, calculateStoreBusinessDate } from "@/lib/store-settings/business-time-core";
 import { isMissingAttendanceCandidateDate } from "./missing-attendance";
 import { calculateFixedMonthlyPayroll } from "./fixed-monthly";
+import { firstMonthEvidence, firstMonthPolicyApplies, firstMonthPolicyProblem, type FirstMonthPolicy } from "./first-month-proration";
+import { loadFirstMonthPolicies } from "./first-month-proration-server";
 import { resolvePayrollAttendancePolicyByDate, type PayrollStoreSettingTimelineRow } from "./store-setting-timeline";
 import { payrollTaxReviewCodeForItem, payrollTaxTreatmentForItem, type PayrollTaxTreatment } from "./tax";
 import { calculatePartTimeExtraWork, isExtraWorkEligible, partTimeExtraWorkDecisionEffect, type PartTimeExtraWorkCandidate, type PartTimeExtraWorkDecision } from "./part-time-extra-work";
@@ -36,6 +38,7 @@ export const PAYROLL_RUN_ENGINE_VERSION = "monthly-payroll-v12";
 export const PAYROLL_RUN_START_MONTH = "2026-07";
 
 export const CRITICAL_WARNING_CODES = [
+  "FIRST_MONTH_POLICY_REVIEW_REQUIRED",
   "NO_PAYROLL_CONTRACT", "MISSING_CHECK_IN", "MISSING_CHECK_OUT", "INVALID_TIME_RANGE",
   "SCHEDULE_HISTORY_UNAVAILABLE", "PENDING_LEAVE_APPROVAL", "LEAVE_PAYROLL_TREATMENT_UNSPECIFIED",
   "CONTRACT_OVERLAP", "CALCULATION_FAILED",
@@ -45,7 +48,7 @@ export const CRITICAL_WARNING_CODES = [
   "EMPLOYEE_LEVEL_BASE_DATE_REQUIRED", "INVALID_HOURLY_STANDARD_HOURS",
   "PART_TIME_EXTRA_WORK_REVIEW_REQUIRED", "PART_TIME_EXTRA_WORK_DECISION_STALE",
 ] as const;
-const BLOCKING_WARNING_CODES=new Set<string>(["EARLY_LEAVE_REVIEW_REQUIRED","NO_PAYROLL_CONTRACT","MISSING_CHECK_IN","MISSING_CHECK_OUT","INVALID_TIME_RANGE","SCHEDULE_HISTORY_UNAVAILABLE","CONTRACT_OVERLAP","CALCULATION_FAILED","EMPLOYEE_LEVEL_BASE_DATE_REQUIRED","INVALID_HOURLY_STANDARD_HOURS","PART_TIME_EXTRA_WORK_REVIEW_REQUIRED","PART_TIME_EXTRA_WORK_DECISION_STALE"]);
+const BLOCKING_WARNING_CODES=new Set<string>(["FIRST_MONTH_POLICY_REVIEW_REQUIRED","EARLY_LEAVE_REVIEW_REQUIRED","NO_PAYROLL_CONTRACT","MISSING_CHECK_IN","MISSING_CHECK_OUT","INVALID_TIME_RANGE","SCHEDULE_HISTORY_UNAVAILABLE","CONTRACT_OVERLAP","CALCULATION_FAILED","EMPLOYEE_LEVEL_BASE_DATE_REQUIRED","INVALID_HOURLY_STANDARD_HOURS","PART_TIME_EXTRA_WORK_REVIEW_REQUIRED","PART_TIME_EXTRA_WORK_DECISION_STALE"]);
 const ACTIONABLE_WARNING_CODES=new Set<string>(["PENDING_LEAVE_APPROVAL","LEAVE_PAYROLL_TREATMENT_UNSPECIFIED"]);
 
 type CriticalWarning = typeof CRITICAL_WARNING_CODES[number];
@@ -56,7 +59,7 @@ export type PayrollRunItemInput={itemType:"automatic"|"manual"|"review_adjustmen
 export type PayrollRunReviewInput={warningCode:CriticalWarning;reviewLevel:"blocking"|"actionable"|"advisory";businessDate:string|null;sourceSnapshot:Record<string,unknown>};
 export type PayrollRunEmployeeInput={userId:number;employeeName:string;contractSnapshot:PayrollContract[];attendanceSnapshot:Record<string,unknown>;insuranceSnapshot:ReturnType<typeof buildEmployeeInsuranceSnapshot>;recognizedWorkdays:number;recognizedMinutes:number;lateMinutes:number;earlyLeaveMinutes:number;overtimeCandidateMinutes:number;partTimeExtraWork:PartTimeExtraWorkCandidate[];items:PayrollRunItemInput[];reviews:PayrollRunReviewInput[]};
 type ExtraWorkStoreSetting={id:number;revision:number;openTime:string;closeTime:string};
-type BatchInput={levelProgramsByDate?:Map<string,Map<number,EmployeeLevelProgramVersion>>;month:string;dates:string[];users:PayrollSnapshotUserRow[];attendance:AttendanceRow[];lateNormalizedRecordIds:Set<number>;earlyLeaveContexts?:Map<number,EarlyLeaveReviewContext>;contracts:PayrollContract[];schedules:WorkScheduleVersion[];settingsByDate:Map<string,{revision:number|null;lateGraceMinutes:number;earlyLeaveGraceMinutes:number}>;extraWorkSettingsByDate:Map<string,ExtraWorkStoreSetting>;holidayPremiumByDate:Map<string,PayrollHolidayPremiumPolicy>;decisionsByAttendanceId:Map<number,PartTimeExtraWorkDecision>;insuranceVersionsByUser:Map<number,PayrollInsuranceSettingVersion[]>;insuranceGlobal:PayrollInsuranceGlobalSettings;penaltySettings:PayrollPenaltySettings};
+type BatchInput={firstMonthPolicies?:Map<number,FirstMonthPolicy>;levelProgramsByDate?:Map<string,Map<number,EmployeeLevelProgramVersion>>;month:string;dates:string[];users:PayrollSnapshotUserRow[];attendance:AttendanceRow[];lateNormalizedRecordIds:Set<number>;earlyLeaveContexts?:Map<number,EarlyLeaveReviewContext>;contracts:PayrollContract[];schedules:WorkScheduleVersion[];settingsByDate:Map<string,{revision:number|null;lateGraceMinutes:number;earlyLeaveGraceMinutes:number}>;extraWorkSettingsByDate:Map<string,ExtraWorkStoreSetting>;holidayPremiumByDate:Map<string,PayrollHolidayPremiumPolicy>;decisionsByAttendanceId:Map<number,PartTimeExtraWorkDecision>;insuranceVersionsByUser:Map<number,PayrollInsuranceSettingVersion[]>;insuranceGlobal:PayrollInsuranceGlobalSettings;penaltySettings:PayrollPenaltySettings};
 
 export function validPayrollMonth(value:string|null){return value&&/^\d{4}-(0[1-9]|1[0-2])$/.test(value)?value:null;}
 export function isOfficialPayrollMonth(month:string){return month>=PAYROLL_RUN_START_MONTH;}
@@ -110,7 +113,21 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
   const recordsByDate=new Map(records.map(row=>[row.work_date,row]));
   const eligibleDates=input.dates.filter(date=>(!user.hire_date||date>=user.hire_date)&&(!user.termination_date||date<=user.termination_date));
   if(contracts.length===0)reviews.push(review("NO_PAYROLL_CONTRACT",null,{userId:user.id,month:input.month}));
-  const calculationDate=eligibleDates.at(-1)??input.dates.at(-1)??null;
+  const policy=input.firstMonthPolicies?.get(user.id);
+  const firstMonth=firstMonthPolicyApplies(policy,input.month,user.hire_date)?policy:undefined;
+  const policyProblem=firstMonth?firstMonthPolicyProblem(firstMonth,user,contracts):null;
+  if(policyProblem){
+    const insuranceSnapshot=buildEmployeeInsuranceSnapshot(selectInsuranceSetting(input.insuranceVersionsByUser.get(user.id)??[],input.month),input.insuranceGlobal,user.id);
+    return {userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,
+      attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,days:[],firstMonthPolicyReview:policyProblem},
+      insuranceSnapshot,recognizedWorkdays:0,recognizedMinutes:0,lateMinutes:0,earlyLeaveMinutes:0,overtimeCandidateMinutes:0,
+      partTimeExtraWork:[],items:[],reviews:[review("FIRST_MONTH_POLICY_REVIEW_REQUIRED",null,{reason:policyProblem,policy:firstMonth})]};
+  }
+  // New-policy current-month figures are the whole month's entitlement, not elapsed-day accrual.
+  const monthEnd=payrollMonthDates(input.month).at(-1)!;
+  const calculationDate=firstMonth
+    ? (user.termination_date&&user.termination_date<monthEnd?user.termination_date:monthEnd)
+    : eligibleDates.at(-1)??input.dates.at(-1)??null;
   const fixedContractMatches=calculationDate?activeOn(contracts,calculationDate).filter(contract=>contract.calculationBasis==="fixed_monthly"):[];
   if(calculationDate&&fixedContractMatches.length===1){
     for (const record of records) {
@@ -122,7 +139,8 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
     const fixed=calculateFixedMonthlyPayroll(contract,levelInfo,calculationDate);
     if(!fixed)reviews.push(review("EMPLOYEE_LEVEL_BASE_DATE_REQUIRED",null,{contractRevision:contract.revision,calculationDate}));
     else {
-      items.push(item("base_work","addition",fixed.amount,null,"월 고정급여 / Lương cố định hàng tháng",{contractRevision:contract.revision,calculationBasis:"fixed_monthly",contractSalary:contract.baseSalary,fixedRaiseAmount:contract.fixedRaiseAmount,...fixed.levelSnapshot,levelProgramEnabled:user.level_program_enabled,levelProgramVersionId:user.levelProgramVersion?.id??null,levelProgramRevision:user.levelProgramVersion?.revision??null,levelProgramEffectiveFrom:user.levelProgramVersion?.effectiveFrom??null,levelBaseDate:user.level_base_date_override,...(user.level_base_mode?{levelBaseMode:user.level_base_mode,levelBaseMonth:levelInfo.baseMonth}:{})}));
+      const evidence=firstMonth?firstMonthEvidence(firstMonth,contract,fixed.amount,user.termination_date):null;
+      items.push(item("base_work","addition",evidence?.amount??fixed.amount,null,"월 고정급여 / Lương cố định hàng tháng",{...(evidence?{firstMonthProration:evidence}:{}),contractRevision:contract.revision,calculationBasis:"fixed_monthly",contractSalary:contract.baseSalary,fixedRaiseAmount:contract.fixedRaiseAmount,...fixed.levelSnapshot,levelProgramEnabled:user.level_program_enabled,levelProgramVersionId:user.levelProgramVersion?.id??null,levelProgramRevision:user.levelProgramVersion?.revision??null,levelProgramEffectiveFrom:user.levelProgramVersion?.effectiveFrom??null,levelBaseDate:user.level_base_date_override,...(user.level_base_mode?{levelBaseMode:user.level_base_mode,levelBaseMonth:levelInfo.baseMonth}:{})}));
       const rate=calculatePayrollRates(contract,fixed.amount);
       for(const record of records.filter(row=>row.status==="unauthorized_absence"&&eligibleDates.includes(row.work_date))){
         const scheduleMatches=activeOn(schedules,record.work_date);const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;const settings=input.settingsByDate.get(record.work_date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
@@ -132,7 +150,7 @@ function calculateEmployee(user:PayrollSnapshotUserRow,records:AttendanceRow[],i
     }
     const insuranceSetting=selectInsuranceSetting(input.insuranceVersionsByUser.get(user.id)??[],input.month);const insuranceSnapshot=buildEmployeeInsuranceSnapshot(insuranceSetting,input.insuranceGlobal,user.id);
     if(insuranceSnapshot.isEnrolled)items.push(item("insurance_employee_deduction","deduction",insuranceSnapshot.employeeDeductionAmount,null,"직원 보험 공제",{insuranceSettingVersionId:insuranceSnapshot.settingVersionId,insuranceSettingRevision:insuranceSnapshot.revision,effectiveMonth:insuranceSnapshot.effectiveMonth,insuranceBaseAmount:insuranceSnapshot.insuranceBaseAmount,employeeRateBp:insuranceSnapshot.employeeRateBp,employerRateBp:insuranceSnapshot.employerRateBp,employeeDeductionAmount:insuranceSnapshot.employeeDeductionAmount,employerContributionAmount:insuranceSnapshot.employerAmount,isDirectorInsuranceMapped:insuranceSnapshot.isDirectorInsuranceMapped,companyPaidInsuranceTaxableAmount:insuranceSnapshot.companyPaidInsuranceTaxableAmount}));
-    return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,calculationBasis:"fixed_monthly",calculationDate,levelSnapshot:fixed?.levelSnapshot??null,days:[]},insuranceSnapshot,recognizedWorkdays:0,recognizedMinutes:0,lateMinutes:0,earlyLeaveMinutes:0,overtimeCandidateMinutes:0,partTimeExtraWork:[],items,reviews};
+    return{userId:user.id,employeeName:employeeName(user),contractSnapshot:contracts,attendanceSnapshot:{month:input.month,engineVersion:PAYROLL_RUN_ENGINE_VERSION,calculationBasis:"fixed_monthly",calculationDate,levelSnapshot:fixed?.levelSnapshot??null,...(firstMonth&&fixed?{firstMonthProration:firstMonthEvidence(firstMonth,contract,fixed.amount,user.termination_date)}:{}),days:[]},insuranceSnapshot,recognizedWorkdays:0,recognizedMinutes:0,lateMinutes:0,earlyLeaveMinutes:0,overtimeCandidateMinutes:0,partTimeExtraWork:[],items,reviews};
   }
   for(const date of eligibleDates){const record=recordsByDate.get(date)??null;const contractMatches=activeOn(contracts,date);const scheduleMatches=activeOn(schedules,date);const contract=contractMatches.length===1?contractMatches[0]:null;const schedule=scheduleMatches.length===1?scheduleMatches[0]:null;if(!record&&!schedule)continue;const settings=input.settingsByDate.get(date)??{revision:null,lateGraceMinutes:0,earlyLeaveGraceMinutes:0};
     const facts=normalizeAttendanceDayFacts({userId:user.id,businessDate:date,attendanceRecord:record?{id:Number(record.id),status:record.status,checkInAt:record.check_in_at,checkOutAt:record.check_out_at,approvalStatus:record.approval_status,storedLateMinutes:record.late_minutes,storedEarlyLeaveMinutes:record.early_leave_minutes,storedWorkMinutes:record.work_minutes}:null,schedule,hireDate:user.hire_date,storeSettingsRevision:settings.revision,lateGraceMinutes:settings.lateGraceMinutes,earlyLeaveGraceMinutes:settings.earlyLeaveGraceMinutes,manualLateNormalized:record?input.lateNormalizedRecordIds.has(Number(record.id)):false,earlyLeaveSelection:record?input.earlyLeaveContexts?.get(Number(record.id))?.earlyLeaveSelection:null,normalCheckoutThresholdAt:record?input.earlyLeaveContexts?.get(Number(record.id))?.normalCheckoutThresholdAt:null});
@@ -261,7 +279,8 @@ export async function loadPayrollMonthSnapshot(month:string,options?:{calculatio
   const penaltySettings:PayrollPenaltySettings={lateMajorThresholdMinutes:Number(payrollSettingsResult.data.late_major_threshold_minutes),lateMinorPenaltyMinutes:Number(payrollSettingsResult.data.late_minor_penalty_minutes),lateMajorPenaltyRateBp:Number(payrollSettingsResult.data.late_major_penalty_rate_bp),unauthorizedAbsencePenaltyDays:Number(payrollSettingsResult.data.unauthorized_absence_penalty_days)};
   const insuranceVersionsByUser=new Map<number,PayrollInsuranceSettingVersion[]>();for(const row of insuranceResult.data??[]){const version:PayrollInsuranceSettingVersion={id:Number(row.id),userId:Number(row.user_id),isEnrolled:Boolean(row.is_enrolled),insuranceBaseAmount:Number(row.insurance_base_amount),effectiveMonth:String(row.effective_month),revision:Number(row.revision),createdBy:Number(row.created_by),createdAt:String(row.created_at),note:row.note?String(row.note):null};const list=insuranceVersionsByUser.get(version.userId)??[];list.push(version);insuranceVersionsByUser.set(version.userId,list);}
   const levelProgramsByDate=selectEmployeeLevelProgramVersionsForDates(levelProgramResult.data??[],[...new Set([start,...dates])]);const levelPrograms=levelProgramsByDate.get(start)??new Map<number,EmployeeLevelProgramVersion>();const users=((userResult.data??[]) as PayrollSnapshotUserRow[]).map(user=>{const version=levelPrograms.get(Number(user.id));return version?{...user,...levelUserFieldsFromVersion(version),levelProgramVersion:version}:user;});
-  const input:BatchInput={levelProgramsByDate,month,dates,users,earlyLeaveContexts,attendance:(attendanceResult.data??[]) as AttendanceRow[],lateNormalizedRecordIds:new Set((overrideResult.data??[]).map(row=>Number(row.attendance_record_id))),contracts:(contractResult.data??[]).map(row=>mapContract(row as Record<string,unknown>)),schedules:(scheduleResult.data??[]).map(row=>mapSchedule(row as Record<string,unknown>)),settingsByDate,extraWorkSettingsByDate,holidayPremiumByDate,decisionsByAttendanceId,insuranceVersionsByUser,insuranceGlobal,penaltySettings};
+  const firstMonthPolicies=await loadFirstMonthPolicies(users.map(user=>Number(user.id)));
+  const input:BatchInput={firstMonthPolicies,levelProgramsByDate,month,dates,users,earlyLeaveContexts,attendance:(attendanceResult.data??[]) as AttendanceRow[],lateNormalizedRecordIds:new Set((overrideResult.data??[]).map(row=>Number(row.attendance_record_id))),contracts:(contractResult.data??[]).map(row=>mapContract(row as Record<string,unknown>)),schedules:(scheduleResult.data??[]).map(row=>mapSchedule(row as Record<string,unknown>)),settingsByDate,extraWorkSettingsByDate,holidayPremiumByDate,decisionsByAttendanceId,insuranceVersionsByUser,insuranceGlobal,penaltySettings};
   const directorInsuranceAmount=calculateDirectorInsurance(insuranceGlobal);const insuranceSettingsSnapshot={employeeRateBp:insuranceGlobal.employeeRateBp,employerRateBp:insuranceGlobal.employerRateBp,director:{enabled:insuranceGlobal.directorEnabled,userId:insuranceGlobal.directorUserId,baseAmount:insuranceGlobal.directorBaseAmount,rateBp:insuranceGlobal.directorRateBp,employeeRateBp:insuranceGlobal.directorEmployeeRateBp,companyPaidInsuranceTaxableAmount:calculateDirectorEmployeeInsurance(insuranceGlobal),calculatedAmount:directorInsuranceAmount,settingsUpdatedAt:insuranceGlobal.settingsUpdatedAt}};
   return{employees:calculatePayrollBatch(input),context:{users:input.users,contracts:input.contracts,attendance:input.attendance},sourceSnapshot:{engineVersion:PAYROLL_RUN_ENGINE_VERSION,calculatedAt:new Date().toISOString(),calculationEndDate,attendanceRecordIds:input.attendance.map(row=>row.id),contractRevisions:[...new Set(input.contracts.map(row=>row.revision))],scheduleRevisions:[...new Set(input.schedules.map(row=>row.revision))],levelProgramVersions:[...levelPrograms.entries()].map(([userId,version])=>({userId,...version})),storeSettingRevisions:[...new Set([...settingsByDate.values()].map(value=>value.revision).filter(value=>value!==null))],insuranceSettings:insuranceSettingsSnapshot,penaltySettings:{...penaltySettings,capturedAt:new Date().toISOString()}}};
 }

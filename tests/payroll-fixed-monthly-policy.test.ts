@@ -120,7 +120,7 @@ test("correction API applies the exact same fixed-monthly-target policy (role or
 test("fixed monthly payroll creates one month item before attendance processing", () => {
   assert.match(fixed, /contract\.baseSalary \+ contract\.fixedRaiseAmount \+ levelRaiseAmount/);
   assert.match(monthly, /fixedContractMatches/);
-  assert.match(monthly, /item\("base_work","addition",fixed\.amount,null,"월 고정급여 \/ Lương cố định hàng tháng"/);
+  assert.match(monthly, /item\("base_work","addition",evidence\?\.amount\?\?fixed\.amount,null,"월 고정급여 \/ Lương cố định hàng tháng"/);
   assert.match(monthly, /calculationBasis:"fixed_monthly"/);
   assert.match(monthly, /levelSnapshot:fixed\?\.levelSnapshot/);
   assert.match(monthly, /days:\[\]/);

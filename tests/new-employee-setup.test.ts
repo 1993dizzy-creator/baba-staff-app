@@ -12,7 +12,7 @@ import {
 
 test("pay kind → existing DB contract values (no new pay type): fixed = monthly+fixed_monthly, monthly = monthly|hourly + minute", () => {
   assert.deepEqual(newEmployeeContractRequest({ kind: "fixed", unit: "monthly", amount: 8_000_000, hireDate: "2026-11-16" }),
-    { payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: 8_000_000, fixedRaiseAmount: 0, standardWorkdays: 26, effectiveFrom: "2026-11-01" });
+    { firstMonthProration: true, payType: "monthly", calculationBasis: "fixed_monthly", baseSalary: 8_000_000, fixedRaiseAmount: 0, standardWorkdays: 26, effectiveFrom: "2026-11-01" });
   // the unit choice is ignored for the fixed kind (fixed is always a monthly amount)
   assert.equal(newEmployeeContractRequest({ kind: "fixed", unit: "hourly", amount: 1, hireDate: "2026-11-16" }).payType, "monthly");
   assert.deepEqual(newEmployeeContractRequest({ kind: "monthly", unit: "monthly", amount: 7_000_000, hireDate: "2026-11-16" }),

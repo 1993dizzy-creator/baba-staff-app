@@ -6,6 +6,8 @@ import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { lockPaidExtraWorkReview } from "@/lib/payroll/paid-extra-work";
 import { loadMealAllowanceCostSummary } from "@/lib/payroll/meal-allowance-server";
+import { paidFirstMonthEmployee } from "@/lib/payroll/first-month-paid";
+import { buildPayrollOverviewSummary } from "@/lib/payroll/overview";
 // NOTE: Source Export(buildPayrollSourceExport)는 향후 APP↔T8 교차검증에서 다시 쓰므로
 // 코드는 보존하되, 급여관리 메인 화면 진입 경로에서는 계산하지 않는다.
 // 원천 자료가 필요하면 /api/admin/payroll/source-export 를 별도로 호출한다.
@@ -58,17 +60,31 @@ export async function GET(request: Request) {
       : Promise.resolve({data:[],error:null});
     const [{data:payments,error:paymentError},mealAllowance]=await Promise.all([paymentsPromise,mealAllowancePromise!]);if(paymentError)throw paymentError;
     const paymentByUser=new Map((payments??[]).map(row=>[Number(row.user_id),row]));
+    let restoredFirstMonthPayment=false;
     const employees=overview.employees.map(employee=>{
       const payment=paymentByUser.get(employee.userId);
       const raw=overview.rawByUser.get(employee.userId);
-      const calculationHash=raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;
-      const visibleEmployee=payment?.payment_status==="paid"
+      const frozen=paidFirstMonthEmployee(payment?.payment_status,payment?.calculation_snapshot);
+      if(frozen)restoredFirstMonthPayment=true;
+      const calculationHash=frozen?payrollPaymentSnapshotHash(payment!.calculation_snapshot):raw?payrollPaymentSnapshotHash(buildEmployeePaymentSnapshot(employee,raw,overview.snapshot.sourceSnapshot as Record<string,unknown>)):null;
+      const visibleEmployee=frozen??(payment?.payment_status==="paid"
         ? lockPaidExtraWorkReview(employee,payment.calculation_snapshot as Record<string,unknown>|null)
-        : employee;
+        : employee);
       const publicPayment=payment?{...payment}:null;
       if(publicPayment)delete publicPayment.calculation_snapshot;
       return{...visibleEmployee,payment:publicPayment,batchStatus:run?.status??null,batchId:run?.id??null,calculationHash};
     });
+    // Rehire/profile edits may remove an old employment interval from the live
+    // candidate set. Keep the new policy's paid employee visible from its evidence.
+    for(const payment of payments??[]){
+      if(employees.some(employee=>employee.userId===Number(payment.user_id)))continue;
+      const frozen=paidFirstMonthEmployee(payment.payment_status,payment.calculation_snapshot);
+      if(!frozen)continue;
+      const publicPayment={...payment};delete publicPayment.calculation_snapshot;
+      employees.push({...frozen,payment:publicPayment,batchStatus:run?.status??null,batchId:run?.id??null,
+        calculationHash:payrollPaymentSnapshotHash(payment.calculation_snapshot)});
+      restoredFirstMonthPayment=true;
+    }
     // 식대비용은 지급 snapshot/hash(위 employees[].calculationHash, payrollPaymentSnapshotHash)와
     // 완전히 분리된 표시 전용 집계다 — loadPayrollOverview()가 아니라 이 GET 핸들러에서만
     // 계산해 summary/projectedSummary에 얹으므로, 출근 기록이 바뀌어 식대비용이 달라져도
@@ -80,6 +96,7 @@ export async function GET(request: Request) {
     // 섞지 않고 이 한 번의 호출 안에서 함께 계산해 응답 최상위에 별도 필드로만 내려준다 — 이
     // 화면은 과거·미래 월을 자유롭게 넘나들며 조회할 수 있으므로, 오늘 날짜를 쓰면 이후에
     // 등록된 eligibility 변경 때문에 과거 급여장부의 배지가 바뀌어 버린다.
+    if(restoredFirstMonthPayment)overview.summary=buildPayrollOverviewSummary(employees.map(employee=>({...employee,payment:undefined})),overview.directorInsuranceAmount);
     const summary={...overview.summary,mealAllowanceAmount:mealAllowance.currentAmount,totalCompanyCostAmount:overview.summary.totalCompanyCostAmount+mealAllowance.currentAmount};
     const projectedSummary=overview.projectedSummary?{...overview.projectedSummary,mealAllowanceAmount:mealAllowance.projectedAmount,totalCompanyCostAmount:overview.projectedSummary.totalCompanyCostAmount+mealAllowance.projectedAmount}:null;
     const mealAllowanceEligibleUserIds=mealAllowance.eligibleUserIds;

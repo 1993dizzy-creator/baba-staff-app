@@ -10,6 +10,7 @@ const validId=(value:unknown)=>{const id=Number(value);return Number.isSafeInteg
 const validFundAccountId=(value:unknown)=>typeof value==="number"&&Number.isSafeInteger(value)&&value>0?value:null;
 const validDate=(value:unknown)=>typeof value==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(value)?value:null;
 function fail(message:string){
+  if(message.includes("FIRST_MONTH_POLICY_REVIEW_REQUIRED"))return payrollJson({ok:false,code:"FIRST_MONTH_POLICY_REVIEW_REQUIRED"},409);
   if(message.includes("PAYROLL_FUND_ACCOUNT_INVALID"))return payrollJson({ok:false,code:"PAYROLL_FUND_ACCOUNT_INVALID",message:"지급 계좌를 다시 선택해주세요.",messageVi:"Vui lòng chọn lại tài khoản chi trả."},400);
   if(message.includes("PAYROLL_LEDGER_PROJECTION_FAILED")){
     const closed=message.toLowerCase().includes("month_closed");

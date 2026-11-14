@@ -31,6 +31,8 @@ import {
 export type PayrollMonthlyAdjustment = { id:number;kind:PayrollAdjustmentKind;category:string;amount:number;businessDate:string;reason:string;note:string|null;sourceType:"manual"|"sales_menu_incentive";sourceKey:string|null;createdAt:string;cancelledAt?:string|null;cancelledBy?:number|null;cancellationReason?:string|null };
 
 export type PayrollOverviewEmployee = {
+  firstMonthProration?: { amount: number };
+  firstMonthPolicyReview?: boolean;
   userId: number;
   name: string;
   username: string;
@@ -190,6 +192,8 @@ export function buildPayrollOverviewEmployee(input: {
   const unresolvedAttendanceCount=new Set(employee.reviews.filter(review=>review.businessDate&&["MISSING_CHECK_IN","MISSING_CHECK_OUT","INVALID_TIME_RANGE"].includes(review.warningCode)).map(review=>review.businessDate)).size;
 
   return {
+    ...(employee.attendanceSnapshot.firstMonthProration?{firstMonthProration:employee.attendanceSnapshot.firstMonthProration as {amount:number}}:{}),
+    ...(employee.attendanceSnapshot.firstMonthPolicyReview?{firstMonthPolicyReview:true}:{}),
     userId: user.id,
     name: user.name || user.full_name || user.username,
     username: user.username,
