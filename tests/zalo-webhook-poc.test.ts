@@ -245,12 +245,25 @@ test("request id and user-agent family are logged; unsafe header values are drop
   assert.ok(!bad.logs.join("").includes("secret-ua"));
 });
 
-test("12 module performs no DB / network / reply calls", () => {
+test("12 webhook module performs no DB / network / reply calls; route loads the DB client only lazily", () => {
   const source = readFileSync("lib/zalo/webhook-poc.ts", "utf8");
   const route = readFileSync("app/api/integrations/zalo-bot/route.ts", "utf8");
-  for (const text of [source, route]) {
-    assert.doesNotMatch(text, /supabase|fetch\(|bot-api\.zaloplatforms|sendMessage|BOT_TOKEN/i);
-  }
+  assert.doesNotMatch(source, /supabase|fetch\(|bot-api\.zaloplatforms|sendMessage|BOT_TOKEN/i);
+  assert.doesNotMatch(route, /fetch\(|bot-api\.zaloplatforms|sendMessage|BOT_TOKEN/i);
+  // Observe mode must keep working without DB env: no static import of the DB client.
+  assert.doesNotMatch(route, /^import .*supabase/im);
+  assert.match(route, /await import\("@\/lib\/supabase\/server"\)/);
   assert.match(route, /export async function POST/);
   assert.doesNotMatch(route, /export async function (GET|PUT|DELETE|PATCH)/);
+});
+
+test("13 observe mode stays the default: an unset/unknown mode never calls persist", async () => {
+  let calls = 0;
+  const persist = async () => { calls += 1; return { status: "stored" as const, inboxId: 1, deliveryCount: 1, payloadMismatch: false }; };
+  for (const mode of [undefined, "", "observe", "PERSIST-ish", "true"]) {
+    const res = await handleZaloWebhook(request(event()), { ZALO_BOT_WEBHOOK_SECRET: SECRET, ZALO_BOT_WEBHOOK_MODE: mode }, () => {}, persist);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, observed: true });
+  }
+  assert.equal(calls, 0);
 });
