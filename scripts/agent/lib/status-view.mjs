@@ -42,18 +42,67 @@ const BORDERS = {
   ascii: {h: '-', v: '|', top: ['+', '+', '+'], mid: ['+', '+', '+'], bottom: ['+', '+', '+']},
 };
 
-// Cells are [text, style]. Width is measured on plain text, color is applied after padding.
-function table(head, rows, {paint, unicode, align = []}) {
+// Wrap terminal cells without splitting ANSI sequences; restore colors on continuation lines.
+function wrap(text, width) {
+  const lines = [];
+  let line = '', used = 0, active = '';
+  for (const token of String(text).match(/\x1b\[[0-9;]*m|[^]/gu) || []) {
+    if (token.startsWith('\x1b[')) {
+      active = token === '\x1b[0m' ? '' : active + token;
+      line += token;
+      continue;
+    }
+    const size = displayWidth(token);
+    if (token === '\n' || used + size > width) {
+      lines.push(line + (active ? '\x1b[0m' : ''));
+      line = active; used = 0;
+      if (token === '\n') continue;
+    }
+    line += token; used += size;
+  }
+  lines.push(line);
+  return lines;
+}
+
+// Cells are [text, style]. Color is applied after wrapping and padding.
+function table(head, rows, {paint, unicode, align = [], columns = null, minWidths = []}) {
   const b = BORDERS[unicode ? 'unicode' : 'ascii'];
   const cell = value => (Array.isArray(value) ? value : [String(value), null]);
+  if (columns && columns < 11) {
+    const edge = `${b.top[0]}${b.h.repeat(columns - 2)}${b.top[2]}`;
+    return [edge, ...rows.flatMap(row => head.flatMap((title, i) => {
+      const [text, style] = cell(row[i]);
+      return [...wrap(title, columns - 2).map(part => `${b.v}${paint('bold', fill(part, columns - 2))}${b.v}`),
+        ...wrap(text, columns - 2).map(part => `${b.v}${paint(style, fill(part, columns - 2))}${b.v}`)];
+    })), `${b.bottom[0]}${b.h.repeat(columns - 2)}${b.bottom[2]}`];
+  }
   const widths = head.map((title, i) => Math.max(displayWidth(title), ...rows.map(row => displayWidth(cell(row[i])[0]))));
+  const minimum = head.map((title, i) => Math.min(widths[i], minWidths[i] ?? Math.max(2, displayWidth(title))));
+  const overhead = head.length * 3 + 1;
+  if (columns && minimum.reduce((a, b) => a + b, overhead) > columns) {
+    // Preserve all fields in a bordered key/value block for each worktree.
+    return rows.flatMap((row, i) => [...(i ? [''] : []),
+      ...table(['항목', '값'], head.map((title, i) => [title, row[i]]),
+        {paint, unicode, columns, minWidths: [2, 2]})]);
+  }
+  while (columns && widths.reduce((a, b) => a + b, overhead) > columns) {
+    const candidates = widths.map((w, i) => w > minimum[i] ? i : -1).filter(i => i >= 0);
+    const i = candidates.reduce((best, i) => widths[i] > widths[best] ? i : best);
+    widths[i]--;
+  }
   const rule = ([left, joint, right]) => `${left}${widths.map(w => b.h.repeat(w + 2)).join(joint)}${right}`;
-  const line = (cells, header) => `${b.v}${cells.map((value, i) => {
-    const [text, style] = cell(value);
-    return ` ${paint(header ? 'bold' : style, fill(text, widths[i], !header && align[i] === 'right'))} `;
-  }).join(b.v)}${b.v}`;
-  return [rule(b.top), line(head, true), rule(b.mid), ...rows.map(row => line(row)), rule(b.bottom)];
+  const lines = (cells, header) => {
+    const parts = cells.map((value, i) => wrap(cell(value)[0], widths[i]));
+    return Array.from({length: Math.max(...parts.map(p => p.length))}, (_, n) =>
+      `${b.v}${cells.map((value, i) => {
+        const [, style] = cell(value);
+        return ` ${paint(header ? 'bold' : style, fill(parts[i][n] || '', widths[i], !header && align[i] === 'right'))} `;
+      }).join(b.v)}${b.v}`);
+  };
+  return [rule(b.top), ...lines(head, true), rule(b.mid), ...rows.flatMap(row => lines(row, false)), rule(b.bottom)];
 }
+
+const output = (lines, columns) => (columns ? lines.flatMap(line => wrap(line, columns)) : lines).join('\n');
 
 const short = sha => (sha ? sha.slice(0, 7) : '-');
 const VERDICT = {PASS: ['PASS', 'green'], WARN: ['WARN 검토 필요', 'yellow'], FAIL: ['FAIL', 'red']};
@@ -140,13 +189,9 @@ function renderBriefStatus(r, {paint, unicode, columns, branches}) {
   const rows = r.trees.map(t => [[t.label, 'bold'], [short(t.head), 'cyan'], [t.branch, 'cyan'], treeState(t),
     [t.behind == null ? '-' : t.behind ? `-${t.behind}` : '0', t.behind ? 'dim' : null],
     [t.unintegrated == null ? '-' : String(t.unintegrated.length), t.unintegrated?.length ? 'yellow' : null]]);
-  const grid = table(['Worktree', 'HEAD', '브랜치', '상태', 'main 대비', '미통합(커밋)'], rows, {paint, unicode, align: [null, null, null, null, 'right', 'right']});
-  if (columns && displayWidth(grid[0]) > columns) {
-    for (const row of rows) {
-      out.push(`${paint('bold', row[0][0])} ${paint(row[3][1], row[3][0])} ${paint('cyan', row[1][0])} · main 대비 ${row[4][0]} · 미통합 ${row[5][0]}`,
-        `  ${paint('cyan', row[2][0])}`);
-    }
-  } else out.push(...grid);
+  out.push(...table(['Worktree', 'HEAD', '브랜치', '상태', 'main 대비', '미통합(커밋)'], rows,
+    {paint, unicode, columns, align: [null, null, null, null, 'right', 'right'],
+      minWidths: [8, 7, 6, Math.max(8, ...rows.map(row => displayWidth(row[3][0]))), 9, 12]}));
   out.push('main 대비 -N: 뒤처진 커밋 수 (미커밋 파일 수 아님)');
   const warnings = new Map();
   for (const f of r.findings.filter(f => f.level !== 'INFO')) {
@@ -160,10 +205,12 @@ function renderBriefStatus(r, {paint, unicode, columns, branches}) {
   }
   if (branches) out.push('', paint('bold', '브랜치 목록 (Worktree 밖 미통합)'), ...(r.parked?.length ? r.parked.map(branch => `  ${paint('cyan', branch)}`) : ['  없음']));
   out.push('', '상세 관계도: baba-status --graph · 브랜치 목록: baba-status --branches');
-  return out.join('\n');
+  return output(out, columns);
 }
 
 export function renderStatus(r, {color = false, unicode = true, columns = null, branches = false, graph = false} = {}) {
+  // Leave the last cell unused to avoid legacy console automatic wrapping.
+  columns = Number.isFinite(columns) && columns > 0 ? Math.max(4, Math.floor(columns) - 1) : null;
   const paint = (style, text) => (color && style ? `\x1b[${CODES[style]}m${text}\x1b[0m` : text);
   if (!graph) return renderBriefStatus(r, {paint, unicode, columns, branches});
   const tag = level => paint({FAIL: 'red', WARN: 'yellow', INFO: 'cyan'}[level], `[${level}]`);
@@ -196,16 +243,9 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
       agent ? [String(t.behind), t.behind && pending ? 'yellow' : null] : ['-', 'dim'],
       agent ? [String(pending), pending ? 'yellow' : 'green'] : ['-', 'dim']];
   });
-  const options = {paint, unicode, align: [null, null, null, null, 'right', 'right']};
-  const grid = table(['Worktree', 'HEAD', '브랜치', '상태', '미통합', 'main 대비 뒤처짐', 'ahead'], rows, options);
-  const compact = columns && displayWidth(grid[0]) > columns;
-  if (compact) {
-    // Narrow terminals: two short lines per worktree instead of a table.
-    for (const [t, [name, head, branch, state, pending, behind]] of r.trees.map((t, i) => [t, rows[i]])) {
-      out.push(`${paint('bold', fill(name[0], 7))}${paint(state[1], state[0])} ${paint('cyan', head[0])}${t.unintegrated ? `  미통합 ${paint(pending[1], pending[0])} · 뒤처짐 ${behind[0]} · ahead ${pending[0]}` : ''}`);
-      out.push(`       ${paint('cyan', branch[0])}`);
-    }
-  } else out.push(...grid);
+  const options = {paint, unicode, columns, align: [null, null, null, null, 'right', 'right', 'right'],
+    minWidths: [8, 7, 6, Math.max(8, ...rows.map(row => displayWidth(row[3][0]))), 6, 16, 5]};
+  out.push(...table(['Worktree', 'HEAD', '브랜치', '상태', '미통합', 'main 대비 뒤처짐', 'ahead'], rows, options));
 
   const details = [];
   for (const t of r.trees.filter(t => t.exists)) {
@@ -233,10 +273,7 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
     ['GitHub Push', ready], ['배포 승인', ['사용자 승인 범위에 따름', 'yellow']], ['테스트/보안 검증', ['Git 상태만 표시(검증 재실행 없음)', 'dim']]];
   const pairs = (title, items) => {
     out.push('', paint('bold', title));
-    if (compact) {
-      const width = Math.max(...items.map(([key]) => displayWidth(key)));
-      for (const [key, [text, style]] of items) out.push(`  ${fill(key, width)}  ${paint(style, text)}`);
-    } else out.push(...table(['항목', '값'], items, {paint, unicode}));
+    out.push(...table(['항목', '값'], items, {paint, unicode, columns}));
   };
   pairs('GitHub', github);
   pairs('결과', results);
@@ -256,5 +293,5 @@ export function renderStatus(r, {color = false, unicode = true, columns = null, 
       if (branches) out.push(...parked.map(branch => `       ${paint('cyan', branch)}`));
     }
   }
-  return out.join('\n');
+  return output(out, columns);
 }

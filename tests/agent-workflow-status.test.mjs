@@ -10,7 +10,7 @@ import {detectTerminal, displayWidth, renderStatus, stripAnsi} from '../scripts/
 
 // Every scenario runs in a disposable local repository with a local bare "origin".
 const source = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const fixtures = insideRoot(source, '.tmp-baba/status-fixtures');
+const fixtures = insideRoot(source, '.local/status-fixtures');
 mkdirSync(fixtures, {recursive: true});
 const created = [];
 test.after(() => { for (const dir of created) rmSync(dir, {recursive: true, force: true}); });
@@ -359,17 +359,35 @@ test('terminal detection: no color for CI, redirects, NO_COLOR or dumb terminals
   assert.equal(detectTerminal({stream: {isTTY: false}, env: {FORCE_COLOR: '1'}, platform: 'win32'}).color, true);
 });
 
-test('narrow terminals switch to a compact layout without table borders', () => {
+test('all terminal widths retain aligned borders, full information and color parity', () => {
   const f = koreanFixture();
+  git(f.codex, ['switch', '-c', 'codex/very-long-English-branch-한글-정렬-검증-'.repeat(3).replaceAll('codex/', '')]);
   const report = status(f);
-  const wide = renderStatus(report, {graph: true,unicode: false, columns: 200});
-  const narrow = renderStatus(report, {graph: true,unicode: false, columns: 60});
-  assert.match(wide, /^\+-+\+/m);
-  assert.doesNotMatch(narrow, /^[+|]/m);
-  assert.match(narrow, /^Claude +CLEAN [0-9a-f]{7} {2}미통합 1 · 뒤처짐 0 · ahead 1$/m);
-  assert.match(narrow, /^ {7}claude\/20261026-한글-정렬-01$/m);
-  assert.match(narrow, /^ {2}활성 Worktree 통합 +WARN 검토 필요$/m);
-  for (const line of narrow.split('Worktree 상세\n')[1].split('\n').slice(0, 6)) assert.ok(displayWidth(line) <= 60, line);
+  report.parked = ['old/한글-긴-브랜치-'.repeat(8)];
+  tree(report, 'main').conflicted = ['UU conflict.txt'];
+  tree(report, 'Codex').untracked = Array.from({length: 120}, (_, i) => `long-file-${i}.txt`);
+  const before = JSON.stringify(report);
+  for (const columns of [8, 12, 20, 40, 50, 60, 80, 100, 120, 160]) {
+    for (const graph of [false, true]) for (const unicode of [false, true]) {
+      const options = {columns, graph, unicode, branches: true};
+      const plain = renderStatus(report, options);
+      const colored = renderStatus(report, {...options, color: true});
+      assert.equal(stripAnsi(colored), plain);
+      assertAligned(plain, graph ? 3 : 1);
+      for (const line of plain.split('\n')) assert.ok(displayWidth(line) < columns, `${columns}: ${line}`);
+      // Reassemble cell continuations to ensure long names and numeric states are not truncated.
+      const cells = plain.split('\n').filter(line => /^[|│]/.test(line));
+      const values = cells.map(line => line.split(/[|│]/).slice(1, -1).map(s => s.trim()));
+      assert.equal(values[0].length, columns < 12 ? 1 : columns <= 60 || (graph && columns === 80) ? 2 : graph ? 7 : 6);
+      const joined = Array.from({length: Math.max(...values.map(row => row.length))}, (_, i) =>
+        values.map(row => row[i] || '').join(''));
+      for (const value of [tree(report, 'Codex').branch, 'DIRTY(121)', 'CONFLICT', 'CLEAN']) {
+        assert.ok(joined.some(column => column.includes(value)), `${columns}: missing ${value}`);
+      }
+      if (!unicode) assert.doesNotMatch(plain, /[┌┐└┘│─]/);
+    }
+  }
+  assert.equal(JSON.stringify(report), before);
 });
 
 test('other local branches are reviewed separately from active worktree integration', () => {
