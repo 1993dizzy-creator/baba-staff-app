@@ -1,11 +1,35 @@
 -- NOT APPLIED. Owner approval is required for application AND separate activation.
--- No sales, receipt, inventory, collector or accounting objects are changed.
+-- Only AFTER hooks are added to POS orders/receipts/lines; no source values, v3
+-- functions, accounting, inventory or ledger data are rewritten.
 -- Established private SECURITY DEFINER + service-only public INVOKER wrapper pattern.
 begin;
 set local lock_timeout = '5s';
+do $$ begin
+ if exists(select 1 from supabase_migrations.schema_migrations where version='20261115103656' or name like '%tables_cleaning%') then
+  raise exception 'cleaning_history_exists_use_successor';end if;
+ if to_regprocedure('pos_open_orders_private.read_v1(text,date)') is null
+  or not exists(select 1 from pg_proc where oid=to_regprocedure('pos_open_orders_private.read_v1(text,date)') and prosrc like '%closureMergedIntoOrderId%') then
+  raise exception 'cleaning_v3_dependency_missing';end if;
+ if not exists(select 1 from pg_index i join pg_attribute a on a.attrelid=i.indrelid and a.attnum=i.indkey[0]
+  where i.indrelid=to_regclass('public.pos_sales_receipt_lines') and i.indisvalid and i.indisready and a.attname='receipt_id' and i.indpred is null) then
+  raise exception 'cleaning_receipt_line_index_missing';end if;
+end $$;
 create schema table_operations_private;
 revoke all on schema table_operations_private from public,anon,authenticated,service_role;
-create table table_operations_private.config(singleton boolean primary key default true check(singleton), enabled boolean not null default false);
+create sequence table_operations_private.activation_generation_seq;
+create table table_operations_private.config(singleton boolean primary key default true check(singleton), enabled boolean not null default false,
+ generation bigint not null default 0 check(generation>0));
+-- Every OFF/ON boundary invalidates all previous confirmations, even when OFF
+-- bypasses all invalidation work. Recreating a missing config row is safe too.
+create function table_operations_private.activation_generation_v1() returns trigger language plpgsql security definer set search_path='' as $$
+begin
+ if tg_op='INSERT' or new.enabled is distinct from old.enabled then
+  new.generation:=nextval('table_operations_private.activation_generation_seq');
+ else new.generation:=old.generation;end if;
+ return new;
+end $$;
+create trigger tables_cleaning_activation_generation before insert or update on table_operations_private.config
+ for each row execute function table_operations_private.activation_generation_v1();
 insert into table_operations_private.config values(true,false);
 create table table_operations_private.catalog(table_id uuid primary key, table_name text not null unique, branch_id text not null);
 insert into table_operations_private.catalog values
@@ -62,10 +86,37 @@ alter table table_operations_private.invalidations enable row level security;
 revoke all on all tables in schema table_operations_private from public,anon,authenticated,service_role;
 revoke all on all sequences in schema table_operations_private from public,anon,authenticated,service_role;
 
--- Full row/line hashes detect revisions without exposing raw/customer data to clients.
+-- Keep ALL business/unknown fields (including raw v3 merge evidence) fail-closed.
+-- Exclude only row observation metadata and the five provider metadata keys already
+-- ignored by sales-receipt-sync-compare.ts. Never drop RefDate/OrderId/TableName,
+-- payment/cancel flags, amounts, quantities, options, discounts, tax or merge arrays.
+create function table_operations_private.strip_sync_metadata_v1(p_value jsonb) returns jsonb
+language plpgsql immutable strict set search_path='' as $$
+declare result jsonb;
+begin
+ if jsonb_typeof(p_value)='object' then
+  select coalesce(jsonb_object_agg(k,table_operations_private.strip_sync_metadata_v1(v)),'{}'::jsonb) into result
+  from jsonb_each(p_value) x(k,v) where regexp_replace(lower(k),'[_[:space:]-]','','g') not in
+   ('modifieddate','modifieddateutc','updateddate','lastmodifieddate','lastupdateddate');
+ elsif jsonb_typeof(p_value)='array' then
+  select coalesce(jsonb_agg(table_operations_private.strip_sync_metadata_v1(v) order by n),'[]'::jsonb) into result
+  from jsonb_array_elements(p_value) with ordinality x(v,n);
+ else result:=p_value;end if;
+ return result;
+end $$;
+create function table_operations_private.receipt_business_v1(p_row jsonb) returns jsonb
+language sql immutable strict set search_path='' as $$
+ select table_operations_private.strip_sync_metadata_v1(p_row-array['synced_at','updated_at','status_changed_at'])
+$$;
+create function table_operations_private.line_business_v1(p_row jsonb) returns jsonb
+language sql immutable strict set search_path='' as $$
+ select table_operations_private.strip_sync_metadata_v1(p_row-array['id','synced_at','updated_at'])
+$$;
+-- Surrogate line ids/order are irrelevant; keep duplicate business lines and source ids.
 create function table_operations_private.receipt_version_v1(p_id bigint) returns text
 language sql stable set search_path='' as $$
- select md5(jsonb_build_array(to_jsonb(r),coalesce((select jsonb_agg(to_jsonb(l) order by l.id)
+ select md5(jsonb_build_array(table_operations_private.receipt_business_v1(to_jsonb(r)),coalesce((select jsonb_agg(
+   table_operations_private.line_business_v1(to_jsonb(l)) order by table_operations_private.line_business_v1(to_jsonb(l))::text)
    from public.pos_sales_receipt_lines l where l.receipt_id=r.id and l.source='cukcuk'),'[]'::jsonb))::text)
  from public.pos_sales_receipts r where r.id=p_id
 $$;
@@ -73,7 +124,8 @@ create function table_operations_private.receipts_v1(p_scope text,p_day date) re
 language sql stable set search_path='' as $$
  select coalesce(jsonb_agg(jsonb_build_object('id',r.id,'ref_no',r.ref_no,'final_amount',r.final_amount,
   'payment_status',r.payment_status,'is_canceled',r.is_canceled,'business_date',r.business_date,
-  'ref_date',r.ref_date,'status_changed_at',r.status_changed_at,'order_id',r.raw_json->>'OrderId',
+  -- Observation time is not a payment fact/proof; detailed history reads it separately.
+  'ref_date',r.ref_date,'status_changed_at',null,'order_id',r.raw_json->>'OrderId',
   'table_name',r.raw_json->>'TableName','version',table_operations_private.receipt_version_v1(r.id)) order by r.id),'[]'::jsonb)
  from public.pos_sales_receipts r where r.source='cukcuk' and r.branch_id=split_part(p_scope,':',2)
   and r.business_date between p_day and p_day+1
@@ -90,7 +142,7 @@ begin
  select * into r from public.pos_sales_receipts where source='cukcuk' and branch_id=c.branch_id and business_date=p_day
   and lower(btrim(raw_json->>'TableName'))=lower(c.table_name) and payment_status=3 and is_canceled=false
   order by ref_date desc nulls last,id desc limit 1;
- if not found or r.ref_date is null or r.ref_date>clock_timestamp() or r.final_amount is null or r.final_amount<0
+ if not found or r.ref_date is null or r.ref_date>statement_timestamp() or r.final_amount is null or r.final_amount<0
   or public.store_business_date_for_timestamp_v1(r.ref_date)::date<>p_day
   or nullif(btrim(r.raw_json->>'OrderId'),'') is null then return null;end if;
  -- Any merge membership blocks physical cleaning, including a surviving receipt whose
@@ -116,26 +168,26 @@ begin
   o.closure_merged_into_order_id) order by o.order_id),'[]'::jsonb) into epoch
  from pos_open_orders_private.orders o where o.scope=p_scope and o.business_date=p_day and lower(btrim(o.table_name))=lower(c.table_name);
  return jsonb_build_object('receiptId',r.id,'orderEpoch',epoch,'evidenceKey',md5(jsonb_build_array(p_table,p_day,
-   table_operations_private.receipt_version_v1(r.id),epoch,
+   table_operations_private.receipt_version_v1(r.id),epoch,(select generation from table_operations_private.config where singleton),
    (select coalesce(max(i.id),0) from table_operations_private.invalidations i join table_operations_private.cleaning_events e on e.id=i.event_id
     where e.scope=p_scope and e.table_id=p_table and e.business_date=p_day))::text));
 end $$;
 
+-- One STABLE MVCC statement snapshot: no POS-table SHARE locks, row locks or scope
+-- advisory locks. Ordinary GETs do not wait for or block POS DML/collector locks.
+-- confirm_v1 alone owns the short critical section and rechecks this optimistic proof.
 create function table_operations_private.context_v1(p_scope text,p_day date) returns jsonb
-language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+language plpgsql stable security definer set search_path='' set lock_timeout='3s' as $$
 declare snap jsonb; receipts jsonb; keys jsonb:='{}'; cleaned jsonb:='[]'; c record; e jsonb; fresh boolean;
 begin
  if (select enabled from table_operations_private.config where singleton) is distinct from true then return jsonb_build_object('enabled',false);end if;
- if p_scope is null or p_scope !~ '^[a-f0-9]{64}:[a-zA-Z0-9-]+$' or p_day is distinct from public.store_business_date_for_timestamp_v1(clock_timestamp())::date then
+ if p_scope is null or p_scope !~ '^[a-f0-9]{64}:[a-zA-Z0-9-]+$' or p_day is distinct from public.store_business_date_for_timestamp_v1(statement_timestamp())::date then
   raise exception 'cleaning_stale' using errcode='40001';end if;
- perform pg_advisory_xact_lock(hashtextextended('pos_open_orders:'||p_scope,0));
- lock table public.pos_sales_receipts in share mode;
- lock table public.pos_sales_receipt_lines in share mode;
  snap:=pos_open_orders_private.read_v1(p_scope,p_day);
  receipts:=table_operations_private.receipts_v1(p_scope,p_day);
  select exists(select 1 from pos_open_orders_private.sync_state where scope=p_scope and business_date=p_day and last_error_code is null
-  and last_success_at between clock_timestamp()-interval '10 minutes' and clock_timestamp())
-  and not exists(select 1 from pos_open_orders_private.runs where scope=p_scope and status='collecting' and lease_until>clock_timestamp()) into fresh;
+  and last_success_at between statement_timestamp()-interval '10 minutes' and statement_timestamp())
+  and not exists(select 1 from pos_open_orders_private.runs where scope=p_scope and status='collecting' and lease_until>statement_timestamp()) into fresh;
  if fresh then
   for c in select table_id from table_operations_private.catalog where branch_id=split_part(p_scope,':',2) loop
    e:=table_operations_private.evidence_v1(p_scope,p_day,c.table_id);
@@ -157,6 +209,8 @@ declare e jsonb; prior table_operations_private.cleaning_events%rowtype; v_id bi
 begin
  if p_request is null or p_key is null or p_snapshot is null or jsonb_typeof(p_receipts) is distinct from 'array' then
   raise exception 'cleaning_invalid' using errcode='22023';end if;
+ -- Disabled requests must fail before contending with POS writers.
+ if (select enabled from table_operations_private.config where singleton) is distinct from true then raise exception 'cleaning_disabled' using errcode='55000';end if;
  -- Same order as the collector: scope advisory lock, then receipt share lock.
  perform pg_advisory_xact_lock(hashtextextended('pos_open_orders:'||p_scope,0));
  lock table public.pos_sales_receipts in share mode;
@@ -164,7 +218,10 @@ begin
  perform 1 from public.users where id=p_actor and is_active=true and app_login_enabled=true
   and role in('master','owner','manager','leader','staff') for share;
  if not found then raise exception 'cleaning_forbidden' using errcode='42501';end if;
- if (select enabled from table_operations_private.config where singleton) is distinct from true then raise exception 'cleaning_disabled' using errcode='55000';end if;
+ -- Serialize a committed OFF boundary with in-flight confirmations, using only this
+ -- private row. No config lock is acquired by normal POS invalidation hooks or GETs.
+ perform 1 from table_operations_private.config where singleton and enabled for share;
+ if not found then raise exception 'cleaning_disabled' using errcode='55000';end if;
  if p_scope is null or p_scope !~ '^[a-f0-9]{64}:[a-zA-Z0-9-]+$' or p_day is distinct from public.store_business_date_for_timestamp_v1(clock_timestamp())::date
   or exists(select 1 from pos_open_orders_private.runs where scope=p_scope and status='collecting' and lease_until>clock_timestamp())
   or not exists(select 1 from pos_open_orders_private.sync_state where scope=p_scope and business_date=p_day and last_error_code is null
@@ -194,7 +251,9 @@ end $$;
 create function table_operations_private.invalidate_order_v1() returns trigger language plpgsql security definer set search_path='' as $$
 declare fact jsonb;
 begin
+ if (select enabled from table_operations_private.config where singleton) is distinct from true then return new;end if;
  fact:=jsonb_build_array(new.order_id,new.order_date,new.status,new.table_name,new.closure_receipt_id,new.closure_merged_into_order_id);
+ if tg_op='UPDATE' and fact is not distinct from jsonb_build_array(old.order_id,old.order_date,old.status,old.table_name,old.closure_receipt_id,old.closure_merged_into_order_id) then return new;end if;
  insert into table_operations_private.invalidations(event_id,reason)
  select e.id,'order_generation_changed' from table_operations_private.cleaning_events e
  join table_operations_private.catalog c on c.table_id=e.table_id
@@ -210,7 +269,10 @@ create trigger tables_cleaning_order_invalidation after insert or update on pos_
 create function table_operations_private.invalidate_receipt_v1() returns trigger language plpgsql security definer set search_path='' as $$
 declare r public.pos_sales_receipts%rowtype;
 begin
- if tg_op='UPDATE' and to_jsonb(new) is not distinct from to_jsonb(old) then return new;end if;
+ if (select enabled from table_operations_private.config where singleton) is distinct from true then
+  if tg_op='DELETE' then return old;else return new;end if;
+ end if;
+ if tg_op='UPDATE' and table_operations_private.receipt_business_v1(to_jsonb(new)) is not distinct from table_operations_private.receipt_business_v1(to_jsonb(old)) then return new;end if;
  if tg_op='DELETE' then r:=old;else r:=new;end if;
  insert into table_operations_private.invalidations(event_id,reason)
  select e.id,'receipt_changed' from table_operations_private.cleaning_events e join table_operations_private.catalog c on c.table_id=e.table_id
@@ -225,7 +287,10 @@ create trigger tables_cleaning_receipt_invalidation after insert or update or de
 create function table_operations_private.invalidate_line_v1() returns trigger language plpgsql security definer set search_path='' as $$
 declare old_id bigint; new_id bigint;
 begin
- if tg_op='UPDATE' and to_jsonb(new) is not distinct from to_jsonb(old) then return new;end if;
+ if (select enabled from table_operations_private.config where singleton) is distinct from true then
+  if tg_op='DELETE' then return old;else return new;end if;
+ end if;
+ if tg_op='UPDATE' and table_operations_private.line_business_v1(to_jsonb(new)) is not distinct from table_operations_private.line_business_v1(to_jsonb(old)) then return new;end if;
  if tg_op<>'INSERT' then old_id:=old.receipt_id;end if;
  if tg_op<>'DELETE' then new_id:=new.receipt_id;end if;
  insert into table_operations_private.invalidations(event_id,reason)
@@ -237,7 +302,7 @@ end $$;
 create trigger tables_cleaning_line_invalidation after insert or update or delete on public.pos_sales_receipt_lines
  for each row execute function table_operations_private.invalidate_line_v1();
 
-create function public.tables_cleaning_context_v1(p_scope text,p_day date) returns jsonb language sql security invoker set search_path='' as $$
+create function public.tables_cleaning_context_v1(p_scope text,p_day date) returns jsonb language sql stable security invoker set search_path='' as $$
  select table_operations_private.context_v1(p_scope,p_day) $$;
 create function public.tables_cleaning_confirm_v1(p_scope text,p_day date,p_table uuid,p_actor bigint,p_request uuid,p_receipt bigint,p_key text,p_snapshot jsonb,p_receipts jsonb)
 returns jsonb language sql security invoker set search_path='' as $$

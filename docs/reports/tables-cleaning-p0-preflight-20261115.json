@@ -1,0 +1,77 @@
+{
+  "target": "BABA production",
+  "readOnly": true,
+  "pass": true,
+  "v3FunctionHashes": {
+    "pos_open_orders_claim(uuid,uuid,text,text,date,integer)": "ffb29f3976c818af0ff71b2bb6acd016",
+    "pos_open_orders_commit(uuid,uuid,jsonb,jsonb)": "c343fa1175a398909b94b0acaeeb5f9d",
+    "pos_open_orders_fail(uuid,uuid,text)": "eb9fa126ef56d664d2b45d88ca02c788",
+    "pos_open_orders_private.claim_v1(uuid,uuid,text,text,date,integer)": "7f2ec01f9e00d1e04e18ad6d7a9511c8",
+    "pos_open_orders_private.commit_snapshot_v1(uuid,uuid,jsonb,jsonb)": "bf813f2992eb7e64e4428b13b05be057",
+    "pos_open_orders_private.commit_v1(uuid,uuid,jsonb,jsonb)": "9a56ebf8ba0ef3f60d5e646fbf8aab97",
+    "pos_open_orders_private.fail_v1(uuid,uuid,text)": "ae8b1d4901d08e74e7cba2741bea7bde",
+    "pos_open_orders_private.merge_order_menu_v1(jsonb)": "89fe0b9031ce56dea1fe20176cb3adb1",
+    "pos_open_orders_private.merge_receipt_menu_v1(jsonb)": "490cf4e52b606df3958f4e943649914a",
+    "pos_open_orders_private.merge_zero_v1(jsonb)": "9fb8e4da75000694355e4f8f84888ba9",
+    "pos_open_orders_private.read_v1(text,date)": "a1c3dcbf7e0644675d0d29b11afce52f",
+    "pos_open_orders_read(text,date)": "0ca4a98a15e2a524897504145ae1d547"
+  },
+  "rows": [
+    {
+      "check_name": "cleaning_objects_absent",
+      "pass": true,
+      "detail": "No partial/conflicting cleaning installation.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "collector_scope_fence",
+      "pass": true,
+      "detail": "Writer lock order: scope advisory, receipt SHARE.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "columns_exist",
+      "pass": true,
+      "detail": "All statically referenced columns.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "functions_exist",
+      "pass": true,
+      "detail": "Existing v3 read/commit and configured business date function.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "migration_history_absent",
+      "pass": true,
+      "detail": "Existing history requires a new successor migration; never edit or repair it.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "read_v3_contract",
+      "pass": true,
+      "detail": "Preserve v3 closure read evidence.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "receipt_line_lookup_index",
+      "pass": true,
+      "detail": "A valid unfiltered index beginning with receipt_id is required for repeated line projection.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    },
+    {
+      "check_name": "roles_exist",
+      "pass": true,
+      "detail": "Expected API roles.",
+      "checked_at": "2026-11-15 11:33:46.979731+00",
+      "read_only": "on"
+    }
+  ]
+}

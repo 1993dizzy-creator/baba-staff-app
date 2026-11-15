@@ -13,7 +13,7 @@ export async function cleaningServiceFixture(){
  await db.exec('update table_operations_private.config set enabled=true');
  let failWrite=false,changeBeforeWrite=null;
  const adapter={rpc(name,args){return {abortSignal:async()=>{
-  if(name==='tables_cleaning_confirm_v1'&&failWrite)return {data:null,error:{code:'offline'}};
+  if(name==='tables_cleaning_confirm_v1'&&failWrite)return {data:null,error:{code:typeof failWrite==='string'?failWrite:'offline'}};
   if(name==='tables_cleaning_confirm_v1'&&changeBeforeWrite)await changeBeforeWrite(db);
   if(!['tables_cleaning_context_v1','tables_cleaning_confirm_v1'].includes(name))throw Error('Unexpected RPC');
   const fields=Object.keys(args),values=Object.values(args).map(v=>typeof v==='object'?JSON.stringify(v):v);

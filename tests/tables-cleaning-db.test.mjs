@@ -11,11 +11,12 @@ test('formal cleaning migration: gates, idempotence, revisions, new orders, perm
    BABA_TABLES.map(t=>({table_id:t.MapObjectID,table_name:t.MapObjectName})).sort((a,b)=>a.table_name<b.table_name?-1:1));
   assert.deepEqual(await context(db,day),{enabled:false});
   await db.exec('update table_operations_private.config set enabled=true');
-  const initial=await context(db,day);assert.ok(initial.keys[tableId]);
+  let initial=await context(db,day);assert.ok(initial.keys[tableId]);
   await db.exec('delete from table_operations_private.config');assert.deepEqual(await context(db,day),{enabled:false});
   await assert.rejects(confirm(db,day,initial),/disabled/);await db.exec('insert into table_operations_private.config values(true,true)');
   await db.exec('update table_operations_private.config set enabled=false');await assert.rejects(confirm(db,day,initial),/disabled/);
   await db.exec('update table_operations_private.config set enabled=true');
+  initial=await context(db,day); // Config generation changed; the original proof is stale.
   const receiptBefore=(await db.query('select to_jsonb(r) r from pos_sales_receipts r')).rows;
   await db.exec('set role service_role');
   const saved=await confirm(db,day,initial);assert.equal(saved.saved,true);

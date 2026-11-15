@@ -3,14 +3,18 @@ import {BASE,RECEIPT_EVIDENCE,MERGED,PREREQUISITES} from './pos-open-orders-nati
 import {BABA_TABLES,BABA_TABLES_EVIDENCE} from '../../lib/sales/baba-table-catalog.ts';
 export const CLEANING=readFileSync(new URL('../../supabase/migrations/20261115103656_tables_cleaning_v1.sql',import.meta.url),'utf8');
 export const branch=BABA_TABLES_EVIDENCE.branchId, scope='a'.repeat(64)+':'+branch, tableId=BABA_TABLES[3].MapObjectID;
-export async function installCleaningFixture(db){
+export async function installCleaningFixture(db,{beforeCleaning,afterCleaning}={}){
  await db.exec(PREREQUISITES);
  await db.exec(`create table public.users(id bigint primary key,role text,is_active boolean,app_login_enabled boolean);
  insert into users values(1,'staff',true,true),(2,'manager',true,true);
  alter table pos_sales_receipts add column ref_no text,add column ref_date timestamptz,add column final_amount numeric,add column status_changed_at timestamptz;
  create table pos_sales_receipt_lines(id bigint primary key,receipt_id bigint,source text,item_name text,quantity numeric,final_amount numeric,is_canceled boolean);
+ create index fixture_receipt_line_lookup on pos_sales_receipt_lines(receipt_id);
  create function public.store_business_date_for_timestamp_v1(p_timestamp timestamptz) returns date language sql stable as $$select ((p_timestamp at time zone 'Asia/Ho_Chi_Minh')-interval '3 hours')::date$$;`);
- await db.exec(BASE);await db.exec(RECEIPT_EVIDENCE);await db.exec(MERGED);await db.exec(CLEANING);
+ await db.exec(BASE);await db.exec(RECEIPT_EVIDENCE);await db.exec(MERGED);
+ if(beforeCleaning)await beforeCleaning(db);
+ await db.exec(CLEANING);
+ if(afterCleaning)await afterCleaning(db);
  const day=(await db.query('select public.store_business_date_for_timestamp_v1(clock_timestamp())::text as store_day')).rows[0].store_day;
  await db.query(`insert into pos_open_orders_private.sync_state(scope,branch_id,business_date,last_success_at,last_attempt_at) values($1,$2,$3,clock_timestamp(),clock_timestamp())`,[scope,branch,day]);
  await db.query(`insert into pos_sales_receipts(id,source,branch_id,business_date,payment_status,is_canceled,total_amount,final_amount,ref_date,ref_no,raw_json)
