@@ -478,9 +478,10 @@ function UserCard({
   const openLevelModal = (event: { currentTarget: HTMLElement }) => { levelOpenerRef.current = event.currentTarget; setLevelModalOpen(true); };
   // 열린 modal <dialog> 동안 바깥 요소는 inert라 focus가 무시되므로, dialog가 닫혀 DOM에서 빠진 뒤 포커스를 옮긴다.
   const focusLevelOpener = () => { window.setTimeout(() => { const opener = levelOpenerRef.current; (opener?.isConnected ? opener : levelButtonRef.current)?.focus(); }, 0); };
-  const sheetView = isEditing && payroll.openUserId === String(user.id) ? payroll.openView : null;
-  const payrollOpen = sheetView !== null;
   const canManagePayroll = canManageUserPayroll(user);
+  // 급여 모달은 화면의 버튼과 같은 조건(급여 관리 가능 직원)에서만 연다. 급여관리의 ?sheet= 딥링크도 이 조건을 우회하지 않는다.
+  const sheetView = isEditing && canManagePayroll && payroll.openUserId === String(user.id) ? payroll.openView : null;
+  const payrollOpen = sheetView !== null;
   // 근무·급여를 펼친 직원 1명의 계약만 조회한다(목록 전체 조회 없음). 계약 요약과 계약 모달이 이 결과를 함께 쓰고,
   // 다른 화면에서 돌아오면 다시 조회한다.
   const contracts = usePayrollContracts(isEditing && workVisited ? Number(user.id) : null, { refreshOnReturn: true });

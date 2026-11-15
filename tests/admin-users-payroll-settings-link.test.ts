@@ -74,7 +74,8 @@ test("2차: 직원관리 mounts the shared EmployeePayrollSettingsPanel; the con
 });
 
 test("2차/4차: the employee page mounts at most one payroll sheet (contract only or one setting), only for payroll-manageable employees", () => {
-  assert.match(page, /const sheetView = isEditing && payroll\.openUserId === String\(user\.id\) \? payroll\.openView : null;/);
+  // The ?sheet= deep link (급여관리 계약·TNCN 링크) is held to the same canManagePayroll condition as the on-page buttons.
+  assert.match(page, /const canManagePayroll = canManageUserPayroll\(user\);\n[^\n]*\n\s+const sheetView = isEditing && canManagePayroll && payroll\.openUserId === String\(user\.id\) \? payroll\.openView : null;/);
   // The shared panel mounts only inside the open sheet, cut to that view (contract or one setting card).
   assert.match(page, /\{sheetView && typeof document !== "undefined" \? \(\s*<PayrollSettingSheet/);
   assert.match(page, /<PayrollSheet[\s\S]*?<EmployeePayrollSettingsPanel[\s\S]*?only=\{view\}/);
