@@ -9,7 +9,7 @@ import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
 import { buildTableOverview, type TableReceipt } from "./table-overview";
 
-function validOrders(orders: unknown): orders is CollectedOrder[] {
+export function validOrders(orders: unknown): orders is CollectedOrder[] {
   if (!Array.isArray(orders)) return false;
   const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
   return orders.every(order => order && typeof order.orderId === "string" && order.orderId.trim()
