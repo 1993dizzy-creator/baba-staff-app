@@ -188,9 +188,9 @@ test("contract verification: create/correct are recognised only when the server 
   assert.equal(contractSaveApplied(history, { ...correct, expectedAuditVersion: 40 }), false);
 });
 
-test("settings page separates HTTP errors from an empty employee list and offers retry", () => {
-  assert.match(settingsPage, /if \(!response\.ok \|\| !data \|\| data\.ok === false \|\| !Array\.isArray\(data\.users\)\) throw new Error\("PAYROLL_USERS_READ_FAILED"\);/);
-  assert.match(settingsPage, /onClick=\{\(\) => setUsersReloadKey\(\(key\) => key \+ 1\)\}/);
+test("2026-11: the common-only settings page no longer reads the employee list", () => {
+  // The employee list (and its HTTP-error/retry state) moved out with the employee tab; 직원관리 has its own list.
+  assert.doesNotMatch(settingsPage, /\/api\/admin\/payroll\/users|PAYROLL_USERS_READ_FAILED|setUsersReloadKey/);
 });
 
 test("contract save distinguishes failure, uncertain result and post-save reload failure", () => {

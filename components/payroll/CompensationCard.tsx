@@ -26,6 +26,7 @@ import { getEmployeeRoleLabel } from "@/lib/common/roles";
 import AttendancePerfectScoreBadge from "@/components/attendance/AttendancePerfectScoreBadge";
 import PartTimeExtraWorkSection from "@/components/payroll/PartTimeExtraWorkSection";
 import { lookupEmployeePaymentStatus } from "@/lib/payroll/payment-result-check";
+import { employeePayrollSettingsHref } from "@/lib/payroll/employee-settings-href";
 import { getPayrollReviewReasons, payrollReviewCategoryHref, payrollReviewCategoryLabel, type PayrollReviewCategory, type PayrollReviewReasons } from "@/lib/payroll/review-reasons";
 // /admin/users의 🍚 배지와 동일한 문구를 쓴다 — 식대는 회사 부담 비용이며 net pay에 추가
 // 지급되는 항목이 아니므로, "지급"이 아니라 "대상"이라는 중립적 표현으로 통일한다.
@@ -187,16 +188,14 @@ export function CompensationCard({
           {!employee.contract ? (
             <>
               <p>{t.noContract}</p>
-              <Link
-                href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}&month=${month}`}
-              >
-                {t.payrollSettingsLink}
+              <Link href={employeePayrollSettingsHref(employee.userId, "contract")}>
+                {t.employeeSettingsLink}
               </Link>
             </>
           ) : combined === null ? (
             <>
               <p>{hourlyContractReview ? t.hourlyContractHoursRequired : t.levelBaseRequired}</p>
-              <Link href={hourlyContractReview ? "/admin/payroll/settings" : "/admin/users"}>{hourlyContractReview ? t.payrollSettingsLink : t.employeeSettingsLink}</Link>
+              <Link href={hourlyContractReview ? employeePayrollSettingsHref(employee.userId, "contract") : "/admin/users"}>{t.employeeSettingsLink}</Link>
             </>
           ) : (
             <>
@@ -252,7 +251,7 @@ export function CompensationCard({
                 {employee.amounts.advanceAmount > 0 && <Row label={t.advance} value={formatSignedVnd(employee.amounts.advanceAmount, "-")} />}
                 {employee.amounts.otherDeductionAmount > 0 && <details style={s.taxDetails}><summary style={s.taxDetailsSummary}>{lang === "vi" ? "Khoản trừ khác đã tính trong tổng trên" : "지급대상액에 이미 반영된 기타 공제"}</summary><Row label={t.otherDeduction} value={formatSignedVnd(employee.amounts.otherDeductionAmount, "-")} /></details>}
               {(employee.tax.status === "requires_review" || employee.tax.taxMode === "resident_progressive") && <DetailSection icon="🧾" title={taxText.title}>
-                {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={`/admin/payroll/settings?tab=employee&userId=${employee.userId}&month=${month}`}>{taxText.settings}</Link></> : <>
+                {employee.tax.status === "requires_review" ? <><p role="alert" style={s.error}>{taxText.requiresReview} ({employee.tax.warningCodes.join(", ")})</p><Link href={employeePayrollSettingsHref(employee.userId, "tax")}>{taxText.settings}</Link></> : <>
                   <Row label={employee.tax.taxBurdenMode === "company_bears" ? (lang === "vi" ? "Công ty chịu · Nhân viên khấu trừ" : "회사 부담 적용 · 직원 공제") : (lang === "vi" ? "Áp dụng · Nhân viên khấu trừ" : "적용 · 직원 공제")} value={formatVnd(employee.tax.employeePitDeductionAmount)} />
                   <details style={s.taxDetails}>
                     <summary style={s.taxDetailsSummary}>{taxText.details}</summary>
@@ -297,7 +296,7 @@ export function CompensationCard({
     </article>
   );
 }
-// 확인 필요 배지: 2차-B 사유 분류의 해결 위치로 바로 이동한다(근태 상세·급여설정·카드 내 추가근무).
+// 확인 필요 배지: 2차-B 사유 분류의 해결 위치로 바로 이동한다(근태 상세·직원관리 급여 영역·카드 내 추가근무).
 // 카드 헤더 버튼 밖에 있으므로 버튼 중첩이 없고, 클릭해도 카드를 닫지 않는다.
 function ReviewProblemBadge({ category, userId, month, lang, onExtraWork }: { category: PayrollReviewCategory; userId: number; month: string; lang: "ko" | "vi"; onExtraWork: () => void }) {
   const label = payrollReviewCategoryLabel(category, lang);
@@ -332,9 +331,9 @@ function ReviewReasonActions({ reasons, userId, month, lang, onExtraWork }: { re
   for (const category of reasons.categories) {
     if (category === "extraWork") { actions.push({ key: category, href: null, text: vi ? "Xem làm thêm giờ" : "추가근무 검토" }); continue; }
     const href = payrollReviewCategoryHref(category, userId, month);
-    // 계약·보험/TNCN은 같은 급여설정 화면이라 한 번만 보여준다.
+    // 같은 위치로 가는 링크는 한 번만 보여준다(계약은 계약 모달, 보험/TNCN은 직원 급여 영역).
     if (!href || actions.some(action => action.href === href)) continue;
-    actions.push({ key: category, href, text: category === "attendance" ? (vi ? "Xem chấm công" : "근태 상세") : category === "level" ? (vi ? "Quản lý nhân viên" : "직원관리") : (vi ? "Cài đặt lương" : "급여설정") });
+    actions.push({ key: category, href, text: category === "attendance" ? (vi ? "Xem chấm công" : "근태 상세") : category === "level" ? (vi ? "Quản lý nhân viên" : "직원관리") : category === "contract" ? (vi ? "Hợp đồng lương" : "급여계약") : (vi ? "Cài đặt BH/TNCN" : "보험/TNCN 설정") });
   }
   if (actions.length === 0) return null;
   return <div style={s.reviewReasonActions}>{actions.map(action => action.href

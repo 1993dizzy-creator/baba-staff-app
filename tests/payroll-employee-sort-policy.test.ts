@@ -18,7 +18,8 @@ test("payroll screens share part-role-name-id ordering", () => {
   assert.match(sort, /localeCompare/);
   assert.match(sort, /a\.id \?\? a\.userId/);
   assert.match(main, /employees\.sort\(comparePayrollEmployees\)/);
-  assert.match(settings, /sort\(comparePayrollEmployees\)/);
+  // 2026-11: the settings page employee list is removed; it no longer sorts employees itself.
+  assert.doesNotMatch(settings, /comparePayrollEmployees/);
 });
 
 test("master role is first, owner second, and role labels are consistently translated", () => {
@@ -41,7 +42,4 @@ test("payroll part labels are localized with an unknown-value fallback", () => {
   assert.match(labels, /hall:"Sảnh",bar:"Quầy bar",kitchen:"Bếp"/);
   assert.match(labels, /\?\?\(value\|\|"-"\)/);
   assert.match(parts, /if \(part === "owner"\) return "owner"/);
-  assert.match(settings, /all\.indexOf\(value\) === index/);
-  assert.match(settings, /employeeMetaLabel\(user\)/);
-  assert.match(settings, /employeeMetaLabel\(selected\)/);
 });

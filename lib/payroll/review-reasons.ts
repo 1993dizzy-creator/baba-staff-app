@@ -3,6 +3,7 @@
 // - calculationStatus === "calculable" 이면 사유가 없다(필터 "확인 필요"와 같은 기준).
 // - 사유 라벨은 기존 reviewLabel()을 그대로 쓰고, 여기서는 해결 위치(카테고리)만 정한다.
 import { reviewLabel, type PayrollUiLang } from "./ui-labels.ts";
+import { employeePayrollSettingsHref } from "./employee-settings-href.ts";
 
 export type PayrollReviewCategory = "attendance" | "extraWork" | "contract" | "insuranceTax" | "level" | "notStarted" | "other";
 
@@ -94,10 +95,15 @@ export function payrollReviewCategoryLabel(category: PayrollReviewCategory, lang
   return (lang === "vi" ? vi : ko)[category];
 }
 
-/** 해결 화면 링크. extraWork는 카드 내부 영역이라 href가 없다. */
+/**
+ * 해결 화면 링크. extraWork는 카드 내부 영역이라 href가 없다.
+ * 직원별 급여설정은 직원관리에서만 관리한다: 계약은 계약 모달, 보험/TNCN은 둘 중 어느 쪽인지 사유만으로
+ * 정할 수 없으므로 모달을 임의로 고르지 않고 해당 직원의 근무·급여 영역을 연다. 조회월은 넘기지 않는다.
+ */
 export function payrollReviewCategoryHref(category: PayrollReviewCategory, userId: number, month: string): string | null {
   if (category === "attendance") return `/admin/payroll/attendance/${userId}?month=${month}`;
-  if (category === "contract" || category === "insuranceTax") return `/admin/payroll/settings?tab=employee&userId=${userId}&month=${month}`;
+  if (category === "contract") return employeePayrollSettingsHref(userId, "contract");
+  if (category === "insuranceTax") return employeePayrollSettingsHref(userId);
   if (category === "level") return "/admin/users";
   return null;
 }

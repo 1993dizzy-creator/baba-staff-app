@@ -30,24 +30,12 @@ test("fixed monthly formula pays contract, fixed raise, and current level raise 
   });
 });
 
-test("employee list loads active users once per tab/language and restores URL selection separately", () => {
+test("payroll users API keeps the active-employee filter; the common-only settings page no longer reads it", () => {
+  // 2026-11: the settings page employee list/selection/scroll is removed (직원별 설정은 직원관리에서만).
   assert.match(usersRoute, /\.eq\("is_active",true\)/);
-  assert.ok(settings.includes("}, [activeTab, vi, usersReloadKey]);"));
-  assert.match(settings, /users\.some\(\(user\) => user\.id === requested\)/);
-  assert.match(settings, /useState\(true\).*employeeListOpen|employeeListOpen, setEmployeeListOpen/);
-  assert.match(settings, /aria-expanded=\{employeeListOpen\}/);
-  assert.match(settings, /aria-controls="payroll-employee-list"/);
-  assert.match(settings, /setEmployeeListOpen\(false\)/);
-  assert.equal((settings.match(/fetch\("\/api\/admin\/payroll\/users"/g) ?? []).length, 1);
-});
-
-test("employee clicks wait for collapsed layout and both detail requests before one scroll", () => {
-  assert.match(settings, /pendingScrollUserIdRef/);
-  // 2차: 계약·보험 조회 완료를 공용 패널이 settled로 알려 주고, 페이지는 그 뒤에 한 번만 스크롤한다.
+  assert.equal((settings.match(/fetch\("\/api\/admin\/payroll\/users"/g) ?? []).length, 0);
+  // The shared panel still reports when its first contract·insurance reads settle.
   assert.match(settings, /const settled = !contractsLoading && !selectedInsuranceLoading;/);
-  assert.match(settings, /!selectedId \|\| employeeListOpen \|\| !selectedPanelSettled/);
-  assert.match(settings, /pendingScrollUserIdRef\.current = null/);
-  assert.equal((settings.match(/scrollIntoView\(/g) ?? []).length, 1);
 });
 
 test("contract money fields share formatting and zero-only focus convenience", () => {

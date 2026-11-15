@@ -19,7 +19,8 @@ test("unsaved state reaches the leave checks in the input's own commit, not afte
   assert.match(panel, /onUnsavedChangeRef\.current\?\.\(next\);/);
   // page: leave checks read the ref, not the rendered state
   assert.match(users, /unsaved: \(\) => payrollUnsavedRef\.current,\n\s+leaveMessage: latestPayrollLeave,/);
-  assert.match(settings, /const message = latestLeaveMessage\(\);/);
+  // 2026-11: personal payroll input exists only in 직원관리; the common-only settings page has no employee panel.
+  assert.doesNotMatch(settings, /EmployeePayrollSettingsPanel|latestLeaveMessage/);
   // 지연·디바운스로 가리지 않는다(레벨 설정 창 포커스 복원용 타이머는 미저장 판정과 무관하므로 대상 밖).
   assert.doesNotMatch(panel + report + unsaved, /setTimeout\(|debounce/);
 });

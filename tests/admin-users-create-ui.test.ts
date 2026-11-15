@@ -112,8 +112,8 @@ test("first payroll setup reuses the existing APIs, checks before writing and is
   assert.match(createPage, /if \(form\.role === "owner"\) return \{ \.\.\.base, mode: "owner" \};/);
   // the users page opens ?userId=&section=payroll as the detail with 근무·급여 expanded
   assert.match(createPage, /router\.push\(current\.userId \? `\/admin\/users\?userId=\$\{encodeURIComponent\(current\.userId\)\}&section=payroll` : "\/admin\/users"\)/);
-  assert.match(listPage, /const userId = search\.get\("userId"\);/);
-  assert.match(listPage, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
+  assert.match(listPage, /const userId = searchParams\.get\("userId"\);/);
+  assert.match(listPage, /searchParams\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
 });
 
 test("create API requires a hire date regardless of the level choice (the create RPC already requires it)", () => {

@@ -56,10 +56,12 @@ test("current payroll contract is read per employee only when the detail is open
   assert.match(page, /: current \? amount !== null\n\s+\? <strong style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\} · \{amount\}<\/strong>\n\s+: <span style=\{styles\.contractPrimary\}>\{payrollContractLabel\(current, text\)\} · <span style=\{styles\.contractError\}>\{text\.payrollContractAmountUnavailable\}<\/span><\/span>\n\s+: <strong style=\{styles\.contractPrimary\}>\{text\.payrollContractNone\}<\/strong>\}/);
 });
 
-test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contract editor exists only in the shared panel", () => {
+test("2차: 직원관리 mounts the shared EmployeePayrollSettingsPanel; the contract editor exists only in the shared panel", () => {
+  // 2026-11 일원화: 직원별 급여설정은 직원관리에서만 연다. 급여설정 페이지는 패널·직원 목록·계약을 조회하지 않는다.
+  assert.match(page, /import EmployeePayrollSettingsPanel/);
+  assert.match(page, /<EmployeePayrollSettingsPanel/);
+  assert.doesNotMatch(settings, /EmployeePayrollSettingsPanel|usePayrollContracts|\/api\/admin\/payroll\/users|fetch\(/);
   for (const source of [page, settings]) {
-    assert.match(source, /import EmployeePayrollSettingsPanel/);
-    assert.match(source, /<EmployeePayrollSettingsPanel/);
     assert.doesNotMatch(source, /\/api\/admin\/payroll\/contracts\/correct|function verifyContractSave|contractSaveApplied|<EmployeeInsuranceSettings|<EmployeeTaxSettings|<EmployeeMealAllowanceSettings|<EmployeeAttendanceBonusSettings/);
   }
   assert.match(panel, /fetch\(correcting \? "\/api\/admin\/payroll\/contracts\/correct" : "\/api\/admin\/payroll\/contracts"/);
@@ -69,9 +71,6 @@ test("2차: both screens mount the same EmployeePayrollSettingsPanel; the contra
   for (const component of ["EmployeeInsuranceSettings", "EmployeeTaxSettings", "EmployeeMealAllowanceSettings", "EmployeeAttendanceBonusSettings"]) {
     assert.match(panel, new RegExp(`<${component}\\s+key=\\{\`[a-z-]+-\\$\\{selected\\.id\\}\`\\}`), component);
   }
-  // The settings page keys the panel per employee so inputs/errors/pending saves never carry over.
-  assert.match(settings, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
-  assert.match(settings, /const contractsSource = usePayrollContracts\(activeTab === "employee" \? userId : null\);/);
 });
 
 test("2차/4차: the employee page mounts at most one payroll sheet (contract only or one setting), only for payroll-manageable employees", () => {
@@ -88,22 +87,24 @@ test("2차/4차: the employee page mounts at most one payroll sheet (contract on
   assert.match(page, /contracts=\{contracts\}[\s\S]*contracts=\{contracts\}/);
 });
 
-test("2차: two-way navigation keeps the selected employee and confirms before discarding unsaved edits", () => {
-  assert.match(settings, /router\.push\(`\/admin\/users\?userId=\$\{id\}&section=payroll`\)/);
-  // P0: both exits go through confirmLeave(), which asks only when the panel has unsaved input or a pending save.
-  assert.match(settings, /function openEmployeeManagement\(id: number\) \{\n    if \(!confirmLeave\(\)\) return;/);
-  // 즉시성: 이탈 확인은 패널이 알린 최신 값(ref)으로 만든 문구를 쓴다.
-  assert.match(settings, /const latestLeaveMessage = \(\) => payrollLeaveMessage\(panelUnsavedRef\.current, vi\);/);
-  assert.match(settings, /const confirmLeave = \(\) => \{\n    const message = latestLeaveMessage\(\);\n    return message === null \|\| window\.confirm\(message\);\n  \};/);
-  // arriving from the payroll settings page still opens the employee detail with 근무·급여 open
+test("2026-11: payroll deep links open the employee detail; legacy employee-tab links are replaced by 직원관리", () => {
+  // ?userId=&section=payroll&sheet= opens the employee detail with 근무·급여 open (and that one modal).
+  // The query is read through useSearchParams: during a client navigation window.location can still be the previous URL.
+  assert.match(page, /export default function AdminUsersPage\(\) \{\n  return <Suspense fallback=\{null\}><AdminUsersContent \/><\/Suspense>;\n\}/);
+  assert.match(page, /const searchParams = useSearchParams\(\);\n  const \[initialFocus\] = useState\(\(\) => \{/);
+  assert.doesNotMatch(page, /window\.location\.search/);
   assert.match(page, /const \[workOpen, setWorkOpen\] = useState\(initialFocus === "payroll"\);/);
   assert.match(page, /const \[isEditing, setIsEditing\] = useState\(initialFocus !== null\);/);
-  assert.match(page, /search\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
+  assert.match(page, /searchParams\.get\("section"\) === "payroll" \? "payroll" : "detail"/);
+  // The settings page keeps only common policy. An old ?tab=employee link is replaced (not pushed: no back-button loop)
+  // and the common settings are not rendered first (no flicker, no extra settings request).
+  assert.match(settings, /const legacyRedirect = legacyEmployeeSettingsRedirect\(params\);/);
+  assert.match(settings, /if \(legacyRedirect\) router\.replace\(legacyRedirect\);/);
+  assert.match(settings, /\{legacyRedirect \? null : <PayrollCommonSettings vi=\{vi\} \/>\}/);
+  assert.doesNotMatch(settings, /router\.push\(/);
   // P0: an open-but-unchanged form is no longer "unsaved"; pending verification is reported separately.
   // 4차: a one-setting modal (no contract shown) does not report the contract pending state as its own leave reason
   assert.match(panel, /const showsContract = !only \|\| only === "contract";\n\s+const pendingVerification = showsContract && pendingContractSave !== null;/);
-  // Existing settings URLs keep working (no redirect away from the employee tab).
-  assert.doesNotMatch(settings, /redirect\(|router\.replace\(`\/admin\/users/);
 });
 
 test("5차: attendance OFF warns only when the current/scheduled contract is not fixed monthly, and only warns", () => {
@@ -117,9 +118,8 @@ test("급여 모달 1차: personal payroll settings finish inside 직원관리 �
   assert.doesNotMatch(page, /router\.push\(`\/admin\/payroll\/settings/);
   assert.doesNotMatch(page, /openPayrollSettings|onOpenPayrollSettings|managePayrollSettings/);
   assert.match(page, /user\.is_active === true && !user\.termination_date && isPayrollEligible\(user\)/);
-  // the payroll settings page itself is unchanged: its employee tab still accepts ?userId=
-  assert.match(settings, /const requestedUserIdParam = params\.get\("userId"\)/);
-  assert.match(settings, /users\.some\(\(user\) => user\.id === requested\)/);
+  // 2026-11: the payroll settings page has no employee tab any more (common policy only).
+  assert.doesNotMatch(settings, /role="tablist"|requestedUserIdParam|selectUser\(/);
 });
 
 test("new labels exist in KO and VI", () => {
@@ -164,20 +164,17 @@ test("P0: the shared panel separates unsaved input from an unconfirmed contract 
   assert.match(panel, /function openForm\(\) \{\n    if \(pendingContractSave\) return;/);
 });
 
-test("P0: both pages confirm before discarding payroll input, and guard reload/close and menu links without touching history", () => {
+test("P0: 직원관리 confirms before discarding payroll input, and guards reload/close and menu links without touching history", () => {
   const unsaved = read("components/payroll/payrollUnsaved.ts");
   assert.match(unsaved, /window\.addEventListener\("beforeunload", beforeUnload\)/);
   assert.match(unsaved, /document\.addEventListener\("click", linkClick, true\)/);
   assert.doesNotMatch(unsaved, /history\.(pushState|replaceState|go|back)/);
-  for (const source of [page, settings]) assert.match(source, /useLeaveGuard\(/);
-  assert.match(settings, /if \(tab !== activeTab && !confirmLeave\(\)\) return;/);
-  assert.match(settings, /if \(id !== userId && !confirmLeave\(\)\) return;/);
+  // 2026-11: personal payroll input exists only in 직원관리, so the guard lives there (the settings page has no employee panel).
+  assert.match(page, /useLeaveGuard\(/);
   assert.match(page, /const message = closesOpenPanel \? latestPayrollLeave\(\) : null;\n\s+if \(message && !window\.confirm\(message\)\) return false;/);
-  // 즉시성: 두 화면 모두 최신 값(ref)을 읽고, 새로고침·메뉴 링크 가드도 이벤트 시점의 최신 문구를 쓴다.
+  // 즉시성: 최신 값(ref)을 읽고, 새로고침·메뉴 링크 가드도 이벤트 시점의 최신 문구를 쓴다.
   assert.match(page, /payrollUnsavedRef\.current = state;\n\s+setPayrollUnsavedState\(state\);/);
-  assert.match(settings, /panelUnsavedRef\.current = state;\n\s+setPanelUnsavedState\(state\);/);
   assert.match(page, /useLeaveGuard\(payrollLeave, latestPayrollLeave\);/);
-  assert.match(settings, /useLeaveGuard\(leaveMessage, latestLeaveMessage\);/);
   assert.match(unsaved, /const currentMessage = \(\) => \(latestRef\.current \? latestRef\.current\(\) : messageRef\.current\);/);
   assert.match(unsaved, /const beforeUnload = \(event: BeforeUnloadEvent\) => \{\n\s+if \(!currentMessage\(\)\) return;/);
   assert.match(page, /if \(payrollOpen && !payroll\.setOpen\(user\.id, false\)\) return;/);

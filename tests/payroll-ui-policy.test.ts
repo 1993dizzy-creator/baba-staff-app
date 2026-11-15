@@ -55,41 +55,42 @@ test("ledger detail is read-only and omits the retired review and transition wor
   assert.match(detail, /calculation_snapshot/);
 });
 test("payroll position labels are role-based (via the shared lib/common/roles module), not position-based, with a username fallback", () => {
-  for (const source of [compensationCard, settings]) {
-    assert.match(source, /from "@\/lib\/common\/roles"/);
-    assert.match(source, /getEmployeeRoleLabel\(/);
-    assert.doesNotMatch(source, /attendance\.positions\[/);
-  }
+  assert.match(compensationCard, /from "@\/lib\/common\/roles"/);
+  assert.match(compensationCard, /getEmployeeRoleLabel\(/);
+  for (const source of [compensationCard, settings]) assert.doesNotMatch(source, /attendance\.positions\[/);
   assert.match(compensationCard, /employee\.role\s*\n?\s*\? getEmployeeRoleLabel\(employee\.role, lang\)/);
   assert.match(compensationCard, /: employee\.username/);
-  assert.match(settings, /user\.role \? getEmployeeRoleLabel\(user\.role, l\) : user\.username/);
   assert.match(roles, /manager: \{ ko: "매니저", vi: "Quản lý" \}/);
 });
 
-test("payroll settings uses accessible bilingual common and employee tabs", () => {
-  assert.match(settings, /role="tablist"/);
-  assert.equal((settings.match(/role="tab"/g) ?? []).length, 2);
-  assert.equal((settings.match(/aria-selected=/g) ?? []).length, 2);
-  for (const label of ["공통 설정", "직원 설정", "Cài đặt chung", "Cài đặt nhân viên"])
-    assert.match(settings, new RegExp(label));
-  assert.match(settings, /tabParam === "common" \|\| tabParam === "employee"/);
-  assert.match(settings, /params\.has\("userId"\)[\s\S]*\? "employee"[\s\S]*: "common"/);
-  assert.match(settings, /router\.replace\(`\$\{pathname\}\?\$\{next\}`,[\s\S]*scroll: false/);
+test("2026-11: payroll settings shows only the common policy (no common/employee tabs, no employee selector)", () => {
+  const page = read("app/(protected)/admin/payroll/settings/page.tsx");
+  assert.doesNotMatch(page, /role="tablist"|role="tab"|aria-selected=|aria-pressed=/);
+  assert.doesNotMatch(page, /직원 설정|Cài đặt nhân viên|직원 검색|EmployeePayrollSettingsPanel|usePayrollContracts|useLeaveGuard/);
+  assert.match(page, /import PayrollCommonSettings from "@\/components\/payroll\/PayrollCommonSettings";/);
+  assert.match(page, /<PayrollCommonSettings vi=\{vi\} \/>/);
+  // KO/VI는 공통 설정 컴포넌트가 vi 플래그로 그대로 처리한다.
+  assert.match(page, /const vi = lang === "vi";/);
 });
 
-test("explicit common tab wins while legacy userId links default to employee", () => {
-  assert.match(settings, /tabParam === "common" \|\| tabParam === "employee"[\s\S]*\? tabParam/);
-  assert.match(settings, /params\.has\("userId"\)/);
-  assert.match(compensationCard, /settings\?tab=employee&userId=\$\{employee\.userId\}/);
-});
-
-test("employee selector has accessible selected styling and complete empty states", () => {
-  assert.match(settings, /aria-pressed=\{selectedUser\}/);
-  assert.match(settings, /personSelected/);
-  assert.match(settings, /"선택됨"/);
-  assert.match(settings, /"Đã chọn"/);
-  assert.match(settings, /"직원을 선택하면 급여 설정을 확인할 수 있습니다\."/);
-  assert.match(settings, /"Chọn nhân viên để xem cài đặt lương\."/);
+test("2026-11: legacy employee-tab links move to 직원관리; tab=common and plain access stay on the common settings", async () => {
+  const { legacyEmployeeSettingsRedirect, employeePayrollSettingsHref } = await import("../lib/payroll/employee-settings-href.ts");
+  const redirect = (query: string) => legacyEmployeeSettingsRedirect(new URLSearchParams(query));
+  // 급여관리의 조회월(month)은 버린다: 직원 계약의 적용월로 쓰이지 않게 한다.
+  assert.equal(redirect("tab=employee&userId=6&month=2026-10"), "/admin/users?userId=6&section=payroll");
+  assert.equal(redirect("userId=6"), "/admin/users?userId=6&section=payroll", "legacy userId-only links defaulted to the employee tab");
+  assert.equal(redirect("tab=employee&userId=6&sheet=tax"), "/admin/users?userId=6&section=payroll&sheet=tax");
+  assert.equal(redirect("tab=employee&userId=6&sheet=unknown"), "/admin/users?userId=6&section=payroll");
+  for (const query of ["tab=employee", "tab=employee&userId=", "tab=employee&userId=abc", "tab=employee&userId=-1", "tab=employee&userId=1.5"])
+    assert.equal(redirect(query), "/admin/users", query);
+  for (const query of ["", "tab=common", "tab=common&userId=6", "month=2026-10"]) assert.equal(redirect(query), null, query);
+  assert.equal(employeePayrollSettingsHref(7, "contract"), "/admin/users?userId=7&section=payroll&sheet=contract");
+  assert.equal(employeePayrollSettingsHref(7), "/admin/users?userId=7&section=payroll");
+  assert.equal(employeePayrollSettingsHref(null), "/admin/users");
+  // CompensationCard no longer links to the removed employee tab.
+  assert.doesNotMatch(compensationCard, /payroll\/settings/);
+  assert.match(compensationCard, /employeePayrollSettingsHref\(employee\.userId, "contract"\)/);
+  assert.match(compensationCard, /employeePayrollSettingsHref\(employee\.userId, "tax"\)/);
 });
 
 test("employee insurance form is collapsed and resets from the current setting per employee", () => {
@@ -118,8 +119,7 @@ test("employee payroll requests ignore aborts without allowing stale state", () 
   assert.doesNotMatch(settings, /\/api\/admin\/payroll\/insurance\?userId=/);
   assert.equal(employeeInsurance.match(/\/api\/admin\/payroll\/insurance\?userId=/g)?.length, 1);
   assert.match(employeeInsurance, /onLoadStateChange\?\.\(userId/);
-  // 보험 상태는 직원별로 key가 다른 공용 패널 안에 있어 직원이 바뀌면 함께 초기화된다.
-  assert.match(settings, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
+  // 보험 카드는 공용 패널 안에서 직원별 key로 다시 마운트된다(아래 remount 테스트). 직원관리는 직원 카드마다 패널을 연다.
 });
 
 test("employee insurance remounts per employee without the removed schedule editor", () => {
@@ -179,21 +179,10 @@ test("fixed raise reason is conditional in UI and enforced by the server", () =>
   assert.match(route, /p_note: fixedRaiseReason\.note/);
 });
 
-test("direct employee clicks scroll only after the selected employee finishes loading", () => {
-  assert.match(settings, /pendingScrollUserIdRef/);
-  assert.match(settings, /contractsLoading/);
-  assert.match(settings, /selectedInsuranceLoading/);
-  assert.match(settings, /employeeListOpen/);
-  assert.match(settings, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
-  assert.match(settings, /scrollMarginTop: 72/);
-});
-
 test("employee payroll parts use the shared localized formatter", () => {
-  assert.match(settings, /partLabel\(l, user\.part\)/);
+  // 2026-11: the settings page employee list is gone; the payroll list keeps the shared formatter.
   assert.doesNotMatch(settings, /\{user\.part \?\? "-"\}/);
   assert.doesNotMatch(settings, /\{selected\.part \?\? "-"\}/);
-  assert.match(settings, /employeeMetaLabel\(user\)/);
-  assert.match(settings, /employeeMetaLabel\(selected\)/);
   assert.match(list, /partLabel\(l,group\.part\)/);
 });
 

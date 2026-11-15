@@ -84,16 +84,20 @@ test("every backend warning code with a label has a resolution category", () => 
   assert.equal(payrollReviewCategoryForCode("CALCULATION_FAILED"), "other");
 });
 
-test("shortcuts keep the employee ID and month and only use existing screens", () => {
+test("shortcuts keep the employee ID (and the month only for attendance) and only use existing screens", () => {
   assert.equal(payrollReviewCategoryHref("attendance", 7, "2026-10"), "/admin/payroll/attendance/7?month=2026-10");
-  assert.equal(payrollReviewCategoryHref("contract", 7, "2026-10"), "/admin/payroll/settings?tab=employee&userId=7&month=2026-10");
-  assert.equal(payrollReviewCategoryHref("insuranceTax", 7, "2026-10"), "/admin/payroll/settings?tab=employee&userId=7&month=2026-10");
+  // 2026-11: 직원별 급여설정은 직원관리에서만. 계약은 계약 모달, 보험/TNCN은 어느 모달인지 정할 수 없어 근무·급여 영역을 연다.
+  // 조회월은 넘기지 않는다(직원 계약의 적용월로 쓰이지 않게).
+  assert.equal(payrollReviewCategoryHref("contract", 7, "2026-10"), "/admin/users?userId=7&section=payroll&sheet=contract");
+  assert.equal(payrollReviewCategoryHref("insuranceTax", 7, "2026-10"), "/admin/users?userId=7&section=payroll");
   assert.equal(payrollReviewCategoryHref("extraWork", 7, "2026-10"), null);
   assert.match(card, /<div id=\{extraWorkAnchorId\} style=\{s\.extraWorkAnchor\}><PartTimeExtraWorkSection/);
   assert.match(card, /document\.getElementById\(extraWorkAnchorId\)\?\.scrollIntoView/);
   // 지급 불가 블록(마감 월)은 기존 문구를 유지하고 바로가기만 덧붙인다.
   assert.match(card, /<ul style=\{s\.blockingReasonList\}>[^\n]*<ReviewReasonActions/);
-  assert.match(card, /settings\?tab=employee&userId=\$\{employee\.userId\}&month=\$\{month\}/);
+  // 계약 미등록·시급 계약 확인은 직원관리의 그 직원 계약 모달로 간다(이전 급여설정 직원 탭 링크 없음).
+  assert.doesNotMatch(card, /payroll\/settings/);
+  assert.equal((card.match(/employeePayrollSettingsHref\(employee\.userId, "contract"\)/g) ?? []).length, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -212,11 +216,11 @@ test("summary shows load failures separately from unset values and reuses card r
   assert.match(summary, /해당 월 적용 설정 없음/);
   assert.match(summary, /이후 변경/);
   assert.doesNotMatch(summary, /fetch\(/);
-  assert.match(settingsPage, /resolveSettingsSummaryReference\(params\.get\("month"\), vietnamToday\)/);
+  // 2026-11: the summary is shown only in 직원관리, at the current Vietnam date.
+  assert.match(read("app/(protected)/admin/users/page.tsx"), /summaryReference=\{resolveSettingsSummaryReference\(null, today\)\}/);
   assert.match(settingsPage, /contractsLoading \? loadingHistory : contractsLoadFailed \? \{ status: "error", history: \[\] \}/);
   // 2차: 세금 이력은 직원별 공용 패널(key=selected.id) 안에 보관된다.
   assert.match(settingsPage, /const summaryTax = taxHistoryState \?\? loadingHistory;/);
-  assert.match(settingsPage, /<EmployeePayrollSettingsPanel\s+key=\{selected\.id\}/);
   for (const file of ["EmployeeTaxSettings", "EmployeeMealAllowanceSettings", "EmployeeAttendanceBonusSettings"]) {
     const source = read(`components/payroll/${file}.tsx`);
     assert.match(source, /reportHistoryRef\.current\?\.\(\{ status: "error", history: \[\] \}\)/, file);

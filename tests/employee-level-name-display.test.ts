@@ -78,7 +78,6 @@ test("approved screens use shared display while excluded snapshots and logs stay
     "app/(protected)/attendance/leave/page.tsx",
     "app/(protected)/admin/payroll/attendance/page.tsx",
     "app/(protected)/admin/payroll/attendance/[userId]/page.tsx",
-    "app/(protected)/admin/payroll/settings/page.tsx",
     "components/bar/BarZoneDetail.tsx",
   ]) assert.match(read(file), /EmployeeNameWithLevel/);
 

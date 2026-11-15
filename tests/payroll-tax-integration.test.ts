@@ -122,7 +122,7 @@ test("admin PIT UI hides not-applicable tax and keeps only taxable income plus t
 test("admin PIT UI keeps review warnings visible and moves secondary calculated fields into bilingual details", () => {
   assert.match(card, /employee\.tax\.status === "requires_review" \? <>\s*<p role="alert"/);
   assert.match(card, /employee\.tax\.warningCodes\.join\(", "\)/);
-  assert.match(card, /\/admin\/payroll\/settings\?tab=employee&userId=/);
+  assert.match(card, /<Link href=\{employeePayrollSettingsHref\(employee\.userId, "tax"\)\}>\{taxText\.settings\}<\/Link>/);
   assert.match(card, /<details style=\{s\.taxDetails\}>/);
   assert.match(card, /계산 상세/);
   assert.match(card, /Chi tiết tính thuế/);

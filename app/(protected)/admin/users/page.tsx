@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { calculateCombinedSalary, type CompensationContract } from "@/lib/payroll/compensation";
 import type { buildEmployeeLevelHistory } from "@/lib/employee-level/history";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Container from "@/components/Container";
 import SubNav from "@/components/SubNav";
 import { PART_VALUES, getPartKey, getPartMeta } from "@/lib/common/parts";
@@ -1375,7 +1375,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// ?userId=&section=&sheet= 딥링크는 useSearchParams로 읽는다(클라이언트 이동 직후에는 window.location이 아직 이전 주소일 수 있다).
 export default function AdminUsersPage() {
+  return <Suspense fallback={null}><AdminUsersContent /></Suspense>;
+}
+
+function AdminUsersContent() {
   const { lang } = useLanguage();
   const text = adminUsersText[lang];
   const router = useRouter();
@@ -1389,16 +1394,15 @@ export default function AdminUsersPage() {
   const [queryError, setQueryError] = useState<"login" | "forbidden" | "fetch" | null>(null);
   const [queryAttempt, setQueryAttempt] = useState(0);
   const [payrollApplicability, setPayrollApplicability] = useState<PayrollApplicabilityState>({ status: "loading" });
-  // ?userId=&section= (급여설정의 "직원관리로 이동"·뒤로가기 복귀): 해당 직원 상세를 열어 둔다.
+  // ?userId=&section=&sheet= (급여관리·이전 급여설정 링크, 직원 등록 후 복귀): 해당 직원 상세를 열어 둔다.
+  const searchParams = useSearchParams();
   const [initialFocus] = useState(() => {
-    if (typeof window === "undefined") return { userId: null as string | null, section: null as PayrollFocusSection | null, view: null as PayrollSheetView | null };
-    const search = new URLSearchParams(window.location.search);
-    const userId = search.get("userId");
-    const sheet = search.get("sheet");
+    const userId = searchParams.get("userId");
+    const sheet = searchParams.get("sheet");
     const view = PAYROLL_SHEET_VIEWS.find((candidate) => candidate === sheet) ?? null;
-    return { userId, section: userId ? (search.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null, view };
+    return { userId, section: userId ? (searchParams.get("section") === "payroll" ? "payroll" : "detail") as PayrollFocusSection : null, view };
   });
-  // 급여설정에서 ?sheet=로 돌아오면 그 모달을 다시 연다(계약 또는 설정 하나). 없으면 근무·급여만 펼친다.
+  // ?sheet=가 있으면 그 모달을 연다(계약 또는 설정 하나). 없으면 근무·급여만 펼친다.
   const [payrollSheet, setPayrollSheet] = useState<PayrollSheetState | null>(() => (
     initialFocus.section === "payroll" && initialFocus.userId && initialFocus.view ? { userId: initialFocus.userId, view: initialFocus.view, request: null } : null
   ));
