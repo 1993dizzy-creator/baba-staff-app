@@ -18,7 +18,8 @@ export type TableDetail = {
   table: TableTile; businessDate: string; snapshotAt: string | null; snapshotStatus: string;
   historyFrom: string; current: DetailReceipt[]; previous: DetailReceipt[]; latest: DetailReceipt | null;
   merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean }[];
-  cleaning: { enabled: false; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" };
+  cleaning: { enabled: boolean; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" | "state_changed" | "ready";
+    token?: { businessDate: string; receiptId: number; evidenceKey: string } };
   // Deliberately no deadline. ref_date and status_changed_at have not been certified as payment completion time.
   timer: { enabled: false; reason: "unverified_payment_time" };
 };

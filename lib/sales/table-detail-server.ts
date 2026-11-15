@@ -49,5 +49,11 @@ export async function readTableDetail(tableId: string, now = new Date()) {
       id: l.id, name: l.item_name ?? "—", quantity: detailNumber(l.quantity), amount: detailNumber(l.final_amount), canceled: l.is_canceled === true,
     }));
   }
+  if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true") {
+    try {
+      const { decorateCleaningDetail } = await import("./table-cleaning-server");
+      return await decorateCleaningDetail(detail);
+    } catch { /* History still works; cleaning stays disabled on any capability/read failure. */ }
+  }
   return detail;
 }

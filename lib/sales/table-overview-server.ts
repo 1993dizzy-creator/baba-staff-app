@@ -25,6 +25,13 @@ export function validOrders(orders: unknown): orders is CollectedOrder[] {
 
 /** Only central read RPC + receipt evidence. No Cron invocation or order transport. */
 export async function readTableOverview(now = new Date()) {
+  if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true") {
+    try {
+      const { readCleaningState } = await import("./table-cleaning-server");
+      const state = await readCleaningState(now);
+      if (state) return state.overview;
+    } catch { /* Conservative fallback to the original paid/unknown snapshot, never fake idle. */ }
+  }
   const businessTime = await loadBusinessTimeAdapter(now);
   const businessDate = businessTime.databaseBusinessDate;
   const enabled = process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";

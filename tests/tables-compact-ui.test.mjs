@@ -6,6 +6,7 @@ import * as React from 'react';
 import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
+import * as detailDisplay from '../lib/sales/table-detail-display.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
@@ -16,6 +17,7 @@ function render(data, lang, { failed=false, selected=null }={}) {
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
     '@/lib/language-context':{useLanguage:()=>({lang})}, '@/lib/text/tables':{tablesText},
+    '@/lib/sales/table-detail-display':detailDisplay,
     './tables.module.css':{__esModule:true,default:new Proxy({},{get:(_,key)=>key})},
   };
   const code=ts.transpileModule(readFileSync('app/(protected)/tables/page.tsx','utf8'),{compilerOptions:{
@@ -72,14 +74,14 @@ for(const lang of ['ko','vi']){
   const data=overview({catalog:babaTableCatalog(),orders:[order('sheet-source','BAR4')]}),before=JSON.stringify(data);
   const tile=data.tables.find(tile=>tile.name==='BAR4'),t=tablesText[lang];
   const html=render(data,lang,{selected:{kind:'table',id:tile.id}});
-  assert.ok(html.includes('sheet-source'));assert.ok(html.includes('Synthetic menu'));
+  assert.ok(!html.includes('OrderId: sheet-source'));assert.ok(html.includes('Synthetic menu'));
   for(const amount of [50000,100000]){
    const formatted=new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount);
    assert.ok(html.includes(formatted));
   }
-  assert.ok(html.includes(t.occupied));assert.ok(html.includes('20:30'));
+  assert.ok(html.includes(t.detailStates.occupied));assert.ok(html.includes('20:30'));
   // Sheet badge carries the same state color class as the tile; the tile is marked selected.
-  assert.ok(html.includes(`<span class="stateBadge occupied">${t.occupied}</span>`));
+  assert.ok(html.includes('class="detailState"'));assert.ok(html.includes(t.detailStates.occupied));
   assert.ok(new RegExp(`<button class="tile occupied selected"[^>]*aria-label="BAR4 `).test(html));
   assert.equal((html.match(/ selected"/g)??[]).length,1);
   assert.equal(JSON.stringify(data),before);
