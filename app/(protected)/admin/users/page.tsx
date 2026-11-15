@@ -1317,7 +1317,10 @@ function LevelHistoryView({ history, currentInfo, terminationDate, pending, text
   text: AdminUsersPageText;
 }) {
   // Presentation only: a standard month schedule, never a reconstruction of actual history.
-  const base = currentInfo.baseDate ? currentInfo.baseDate.slice(0, 7) + "-01" : null;
+  // The base the current policy actually counts from: month modes already resolve to the 1st, while a legacy
+  // (hire_date/override, e.g. a currently OFF version) base keeps its exact day. Never cut it to the month start,
+  // so a past/legacy schedule is not mistaken for a reserved base month or a policy start month.
+  const base = currentInfo.baseDate ?? null;
   const milestones = base ? Array.from({ length: 9 }, (_, index) => ({ month: index * 3, date: addCalendarMonthsClamped(base, index * 3)! })) : [];
   const beforeBase = Boolean(base && history.asOfDate < base);
   const terminated = Boolean(terminationDate && terminationDate < history.asOfDate);
