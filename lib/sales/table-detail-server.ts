@@ -1,0 +1,53 @@
+import "server-only";
+import { supabaseServer } from "@/lib/supabase/server";
+import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
+import { addStoreDays } from "@/lib/store-settings/business-time-core";
+import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
+import { OPEN_ORDERS_RPC, type CollectedOrder, type OpenOrderSyncState } from "@/lib/pos/cukcuk/open-orders-core";
+import { evaluateOpenOrdersCronWindow } from "@/lib/pos/cukcuk/open-orders-cron-policy";
+import { babaTableCatalog } from "./baba-table-catalog";
+import { fetchAllExactPages } from "./daily-sales-summary";
+import { validOrders } from "./table-overview-server";
+import { buildTableOverview } from "./table-overview";
+import { detailNumber, projectTableDetail, type DetailReceiptRow } from "./table-detail";
+
+/** Separate read path: a history failure must not invalidate the overview snapshot. */
+export async function readTableDetail(tableId: string, now = new Date()) {
+  const catalog = babaTableCatalog();
+  if (!catalog.tables.some(t => t.id === tableId)) return null;
+  if (process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() !== "true") throw Error("DETAIL_READ_DISABLED");
+  const time = await loadBusinessTimeAdapter(now), businessDate = time.databaseBusinessDate;
+  const historyFrom = addStoreDays(businessDate, -7);
+  const response = await supabaseServer.rpc(OPEN_ORDERS_RPC.read, { p_scope: openOrdersScope(), p_business_date: businessDate })
+    .abortSignal(AbortSignal.timeout(15_000));
+  if (response.error || !response.data) throw Error("DETAIL_SNAPSHOT_UNAVAILABLE");
+  const payload = response.data as { sync: OpenOrderSyncState | null; orders: CollectedOrder[] };
+  const orders: unknown = Array.isArray(payload.orders) ? payload.orders.map(o => ({ ...o, raw: {},
+    totalAmount: detailNumber(o.totalAmount) ?? NaN })) : null;
+  if (!validOrders(orders) || payload.sync !== null && (!payload.sync || payload.sync.businessDate !== businessDate
+    || ![payload.sync.lastSuccessAt, payload.sync.lastAttemptAt].every(v => v === null || typeof v === "string" && Number.isFinite(Date.parse(v)))
+    || !(payload.sync.lastErrorCode === null || typeof payload.sync.lastErrorCode === "string"))) throw Error("DETAIL_SNAPSHOT_INVALID");
+  const evidence = await fetchAllExactPages<DetailReceiptRow>((from, to) => supabaseServer.from("pos_sales_receipts")
+    .select("id,ref_no,final_amount,payment_status,is_canceled,business_date,ref_date,status_changed_at,order_id:raw_json->>OrderId,table_name:raw_json->>TableName", { count: "exact" })
+    .eq("source", "cukcuk").gte("business_date", historyFrom).lte("business_date", addStoreDays(businessDate, 1))
+    .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to));
+  if (evidence.error || !evidence.data) throw Error("DETAIL_RECEIPTS_UNAVAILABLE");
+  const overview = buildTableOverview({ businessDate, now, catalog, sync: payload.sync, orders,
+    receipts: evidence.data.map(r => ({ receiptId: r.id, orderId: r.order_id ?? "", tableName: r.table_name,
+      paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
+    enabled: true, cutoff: time.snapshot.cutoff, collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
+  const detail = projectTableDetail({ table: overview.tables.find(t => t.id === tableId)!, catalog: catalog.tables,
+    overview, orders, receipts: evidence.data, now, historyFrom });
+  const relevant = [...detail.current, ...detail.previous];
+  if (relevant.length) {
+    type Line = { id: number; receipt_id: number; item_name: string | null; quantity: number | string | null; final_amount: number | string | null; is_canceled: boolean | null };
+    const lines = await fetchAllExactPages<Line>((from, to) => supabaseServer.from("pos_sales_receipt_lines")
+      .select("id,receipt_id,item_name,quantity,final_amount,is_canceled", { count: "exact" }).eq("source", "cukcuk")
+      .in("receipt_id", relevant.map(r => r.id)).order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to));
+    if (lines.error || !lines.data) throw Error("DETAIL_LINES_UNAVAILABLE");
+    for (const receipt of relevant) receipt.lines = lines.data.filter(l => l.receipt_id === receipt.id).map(l => ({
+      id: l.id, name: l.item_name ?? "—", quantity: detailNumber(l.quantity), amount: detailNumber(l.final_amount), canceled: l.is_canceled === true,
+    }));
+  }
+  return detail;
+}

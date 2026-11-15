@@ -50,8 +50,28 @@
 .unlinked button { display:block; width:100%; margin-top:6px; padding:8px; text-align:left; border:1px dashed #d1d5db; border-radius:8px; background:#f9fafb; overflow-wrap:anywhere; }
 .sheet { position:fixed; inset:auto 0 0; width:100%; max-width:680px; max-height:85dvh; margin:0 auto; box-sizing:border-box; border:0; border-radius:18px 18px 0 0; padding:16px 12px max(20px,env(safe-area-inset-bottom)); overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; scroll-padding-top:72px; color:#111827; }
 .sheet::backdrop { background:rgb(17 24 39 / 45%); }
-.sheetHeader { position:sticky; top:-16px; z-index:1; background:#fff; padding:8px 0; border-bottom:1px solid #e5e7eb; }
+.sheetHeader { position:sticky; top:-16px; z-index:1; background:#fff; padding:10px 0; border-bottom:1px solid #e5e7eb; align-items:flex-start; }
 .sheetTitle { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; }
+.sheetActions { display:flex; gap:6px; align-items:center; flex-shrink:0; }
+.header .cleanButton:disabled { padding:8px; font-size:11px; background:#f3f4f6; color:#6b7280; opacity:1; }
+.header .closeButton { width:44px; height:44px; padding:0; font-size:28px; line-height:1; background:#fff; }
+.cleanReason { margin:0 0 12px; padding:8px 10px; border-radius:8px; background:#f5f7fa; color:#4b5563; overflow-wrap:anywhere; }
+.location { display:grid; gap:8px; margin:12px 0; font-size:12px; }
+.location div { display:flex; flex-wrap:wrap; gap:4px 10px; }
+.location dt { color:#6b7280; }
+.location dd { margin:0; overflow-wrap:anywhere; }
+.collectionTime { color:#4b5563; font-variant-numeric:tabular-nums; }
+.detailSection { margin-top:16px; padding-top:14px; border-top:1px solid #e5e7eb; }
+.detailSection h3 { margin:0 0 10px; font-size:14px; font-weight:800; }
+.detailSection summary { padding:8px 0; cursor:pointer; font-size:12px; overflow-wrap:anywhere; }
+.sheet summary:focus-visible { outline:3px solid #3b82f6; outline-offset:2px; }
+.receipt { margin:10px 0; padding:10px; border:1px solid #e5e7eb; border-radius:10px; background:#f9fafb; overflow-wrap:anywhere; }
+.receiptHeading { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; font-size:12px; }
+.receiptHeading span { font-size:10px; color:#6b7280; }
+.receiptMenu { margin-top:8px; }
+.receiptMenu .lines th:first-child { width:50%; }
+.receiptMenu .lines th:nth-child(2) { width:18%; }
+.paymentSafety { padding:8px 10px; border-left:3px solid #93c5fd; color:#4b5563; background:#eff6ff; overflow-wrap:anywhere; }
 .stateBadge { display:inline-flex; align-items:center; gap:5px; border:1.5px solid #e5e7eb; border-radius:999px; padding:4px 9px; font-size:11px; font-weight:700; }
 .stateBadge.unknown { background:#f3f4f6; border-style:dashed; color:#4b5563; }
 .sheet p { font-size:12px; line-height:1.45; }
