@@ -106,11 +106,17 @@ export default function TablesPage() {
         </svg>
       </button>
     </header>
-    {diagnostic ? <p role="status" className={styles.diagnostic}>{diagnostic}</p> : null}
     {loading && !data ? <p role="status" className={styles.notice}>{t.loading}</p> : null}
     {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
-    <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}>
-      <i className={cx(styles.swatch, stateClass[state])} aria-hidden="true" />{t[state]}</span>)}</div>
+    <div className={styles.statusRow}>
+      <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}
+        title={state === "paid" ? t.completionEvidence : t[state]}>
+        <i className={cx(styles.swatch, stateClass[state])} aria-hidden="true" />
+        <span aria-hidden="true">{t.legendLabels[state]}</span>
+        <span className={styles.srOnly}>{t[state]}{state === "paid" ? ` · ${t.completionEvidence}` : ""}</span>
+      </span>)}</div>
+      {diagnostic ? <p role="status" className={styles.diagnostic}>{diagnostic}</p> : null}
+    </div>
     <div className={styles.areas}>{areas.map(area => {
       const areaTables = data?.tables.filter(item => item.area === area) ?? [];
       return <section key={area} className={styles.area}>
