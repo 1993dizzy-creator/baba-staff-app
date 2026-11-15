@@ -33,6 +33,6 @@ export default function TablesLayout({ children }: { children: React.ReactNode }
     </div>
     {children}
   </>;
-  // Only the table overview sits on a gray canvas so its white area cards stand out.
+  // Keep the overview's full-height canvas on the protected layout's page background.
   return pathname === "/tables" ? <div className={styles.canvas}>{content}</div> : content;
 }

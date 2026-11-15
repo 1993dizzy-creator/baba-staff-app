@@ -1,7 +1,7 @@
 export const tablesText = {
   ko: {
     idle: "일반 · 진행 주문 없음", unavailable: "현황 수집 오류·지연 · 현재 상태를 확인할 수 없습니다.",
-    waiting: "수집 대기 · 현재 점유 미확인", partial: "일부 테이블·결제 연결을 확인할 수 없습니다.",
+    waiting: "수집대기 · 미확인", partial: "일부 테이블·결제 연결을 확인할 수 없습니다.",
     completionEvidence: "완료는 결제 증거이며 퇴석·빈자리 확정을 뜻하지 않습니다.", completedAt: "결제 영수증 시각",
     title: "매장현황", refresh: "새로고침", loading: "매장현황 확인 중…", failed: "현황을 확인할 수 없습니다. 다시 확인해 주세요.",
     total: "전체 테이블", occupied: "사용 중", reserved: "예약", paid: "완료", free: "확인된 빈자리", unknown: "미확인",
@@ -21,7 +21,7 @@ export const tablesText = {
   },
   vi: {
     idle: "Bình thường · Không có đơn đang mở", unavailable: "Lỗi hoặc chậm thu thập · Chưa xác định hiện trạng.",
-    waiting: "Chờ thu thập · Chưa xác nhận sử dụng", partial: "Chưa xác định một số bàn hoặc liên kết thanh toán.",
+    waiting: "Chờ cập nhật · Chưa rõ", partial: "Chưa xác định một số bàn hoặc liên kết thanh toán.",
     completionEvidence: "Hoàn tất chỉ xác nhận thanh toán, không xác nhận khách đã rời hay bàn trống.", completedAt: "Thời gian hóa đơn",
     title: "Tình hình cửa hàng", refresh: "Làm mới", loading: "Đang kiểm tra cửa hàng…", failed: "Chưa xác định được hiện trạng. Vui lòng thử lại.",
     total: "Tổng số bàn", occupied: "Đang sử dụng", reserved: "Đặt trước", paid: "Hoàn tất", free: "Bàn trống đã xác nhận", unknown: "Chưa rõ",

@@ -26,12 +26,12 @@
 .statusDetails p { margin:4px 0; overflow-wrap:anywhere; }
 .muted { color:#6b7280; font-size:11px; line-height:1.45; margin:5px 0; overflow-wrap:anywhere; }
 .notice { border:1px solid #e5e7eb; border-radius:10px; background:#f3f4f6; padding:9px 10px; color:#4b5563; line-height:1.45; }
-.legend { display:flex; flex-wrap:nowrap; gap:12px; margin-top:7px; padding:0 2px; color:#374151; font-size:10.5px; line-height:1.4; white-space:nowrap; }
+.legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px 12px; margin-top:7px; padding:0 2px; color:#374151; font-size:10.5px; line-height:1.4; }
 .legend span { display:inline-flex; gap:5px; align-items:center; }
 .swatch { width:12px; height:12px; border:1.5px solid #e5e7eb; border-radius:3px; display:inline-block; flex-shrink:0; background:#fff; }
 .areas { display:grid; gap:6px; margin-top:8px; }
-.area { border:1px solid #e5e7eb; border-radius:10px; padding:6px; min-width:0; background:#fff; }
-.areaHeader { display:flex; align-items:baseline; justify-content:flex-start; gap:4px; margin:0 2px 5px; line-height:16px; }
+.area { border:1px solid #e5e7eb; border-radius:10px; padding:10px 6px; min-width:0; background:#f5f7fa; }
+.areaHeader { display:flex; align-items:baseline; justify-content:flex-start; gap:4px; margin:0 2px 8px; line-height:16px; }
 .areaHeader h2 { font-size:12px; font-weight:800; margin:0; }
 .areaHeader span { font-size:11px; font-weight:600; color:#6b7280; }
 .tiles { display:grid; grid-template-columns:repeat(4,minmax(0,72px)); justify-content:center; gap:4px; }
@@ -68,7 +68,7 @@
 .lines td:not(:first-child),.lines th:not(:first-child) { text-align:right; }
 .estimate { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px; }
 @media(min-width:900px) { .areas { grid-template-columns:minmax(296px,1fr) repeat(2,minmax(0,1fr)); align-items:start; } .sheet { inset:0; margin:auto; height:fit-content; border-radius:18px; } .page { padding:16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); } }
-.diagnostic { margin:4px 0; color:#6b7280; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
+.diagnostic { margin:4px 0; color:#6b7280; font-size:11px; line-height:1.4; text-align:right; overflow-wrap:anywhere; }
 /* Whole-tile state colors, shared by tiles, legend swatches and the sheet badge. (Kept last so they win over the base tile, swatch and badge rules.) */
 .occupied { background:#eaf8ef; border-color:#22c55e; }
 .paid { background:#ecf3ff; border-color:#3b82f6; }
