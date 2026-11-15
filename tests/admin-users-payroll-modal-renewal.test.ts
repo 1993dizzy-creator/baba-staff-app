@@ -17,9 +17,17 @@ test("contract modal: no inner title, combined salary first, register as the mai
   const modal = section.slice(section.indexOf("{only ? <>"), section.indexOf("</> : <>"));
   assert.doesNotMatch(modal, /cardTitle|현재 적용 중인 계약 조건/);
   assert.match(modal, /<ContractOverview contract=\{current\} levelRaise=\{levelRaise\} combined=\{combined \?\? 0\} lang=\{l\} \/>/);
-  // 계약 변경 등록 (primary) before 최신 계약 정정 (secondary); both keep their existing handlers
-  assert.match(modal, /style=\{s\.contractPrimary\} onClick=\{openForm\}>[\s\S]*?계약 변경 등록[\s\S]*?style=\{s\.contractSecondary\} onClick=\{openCorrectionForm\}>[\s\S]*?최신 계약 정정/);
+  // 📝 변경 등록 (primary, left) before ✏️ 계약 정정 (secondary, right); both keep their existing handlers
+  assert.match(modal, /style=\{s\.contractPrimary\} onClick=\{openForm\}>\n\s+\{vi \? "📝 Đăng ký thay đổi" : "📝 변경 등록"\}[\s\S]*?style=\{s\.contractSecondary\} onClick=\{openCorrectionForm\}>\n\s+\{vi \? "✏️ Sửa hợp đồng" : "✏️ 계약 정정"\}/);
   assert.match(modal, /\{contracts\[0\]\?\.auditVersion \? <button/);
+  // 5:5 two columns only when both buttons exist; otherwise the register button keeps the full row.
+  assert.match(modal, /style=\{contracts\[0\]\?\.auditVersion \? \{ \.\.\.s\.contractManage, \.\.\.s\.contractManagePair \} : s\.contractManage\}/);
+  assert.match(panel, /contractManage: \{ display: "grid", gridTemplateColumns: "minmax\(0, 1fr\)", gap: 8 \},\n\s+contractManagePair: \{ gridTemplateColumns: "repeat\(2, minmax\(0, 1fr\)\)" \},/);
+  // Same height, padding and size; long Vietnamese wraps inside the button instead of overflowing.
+  for (const key of ["contractPrimary", "contractSecondary"]) {
+    const style = panel.match(new RegExp(`  ${key}: \\{([^}]*)\\}`))?.[1] ?? "";
+    for (const rule of [/minWidth: 0/, /minHeight: 44/, /padding: "8px 10px"/, /fontSize: 13/, /textAlign: "center"/, /whiteSpace: "normal"/, /overflowWrap: "anywhere"/]) assert.match(style, rule, `${key} ${rule}`);
+  }
   // the payroll settings page keeps its existing card (title, help, ContractSummary)
   const page = section.slice(section.indexOf("</> : <>"));
   assert.match(page, /<h2 style=\{s\.cardTitle\}>/);

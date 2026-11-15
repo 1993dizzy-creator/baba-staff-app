@@ -542,12 +542,13 @@ export default function EmployeePayrollSettingsPanel({
           ) : (
             <p style={s.emptyState}>{vi ? "Chưa cài đặt hợp đồng lương. Hãy đăng ký hợp đồng mới." : "급여계약이 설정되지 않았습니다. 새 계약을 등록해주세요."}</p>
           )}
-          <div style={s.contractManage}>
+          {/* 변경 등록 · 계약 정정은 5:5 가로 2열(정정 대상이 없으면 등록 버튼만 한 줄 전체). */}
+          <div style={contracts[0]?.auditVersion ? { ...s.contractManage, ...s.contractManagePair } : s.contractManage}>
             <button type="button" style={s.contractPrimary} onClick={openForm}>
-              {vi ? "Đăng ký thay đổi" : "계약 변경 등록"}
+              {vi ? "📝 Đăng ký thay đổi" : "📝 변경 등록"}
             </button>
             {contracts[0]?.auditVersion ? <button type="button" style={s.contractSecondary} onClick={openCorrectionForm}>
-              {vi ? "Chỉnh sửa hợp đồng mới nhất" : "최신 계약 정정"}
+              {vi ? "✏️ Sửa hợp đồng" : "✏️ 계약 정정"}
             </button> : null}
           </div>
         </> : <>
@@ -987,9 +988,12 @@ const s = {
   breakdownRow: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, minWidth: 0, fontSize: 13 },
   breakdownLabel: { margin: 0, color: "#4b5563", fontWeight: 700, flexShrink: 0 },
   breakdownValue: { margin: 0, color: "#111827", fontWeight: 800, textAlign: "right", minWidth: 0, overflowWrap: "anywhere", fontVariantNumeric: "tabular-nums" },
-  contractManage: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 },
-  contractPrimary: { minHeight: 44, padding: "8px 12px", border: 0, borderRadius: 10, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
-  contractSecondary: { minHeight: 44, padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", color: "#374151", fontSize: 13, fontWeight: 700 },
+  contractManage: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8 },
+  contractManagePair: { gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
+  // 두 버튼은 높이·패딩·글자 크기를 맞추고, 색(주 버튼 검정 · 보조 버튼 흰색)으로만 계층을 구분한다.
+  // 긴 베트남어는 버튼 안에서 줄바꿈하고 영역 밖으로 넘치지 않는다.
+  contractPrimary: { minWidth: 0, minHeight: 44, padding: "8px 10px", border: "1px solid #111827", borderRadius: 10, background: "#111827", color: "#fff", fontSize: 13, fontWeight: 800, lineHeight: 1.25, textAlign: "center", whiteSpace: "normal", overflowWrap: "anywhere" },
+  contractSecondary: { minWidth: 0, minHeight: 44, padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", color: "#374151", fontSize: 13, fontWeight: 700, lineHeight: 1.25, textAlign: "center", whiteSpace: "normal", overflowWrap: "anywhere" },
   modalSave: { width: "100%", minHeight: 42, padding: "8px 12px", border: 0, borderRadius: 9, background: "#111827", color: "#fff", fontSize: 14, fontWeight: 800 },
   contract: {
     display: "grid",
