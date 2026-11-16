@@ -155,7 +155,8 @@ test("run route: eligibility is bulk-loaded once from the payment rows' user_id 
 });
 
 test("run route: response still returns run/employees/audit unmodified, with mealAllowanceEligibleUserIds only appended alongside them", () => {
-  assert.match(runRoute, /payrollJson\(\{ok:true,run,employees:employees\?\?\[\],audit:audit\?\?\[\],mealAllowanceEligibleUserIds\}\)/);
+  // 2026-11-16: read-only split allocations/residuals/fund account names are appended alongside (run detail outflow display).
+  assert.match(runRoute, /payrollJson\(\{ok:true,run,employees:employees\?\?\[\],audit:audit\?\?\[\],allocations:[^}]*,residuals:[^}]*,fundAccounts:fundAccounts\?\?\[\],mealAllowanceEligibleUserIds\}\)/);
 });
 
 test("run page: renders the badge next to employee_name using the same shared label function and a client Set for membership", () => {

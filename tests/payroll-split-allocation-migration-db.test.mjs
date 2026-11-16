@@ -3,7 +3,25 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {btree_gist} from '@electric-sql/pglite/contrib/btree_gist';
 import {install,read,closeMonth,state as baseState} from './helpers/payroll-batch-safety-fixture.mjs';
-import {parseSettlementPlan,settlementDifferenceReason} from '../lib/payroll/special-settlement-2026-10.ts';
+import {stablePayrollSourceHash} from '../lib/payroll/source-export/stable-hash.ts';
+
+// The one-off settlement app path (plan loader/API/page) was retired after the
+// production run (batch 4). This test stays as the regression proof for the
+// APPLIED migration: the shared split-allocation/residual tables, the group
+// projector, cancel v3 and payment tax refresh that other months keep using.
+// The two plan helpers it needs are inlined below (synthetic data only).
+function parseSettlementPlan(raw){
+  const employees=raw.employees.map(e=>({userId:e.userId,label:e.label??null,actualPaidAmount:e.actualPaidAmount,
+    allocations:e.allocations.map(a=>({paymentDate:a.paymentDate,fundAccountId:a.fundAccountId,amount:a.amount,kind:a.kind,note:a.note??null})),note:e.note??null}));
+  for(const e of employees)assert.equal(e.allocations.reduce((n,a)=>n+a.amount,0),e.actualPaidAmount,'synthetic allocation sum');
+  const plan={version:1,payrollMonth:'2026-10',sourceTitle:raw.sourceTitle,employees,residuals:raw.residuals,expectedGroups:raw.expectedGroups,expectedTotal:raw.expectedTotal};
+  return {ok:true,plan,planHash:stablePayrollSourceHash(plan)};
+}
+function settlementDifferenceReason({sourceTitle,calculatedNetAmount,actualPaidAmount,note}){
+  const d=actualPaidAmount-calculatedNetAmount;if(d===0)return null;
+  const base=`2026-10 회계사 정정본(${sourceTitle}) 실지급 기준 · APP 계산 ${calculatedNetAmount}₫ → 실지급 ${actualPaidAmount}₫ (차액 ${d>0?'+':'−'}${Math.abs(d)}₫)`;
+  return note?`${base} · ${note}`:base;
+}
 
 // Synthetic employees and amounts only. Real October data lives in the private
 // server-only plan and is never part of this repository.

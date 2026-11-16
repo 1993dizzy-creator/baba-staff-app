@@ -5,9 +5,10 @@ import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { paymentFailureCodes, validPaymentTargetIds } from "@/lib/payroll/payment-preflight";
-import { SPECIAL_SETTLEMENT_MONTH } from "@/lib/payroll/special-settlement-2026-10";
 
 export const dynamic="force-dynamic";
+// 특별 정산으로 이미 마감된 급여월(일반 개별 지급 경로 차단).
+const SPECIAL_SETTLED_MONTHS:ReadonlySet<string>=new Set(["2026-10"]);
 const validId=(value:unknown)=>{const id=Number(value);return Number.isSafeInteger(id)&&id>0?id:null};
 const validFundAccountId=(value:unknown)=>typeof value==="number"&&Number.isSafeInteger(value)&&value>0?value:null;
 const validDate=(value:unknown)=>typeof value==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(value)?value:null;
@@ -38,8 +39,9 @@ export async function POST(request:Request){
   if(!fundAccountId)return payrollJson({ok:false,code:"PAYROLL_FUND_ACCOUNT_INVALID",message:"지급 계좌를 다시 선택해주세요.",messageVi:"Vui lòng chọn lại tài khoản chi trả."},400);
   if(!month||!userId||!paymentDate||!Number.isSafeInteger(actualPaidAmount)||actualPaidAmount<1||!expectedHash)return payrollJson({ok:false,code:"INVALID_PAYMENT"},400);
   if(!isClosedPayrollMonth(month))return payrollJson({ok:false,code:"PAYROLL_MONTH_NOT_CLOSED",message:"급여 대상 월이 아직 종료되지 않았습니다.",messageVi:"Tháng lương vẫn chưa kết thúc."},409);
-  // 2026-10 was paid from the accountant-corrected payroll (split accounts, batch rounding residual): Owner special settlement only.
-  if(month===SPECIAL_SETTLEMENT_MONTH)return payrollJson({ok:false,code:"PAYROLL_SPECIAL_SETTLEMENT_REQUIRED",message:"2026년 10월 급여는 특별 정산 화면에서만 지급완료 처리할 수 있습니다.",messageVi:"Lương tháng 10/2026 chỉ được xác nhận chi trả tại màn hình quyết toán đặc biệt."},409);
+  // 2026-10은 회계사 정정본 특별 정산(배치 4, 분할 지급·반올림 잔차)으로 마감됐다. 일반 개별 지급으로 다시 기록하지 않는다
+  // (완료 배치의 DB 보호와 별개로, 화면·API 단계에서도 명시적으로 차단).
+  if(SPECIAL_SETTLED_MONTHS.has(month))return payrollJson({ok:false,code:"PAYROLL_SPECIAL_SETTLEMENT_COMPLETED",message:"2026년 10월 급여는 특별 정산으로 지급완료되었습니다. 급여 상세에서 지급 내역을 확인하세요.",messageVi:"Lương tháng 10/2026 đã được quyết toán đặc biệt. Vui lòng xem chi tiết trong sổ lương."},409);
   try{
     const {data:existingBatch,error:batchError}=await supabaseServer.from("payroll_payment_batches").select("id,status").eq("payroll_month",`${month}-01`).maybeSingle();
     if(batchError)throw batchError;
