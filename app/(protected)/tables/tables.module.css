@@ -37,9 +37,11 @@
 .areaHeader span { font-size:11px; font-weight:600; color:#6b7280; }
 .tiles { display:grid; grid-template-columns:repeat(4,minmax(0,72px)); justify-content:center; gap:4px; }
 .barTiles { grid-template-columns:repeat(6,minmax(0,60px)); }
-.tile { position:relative; min-height:48px; height:48px; min-width:44px; border:1.5px solid #e5e7eb; background:#fff; color:#111827; border-radius:7px; padding:4px 3px; display:flex; align-items:center; justify-content:center; }
+.tile { position:relative; min-height:64px; height:64px; min-width:44px; border:1.5px solid #e5e7eb; background:#fff; color:#111827; border-radius:7px; padding:4px 3px; display:flex; flex-direction:column; gap:3px; align-items:center; justify-content:center; }
 .tile strong { font-size:12px; font-weight:800; white-space:nowrap; }
-/* Six BAR columns are 44px wide at 320px: keep "BAR11" whole. */
+.tileStart { font-size:10px; line-height:14px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* Four BAR columns on narrow phones preserve touch targets and two-line labels. */
+@media(max-width:359px) { .barTiles { grid-template-columns:repeat(4,minmax(0,72px)); } }
 .barTiles .tile { padding-inline:1px; }
 .barTiles .tile strong { font-size:11px; }
 .tile.unknown { background:#f3f4f6; border-color:#9ca3af; border-style:dashed; color:#4b5563; }
@@ -53,6 +55,8 @@
 .sheetHeader { position:sticky; top:0; z-index:1; background:#111827; color:#fff; padding:12px; margin:0 -12px 12px; border:0; border-radius:18px 18px 0 0; align-items:flex-start; }
 .sheetTitle { display:flex; flex-direction:column; align-items:flex-start; gap:5px; min-width:0; flex:1; }
 .sheetTitle h2 { font-weight:800; }
+.sheetTitle .usageCount { margin:0; font-size:11px; color:#dbeafe; overflow-wrap:anywhere; }
+.usageHelp { color:#6b7280; margin:0 0 12px; overflow-wrap:anywhere; }
 .sheetMeta { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; font-size:12px; color:#f3f4f6; }
 .detailState { overflow-wrap:anywhere; }
 .detailClock { color:#d1d5db; font-size:10px; white-space:nowrap; }
@@ -80,7 +84,22 @@
 .stateBadge.unknown { background:#f3f4f6; border-style:dashed; color:#4b5563; }
 .sheet p { font-size:12px; line-height:1.45; }
 .order { border-top:1px solid #e5e7eb; margin-top:18px; padding-top:14px; }
-.order h3 { font-size:14px; margin:0 0 4px; }
+.order h3 { font-size:14px; margin:0 0 8px; overflow-wrap:anywhere; }
+.orderOrdinal { color:#6b7280; font-size:11px; font-weight:600; white-space:nowrap; }
+.orderMenu { padding:0 10px; border:1px solid #dfe5ec; border-radius:12px; background:#f7f9fc; min-width:0; }
+.menuItems { list-style:none; margin:0; padding:0; }
+.menuItem { padding:12px 0; border-bottom:1px solid #dfe5ec; }
+.menuName { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 6px; min-width:0; }
+.menuName strong { font-size:12px; line-height:1.5; overflow-wrap:anywhere; min-width:0; }
+.menuFlag { font-size:10px; padding:1px 5px; border:1px solid #cbd5e1; border-radius:4px; color:#475569; background:#fff; }
+.canceledFlag { color:#b91c1c; border-color:#fecaca; }
+.menuAmounts { display:grid; grid-template-columns:minmax(0,.65fr) repeat(2,minmax(0,1fr)); gap:6px; margin:8px 0 0; font-size:11px; font-variant-numeric:tabular-nums; }
+.menuAmounts div { min-width:0; }
+.menuAmounts div:not(:first-child) { text-align:right; }
+.menuAmounts dt { color:#64748b; font-size:10px; }
+.menuAmounts dd { margin:3px 0 0; overflow-wrap:anywhere; }
+.orderMenu .orderEstimate { padding:12px 0; margin:0; font-weight:700; align-items:baseline; }
+.orderEstimate strong { font-size:15px; overflow-wrap:anywhere; }
 .orderId { font-size:10px; overflow-wrap:anywhere; color:#6b7280; }
 .facts { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:11px; }
 .facts dt { color:#6b7280; }

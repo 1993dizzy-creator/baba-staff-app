@@ -17,7 +17,7 @@ export async function readTableDetail(tableId: string, now = new Date()) {
   if (!catalog.tables.some(t => t.id === tableId)) return null;
   if (process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() !== "true") throw Error("DETAIL_READ_DISABLED");
   const time = await loadBusinessTimeAdapter(now), businessDate = time.databaseBusinessDate;
-  const historyFrom = addStoreDays(businessDate, -7);
+  const historyFrom = businessDate;
   const response = await supabaseServer.rpc(OPEN_ORDERS_RPC.read, { p_scope: openOrdersScope(), p_business_date: businessDate })
     .abortSignal(AbortSignal.timeout(15_000));
   if (response.error || !response.data) throw Error("DETAIL_SNAPSHOT_UNAVAILABLE");
@@ -37,8 +37,8 @@ export async function readTableDetail(tableId: string, now = new Date()) {
       paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
     enabled: true, cutoff: time.snapshot.cutoff, collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
   const detail = projectTableDetail({ table: overview.tables.find(t => t.id === tableId)!, catalog: catalog.tables,
-    overview, orders, receipts: evidence.data, now, historyFrom });
-  const relevant = [...detail.current, ...detail.previous];
+    overview, orders, receipts: evidence.data, now, historyFrom, cutoff: time.snapshot.cutoff });
+  const relevant = detail.current;
   if (relevant.length) {
     type Line = { id: number; receipt_id: number; item_name: string | null; quantity: number | string | null; final_amount: number | string | null; is_canceled: boolean | null };
     const lines = await fetchAllExactPages<Line>((from, to) => supabaseServer.from("pos_sales_receipt_lines")

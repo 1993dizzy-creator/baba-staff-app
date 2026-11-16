@@ -1,5 +1,6 @@
 import { classifyOrdersForBusinessDate, singlePaidOrderReceipt, type CollectedOrder } from "../pos/cukcuk/open-orders-core.ts";
 import type { CatalogTable, TableOverview, TableTile } from "./table-overview.ts";
+import { projectDailyTableUsage, type DailyTableUsage } from "./table-usage.ts";
 
 // Display-only evidence. None of these timestamps authorizes a vacancy/cleaning transition.
 export type DetailReceiptRow = {
@@ -17,6 +18,7 @@ export type DetailReceipt = {
 export type TableDetail = {
   table: TableTile; businessDate: string; snapshotAt: string | null; snapshotStatus: string;
   historyFrom: string; current: DetailReceipt[]; previous: DetailReceipt[]; latest: DetailReceipt | null;
+  usage: DailyTableUsage;
   merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean }[];
   cleaning: { enabled: boolean; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" | "state_changed" | "ready";
     token?: { businessDate: string; receiptId: number; evidenceKey: string } };
@@ -33,7 +35,7 @@ const validTime = (value: string | null, now: Date) => value && Number.isFinite(
 /** Uses central v3 merge closures, never receipt TableName to infer physical movement. */
 export function projectTableDetail(input: {
   table: TableTile; catalog: CatalogTable[]; overview: TableOverview; orders: CollectedOrder[];
-  receipts: DetailReceiptRow[]; now: Date; historyFrom: string;
+  receipts: DetailReceiptRow[]; now: Date; historyFrom: string; cutoff?: string;
 }): TableDetail {
   const { table, catalog, overview, orders, now, historyFrom } = input;
   const unique = new Map<number, DetailReceiptRow>();
@@ -94,5 +96,6 @@ export function projectTableDetail(input: {
     : overview.snapshotStatus !== "ok" || table.state === "unknown" ? "snapshot_unhealthy"
     : merges.length ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
   return { table, businessDate: overview.businessDate, snapshotAt: overview.snapshotAt, snapshotStatus: overview.snapshotStatus,
+    usage: projectDailyTableUsage({ ...input, receipts, merges }),
     historyFrom, current, previous, latest, merges, cleaning: { enabled: false, reason }, timer: { enabled: false, reason: "unverified_payment_time" } };
 }

@@ -126,7 +126,8 @@ test('detail server uses only local snapshot and narrow receipt/line projections
   process.env.POS_OPEN_ORDERS_READ_ENABLED='false';await assert.rejects(service.readTableDetail(base.tables[3].id,now),/DISABLED/);assert.equal(calls.length,0);
   process.env.POS_OPEN_ORDERS_READ_ENABLED='true';assert.equal(await service.readTableDetail('unknown',now),null);
   const d=await service.readTableDetail(base.tables[3].id,now);assert.equal(d.latest.lines[0].amount,100000);
-  assert.ok(calls.some(c=>c[0]==='pos_sales_receipts'&&c[1]==='gte'&&c[3]==='2026-11-06'));
+  assert.ok(calls.some(c=>c[0]==='pos_sales_receipts'&&c[1]==='gte'&&c[3]===businessDate));
+  assert.equal(d.historyFrom,businessDate);assert.deepEqual(d.previous,[]);
   assert.ok(calls.some(c=>c[0]==='pos_sales_receipt_lines'&&c[1]==='in'&&c[2]==='receipt_id'));
   for(const call of calls.filter(c=>c[1]==='select'))assert.doesNotMatch(call[2],/customer|raw_json(?!->>)/);
   failLines=true;await assert.rejects(service.readTableDetail(base.tables[3].id,now),/LINES_UNAVAILABLE/);

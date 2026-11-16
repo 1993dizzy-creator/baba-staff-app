@@ -6,7 +6,7 @@ import { useLanguage } from "@/lib/language-context";
 import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
-import { detailTableName, orderElapsedMinutes, preferLatestOverview } from "@/lib/sales/table-detail-display";
+import { detailTableName, orderElapsedMinutes, preferLatestOverview, verifiedOrderStart } from "@/lib/sales/table-detail-display";
 import styles from "./tables.module.css";
 
 // One class per state colors the whole tile, the legend swatch and the sheet badge alike.
@@ -106,6 +106,9 @@ export default function TablesPage() {
   const snapshotStatus = detail?.snapshotStatus ?? data?.snapshotStatus;
   const snapshotAt = detail?.snapshotAt ?? data?.snapshotAt ?? null;
   const elapsed = tile && data ? orderElapsedMinutes(tile, snapshotAt, data.serverNow, snapshotStatus ?? "") : null;
+  const usage = detail?.usage;
+  const usageCurrent = !!usage && snapshotStatus === "ok" && usage.snapshotAt === detail?.snapshotAt;
+  const usageCount = usageCurrent && usage?.status === "confirmed_order_basis" ? usage.count : null;
   const compactWarning = saveState?.id === tile?.id && saveState?.error ? t.cleanFailed
     : detailFailed && tile?.state !== "idle" ? t.historyUnavailableShort
     : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
@@ -135,13 +138,22 @@ export default function TablesPage() {
     : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 ? t.partial : null : null;
   // The basis is the last successful order collection that decided the states, never the browser clock.
   const basisWarning = failed || !!data && (data.catalogStatus !== "ok" || !["ok", "waiting"].includes(data.snapshotStatus));
-  const orderView = (order: TableOrder) => <article key={order.id} className={styles.order}>
-    <h3>{t.order} {order.number ?? "—"}</h3>
+  const orderView = (order: TableOrder, index: number, current = false) => <article key={order.id} className={styles.order}>
+    <h3>{current ? `🍽️ ${t.currentOrders} [${order.number?.trim() || t.orderNumberMissing}]` : `${t.order} ${order.number?.trim() || t.orderNumberMissing}`}
+      {current && currentOrders.length > 1 ? <span className={styles.orderOrdinal}> · {index + 1}/{currentOrders.length}</span> : null}</h3>
     {order.detailsNeedReview ? <p className={styles.notice}>{t.detailsReview}</p> : null}
-    {order.lines ? <table className={styles.lines}><thead><tr><th>{t.menu}</th><th>{t.quantity}</th><th>{t.price}</th><th>{t.amount}</th></tr></thead>
-      <tbody>{order.lines.map(line => <tr key={line.id}><td>{line.name || "—"}{line.option ? ` · ${t.option}` : ""}{line.canceled ? ` · ${t.canceled}` : ""}</td>
-        <td>{line.quantity}</td><td>{money(line.price)}</td><td>{money(line.amount)}</td></tr>)}</tbody></table> : <p>{t.noLines}</p>}
-    <p className={styles.estimate}>{t.estimate} <strong>{money(order.amount)}</strong></p>
+    <div className={styles.orderMenu}>
+      {order.lines ? <ul className={styles.menuItems}>{order.lines.map(line => <li key={line.id} className={styles.menuItem}>
+        <div className={styles.menuName}><strong>{line.name || "—"}</strong>
+          {line.option ? <span className={styles.menuFlag}>{t.option}</span> : null}
+          {line.canceled ? <span className={cx(styles.menuFlag, styles.canceledFlag)}>{t.canceled}</span> : null}</div>
+        <dl className={styles.menuAmounts}>
+          <div><dt>{t.quantity}</dt><dd>{line.quantity}</dd></div><div><dt>{t.price}</dt><dd>{money(line.price)}</dd></div>
+          <div><dt>{t.amount}</dt><dd>{money(line.amount)}</dd></div>
+        </dl>
+      </li>)}</ul> : <p>{t.noLines}</p>}
+      <p className={cx(styles.estimate, styles.orderEstimate)}>{t.estimate} <strong>{money(order.amount)}</strong></p>
+    </div>
   </article>;
   const receiptView = (receipt: DetailReceipt) => <article key={receipt.id} className={styles.receipt}>
     <div className={styles.receiptHeading}><strong>{t.receiptNumber} #{receipt.number ?? receipt.id}</strong>
@@ -190,12 +202,15 @@ export default function TablesPage() {
       const areaTables = data?.tables.filter(item => item.area === area) ?? [];
       return <section key={area} className={styles.area}>
       <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>· {areaTables.length}{t.tableCountSuffix}</span></div>
-      <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => <button key={item.id}
+      <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => {
+        const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
+        return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
-      </button>)}</div>
+        {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}>{clock(start)}</time> : null}
+      </button>; })}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
     </section>; })}</div>
     {data && data.unlinked.length > 0 ? <details className={styles.unlinked}><summary>{t.unlinked} ({data.unlinked.length})</summary>
@@ -222,6 +237,7 @@ export default function TablesPage() {
         backdropPress.current = false;
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
+        {tile ? <p className={styles.usageCount}>{t.todayUsage.replace("{count}", usageCount === null ? "—" : String(usageCount))}</p> : null}
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
           {t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
@@ -234,14 +250,18 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning}>{compactWarning}</p> : null}
+      {tile ? <p className={styles.usageHelp}>
+        {usageCount === null ? `${usageCurrent && usage?.status === "review" ? t.usageReview : t.usageUnavailable} · ` : ""}
+        {usageCurrent && usage && usage.verifiedOrderCount > 0 ? `${t.verifiedOrders.replace("{count}", String(usage.verifiedOrderCount))} · ` : ""}{t.usageBasis}
+      </p> : null}
       {tile?.paymentObservation && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>
         {tile.paymentObservation.expired ? t.automaticallyRetired : <>{t.paymentObserved} {clock(tile.paymentObservation.firstVerifiedAt)}
           {" · "}{t.automaticUntil} {clock(tile.paymentObservation.expiresAt)}</>}
       </p> : null}
       {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={styles.emptyOrder} title={t.noOrders}>🍽️ {t.noCurrentOrders}</p>
-        : currentOrders.length ? <section className={styles.detailSection}><h3>🍽️ {t.currentOrders}</h3>{currentOrders.map(orderView)}</section>
+        : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}
-          {retainedOrders.length ? <details className={styles.detailSection}><summary>{t.retainedOrders}</summary>{retainedOrders.map(orderView)}</details> : null}</> : null}
+          {retainedOrders.length ? <details className={styles.detailSection}><summary>{t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
       {tile ? <>
         {tile.state === "paid" && !detail && !detailFailed ? <p role="status" className={styles.muted}>{t.historyLoading}</p> : null}
         {detail?.latest ? <section className={styles.detailSection}><h3>🧾 {tile.state === "occupied" ? t.pastPayment : t.latestPayment}</h3>
@@ -250,13 +270,9 @@ export default function TablesPage() {
         </section> : null}
         {detail && (detail.current.length > 1 || !detail.latest && detail.current.length > 0) ? <details className={styles.detailSection}>
           <summary>{t.paymentHistory} · {detail.businessDate} ({detail.current.length})</summary>{detail.current.map(receiptView)}</details> : null}
-        {detail && detail.previous.length > 0 ? <details className={styles.detailSection}><summary>📚 {t.priorHistory} ({detail.previous.length})</summary>
-          <p className={styles.muted}>{detail.historyFrom} — {detail.businessDate}</p>
-          {detail.previous.length ? detail.previous.map(receiptView) : <p className={styles.muted}>{t.noPayment}</p>}
-        </details> : null}
         {detail?.merges.length ? <section className={styles.detailSection}><h3>🔗 {t.mergedPayment}</h3>
           {detail.merges.map(merge => <article key={merge.receiptId} className={styles.receipt}>
-            <strong>{t.receiptNumber} #{[...detail.current, ...detail.previous].find(r => r.id === merge.receiptId)?.number ?? merge.receiptId}</strong>
+            <strong>{t.receiptNumber} #{detail.current.find(r => r.id === merge.receiptId)?.number ?? merge.receiptId}</strong>
             <p>{merge.verified ? t.mergeVerified : t.mergeReview}</p>
             <p>{t.sourceTables}: {merge.tables.join(" · ")}</p><p>{t.receiptTable}: {merge.receiptTable ?? "—"}</p>
           </article>)}<p className={styles.paymentSafety}>{t.mergeSafety}</p>

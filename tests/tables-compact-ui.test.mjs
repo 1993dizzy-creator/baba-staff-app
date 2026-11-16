@@ -10,9 +10,9 @@ import * as detailDisplay from '../lib/sales/table-detail-display.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
-function render(data, lang, { failed=false, selected=null }={}) {
+function render(data, lang, { failed=false, selected=null, detail=null }={}) {
   let hook=0;
-  const states=[data,false,failed,selected], mod={exports:{}};
+  const states=[data,false,failed,selected,detail?{key:`${selected.id}:${data.serverNow}`,detail,failed:false}:null], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
@@ -97,5 +97,35 @@ for(const lang of ['ko','vi']){
   for(const m of buttons)assert.match(m[2],/^<strong>[^<]+<\/strong>$/);
   assert.ok(html.includes(`aria-label="BAR1 · BAR · ${tablesText[lang].occupied}"`));
   assert.ok(!html.includes('style="background'));
+ });
+
+ test(`${lang}: occupied tile has earliest verified start only and source menu/order numbers remain distinct`,()=>{
+  const orders=[order('early','BAR4',{orderDate:'2026-11-13T11:07:00Z',orderNo:'1.4'}),order('later','BAR4',{orderDate:'2026-11-13T12:00:00Z',orderNo:'1.4'}),order('missing','BAR4',{orderNo:null})];
+  orders[0].lines=[{...orders[0].lines[0],itemName:'Bánh mì thịt nướng rất dài',isOption:true,isCanceled:true,quantity:3,price:40000,amount:120000}];
+  const data=overview({catalog:babaTableCatalog(),orders}),before=JSON.stringify(data),tile=data.tables.find(t=>t.name==='BAR4'),t=tablesText[lang];
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id}});
+  assert.ok(html.includes('class="tileStart"'));assert.ok(html.includes('>18:07</time>'));
+  assert.equal((html.match(/class="tileStart"/g)??[]).length,1);
+  assert.equal((html.match(new RegExp(`${t.currentOrders} \\[1.4\\]`,'g'))??[]).length,2);
+  assert.ok(html.includes('1/3'));assert.ok(html.includes('2/3'));assert.ok(html.includes(t.orderNumberMissing));
+  assert.ok(!html.includes(`<h3>${t.order} 1.4</h3>`));
+  assert.ok(html.includes('class="orderMenu"'));assert.ok(html.includes('Bánh mì thịt nướng rất dài'));
+  assert.ok(html.includes(t.option));assert.ok(html.includes(t.canceled));
+  for(const amount of [40000,120000,100000])assert.ok(html.includes(new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount)));
+  assert.equal(JSON.stringify(data),before);
+  for(const state of ['idle','paid','unknown']){
+   const changed=structuredClone(data);changed.tables.find(t=>t.id===tile.id).state=state;
+   assert.ok(!render(changed,lang).includes('class="tileStart"'));
+  }
+ });
+
+ test(`${lang}: usage is qualified; stale counts and prior-seven-day UI never display`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[]}),tile=data.tables.find(t=>t.name==='BAR4');
+  const d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:data.snapshotStatus,current:[],previous:[{id:99}],latest:null,merges:[],
+   cleaning:{enabled:false,reason:'no_payment'},usage:{count:1,status:'confirmed_order_basis',verifiedOrderCount:1,snapshotAt:data.snapshotAt}};
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d}),t=tablesText[lang];
+  assert.ok(html.includes(t.todayUsage.replace('{count}','1')));assert.ok(html.includes(t.usageBasis));assert.ok(!html.includes(t.priorHistory));
+  d.usage.snapshotAt='2026-11-13T12:00:00Z';const stale=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
+  assert.ok(stale.includes(t.todayUsage.replace('{count}','—')));
  });
 }

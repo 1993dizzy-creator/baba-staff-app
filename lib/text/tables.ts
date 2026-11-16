@@ -1,5 +1,8 @@
 export const tablesText = {
   ko: {
+    todayUsage: "오늘 이용 {count}회", usageBasis: "확인된 주문 묶음 기준 · 실제 고객 방문 횟수와 다를 수 있습니다.",
+    usageReview: "이용 횟수 확인 필요", usageUnavailable: "확인된 주문 자료 부족", verifiedOrders: "확인된 주문 {count}건",
+    orderNumberMissing: "번호 미확인", orderStartedHint: "검증된 현재 주문 시작시각 · 고객 착석시각 아님",
     paymentObserved: "결제완료 최초 확인", automaticUntil: "일반 전환", automaticallyRetired: "30분 경과 · 일반 전환",
     idle: "일반 · 진행 주문 없음", unavailable: "현황 수집 오류·지연 · 현재 상태를 확인할 수 없습니다.",
     waiting: "수집대기 · 미확인", partial: "일부 테이블·결제 연결을 확인할 수 없습니다.",
@@ -36,6 +39,9 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    todayUsage: "Số lượt sử dụng hôm nay: {count}", usageBasis: "Theo nhóm đơn đã xác minh · Có thể khác số lượt khách thực tế.",
+    usageReview: "Cần kiểm tra số lượt sử dụng", usageUnavailable: "Chưa đủ dữ liệu đơn đã xác minh", verifiedOrders: "{count} đơn đã xác minh",
+    orderNumberMissing: "Chưa rõ số đơn", orderStartedHint: "Giờ mở đơn hiện tại đã xác minh · Không phải giờ khách ngồi",
     paymentObserved: "Ghi nhận thanh toán lần đầu", automaticUntil: "Về trạng thái thường", automaticallyRetired: "Đã qua 30 phút · Trạng thái thường",
     idle: "Bình thường · Không có đơn đang mở", unavailable: "Lỗi hoặc chậm thu thập · Chưa xác định hiện trạng.",
     waiting: "Chờ · Chưa rõ", partial: "Chưa xác định một số bàn hoặc liên kết thanh toán.",
