@@ -74,3 +74,24 @@ test("2nd pass helpers: short title, minor-difference tone, magnitude order, one
   assert.equal(formatExactRecordedAt("2026-11-16T12:11:02.642863+00:00"), "2026-11-16 19:11:02.642 (UTC+07:00 Asia/Ho_Chi_Minh)");
   assert.equal(formatAppRecordedAt(null, "ko"), "—"); assert.equal(formatExactRecordedAt("bad"), "—");
 });
+
+test("3rd pass: part groups by payment-time part_snapshot, responsible roles first, subtotals exclude the residual", async () => {
+  const { groupRunEmployeesByPart, showsDifferenceBadgeInList, responsibleRoleOf } = await import("../lib/payroll/run-ledger-view.ts");
+  const e = (id: number, name: string, part: string | null, position: string | null, amount: number | null, status: "paid" | "unpaid" = "paid") => ({ id, employee_name: name, part_snapshot: part, position_snapshot: position, payment_status: status, actual_paid_amount: amount });
+  const employees = [e(1, "Nhung", "hall", "staff", 100), e(2, "Uyen", "hall", "manager", 300), e(3, "Ann", "hall", "staff", 200), e(4, "Quyen", "kitchen", "leader", 400),
+    e(5, "Boss", "owner", "owner", 1000), e(6, "Zed", null, "staff", 50), e(7, "Kim", "bar", "staff", null, "unpaid"), e(8, "Ann", "hall", "staff", 700)];
+  const before = JSON.stringify(employees);
+  const groups = groupRunEmployeesByPart(employees);
+  assert.deepEqual(groups.map(g => g.part), ["owner", "kitchen", "hall", "bar", "etc"], "shared part rank (owner → kitchen → hall → bar → cleaning → etc)");
+  const hall = groups.find(g => g.part === "hall")!;
+  assert.deepEqual(hall.employees.map(x => x.id), [2, 3, 8, 1], "manager first, then name, then id (stable)");
+  assert.equal(hall.paidTotal, 1300); assert.equal(hall.count, 4);
+  const bar = groups.find(g => g.part === "bar")!;
+  assert.deepEqual([bar.count, bar.unpaidCount, bar.paidTotal], [1, 1, 0], "unpaid never counted as 0₫ paid");
+  assert.equal(groups.reduce((n, g) => n + g.paidTotal, 0), 100 + 300 + 200 + 400 + 1000 + 50 + 700, "sum of subtotals = employee paid total (no residual)");
+  assert.equal(JSON.stringify(employees), before);
+  assert.equal(showsDifferenceBadgeInList(-8848), true); assert.equal(showsDifferenceBadgeInList(1693), true);
+  assert.equal(showsDifferenceBadgeInList(-14), false); assert.equal(showsDifferenceBadgeInList(2), false); assert.equal(showsDifferenceBadgeInList(0), false);
+  assert.equal(responsibleRoleOf("manager"), "manager"); assert.equal(responsibleRoleOf("leader"), "leader");
+  assert.equal(responsibleRoleOf("staff"), null); assert.equal(responsibleRoleOf("owner"), null);
+});

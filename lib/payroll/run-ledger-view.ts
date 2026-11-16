@@ -2,6 +2,8 @@
 // 금액을 재계산·보정하지 않는다. difference_reason 원문은 바꾸지 않고, 목록용 짧은 안내만 따로 만든다.
 
 import type { PaymentOutflows } from "./payment-outflows.ts";
+import { getPartKey, getPartMeta, type PartValue } from "../common/parts.ts";
+import { getEmployeeRoleRank } from "../common/roles.ts";
 
 export type RunLedgerTab = "payments" | "differences" | "audit";
 export const RUN_LEDGER_TABS: readonly RunLedgerTab[] = ["payments", "differences", "audit"];
@@ -121,4 +123,46 @@ export function formatExactRecordedAt(value: string | null | undefined): string 
   const p = value ? zonedParts(value) : null;
   if (!p) return "—";
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${p.ms} (UTC+07:00 ${STORE_TIME_ZONE})`;
+}
+
+/** 지급내역 목록에서 숨기는 소액 차액 배지 기준(표시 정책). 차액 검토 탭·직원 상세에는 모든 차액을 그대로 보여준다. */
+export function showsDifferenceBadgeInList(amount: number): boolean {
+  return amount !== 0 && !isMinorDifference(amount);
+}
+
+export type RunPartEmployee = { id: number; employee_name: string; part_snapshot: string | null; position_snapshot: string | null; payment_status: "unpaid" | "paid"; actual_paid_amount: number | null };
+export type RunPartGroup<E extends RunPartEmployee> = {
+  part: PartValue;
+  employees: E[];
+  count: number;
+  unpaidCount: number;
+  /** 지급 당시 part_snapshot 기준 파트 소계 = 지급완료 직원의 저장된 실지급액 합. 미배분 잔차는 포함하지 않는다. */
+  paidTotal: number;
+};
+
+/** 지급 당시 part_snapshot으로 묶는다. 파트 순서는 공통 파트 순위(getPartMeta.rank, 근태현황·급여관리와 동일),
+ *  파트 안에서는 책임 직급(role 순위: 사장·매니저·리더 → 직원) 우선, 이름순, 마지막으로 지급 기록 id(안정 정렬). */
+export function groupRunEmployeesByPart<E extends RunPartEmployee>(employees: readonly E[]): RunPartGroup<E>[] {
+  const groups = new Map<PartValue, E[]>();
+  for (const employee of employees) {
+    const key = getPartKey(employee.part_snapshot);
+    const list = groups.get(key) ?? [];
+    list.push(employee);
+    groups.set(key, list);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => getPartMeta(a).rank - getPartMeta(b).rank)
+    .map(([part, list]) => {
+      const sorted = [...list].sort((a, b) => getEmployeeRoleRank(a.position_snapshot) - getEmployeeRoleRank(b.position_snapshot)
+        || a.employee_name.localeCompare(b.employee_name, undefined, { sensitivity: "base" })
+        || a.id - b.id);
+      const paid = sorted.filter(employee => employee.payment_status === "paid");
+      const paidTotal = paid.reduce((sum, employee) => { const value = Number(employee.actual_paid_amount); return sum + (Number.isFinite(value) ? value : 0); }, 0);
+      return { part, employees: sorted, count: sorted.length, unpaidCount: sorted.length - paid.length, paidTotal };
+    });
+}
+
+/** 목록 보조정보로만 보이는 책임 직급(매니저·리더). 사장 파트의 사장, 일반 직원(staff)은 표시하지 않는다. */
+export function responsibleRoleOf(position: string | null | undefined): "manager" | "leader" | null {
+  return position === "manager" || position === "leader" ? position : null;
 }

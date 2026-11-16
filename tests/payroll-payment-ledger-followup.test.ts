@@ -48,7 +48,8 @@ test("reduced (reconciled) snapshots: only confirmed positive insurance/TNCN amo
 test("ledger page renders status badges in the employee detail from the snapshot, never from current settings", () => {
   // 2026-11-16 모바일 리뉴얼: 목록은 2줄(이름·금액 / 부서·예외)만, 💯·🍚·🛡️·TNCN은 펼친 상세에서 설명과 함께.
   assert.match(detail, /const badges=getPaymentApplicabilityBadges\(\{snapshot:employee\.calculation_snapshot,month,mealAllowanceEligible,lang\}\);/);
-  assert.match(detail, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(employee\.user_id\)\}/);
+  // 2026-11-16 3차: 직원 상세는 하단 시트(EmployeeSheet)로 열리며, 식대 대상은 선택 직원 기준으로 같은 Set을 쓴다.
+  assert.match(detail, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(selected\.user_id\)\}/);
   const rowButton = detail.slice(detail.indexOf("<button type=\"button\" style={styles.rowButton} aria-expanded={open} aria-controls={panelId} onClick={onToggle}>"), detail.indexOf("{open&&<div id={panelId}"));
   assert.doesNotMatch(rowButton, /StatusBadges/);
   // 2026-11-16 2차: 보험·TNCN 등 적용 정보는 행 펼침의 "상세 보기"(2차 펼침) 안에서만.

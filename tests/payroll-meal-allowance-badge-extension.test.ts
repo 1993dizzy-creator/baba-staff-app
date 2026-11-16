@@ -163,14 +163,15 @@ test("run route: response still returns run/employees/audit unmodified, with mea
 test("run page: renders the meal badge in the employee detail using the same shared label function and a client Set for membership", () => {
   assert.match(runPage, /import \{ mealAllowanceBadgeLabel \} from "@\/components\/payroll\/CompensationCard";/);
   assert.match(runPage, /const mealAllowanceEligibleSet=useMemo\(\(\)=>new Set\(ledger\.mealAllowanceEligibleUserIds\),\[ledger\.mealAllowanceEligibleUserIds\]\);/);
-  assert.match(runPage, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(employee\.user_id\)\}/);
+  assert.match(runPage, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(selected\.user_id\)\}/);
   assert.match(runPage, /badge\.key==="meal"\?`\$\{month\} · \$\{mealAllowanceBadgeLabel\(lang\)\}`/);
 });
 
 test("run page: calculation_snapshot / actual_paid_amount / difference fields remain rendered exactly as before (no payment-data change)", () => {
   // 2026-11-16 2차: 스냅샷 요약은 "상세 보기", 원본 JSON은 "고급 감사자료 → 원본 JSON 보기"에 그대로 보존.
   assert.match(runPage, /\{employee\.calculation_snapshot&&<SnapshotSummary items=\{summarizePaymentSnapshot\(employee\.calculation_snapshot\)\}/);
-  assert.match(runPage, /<AdvancedAudit vi=\{vi\} recordedAt=\{employee\.paid_at\} raw=\{employee\.calculation_snapshot\} rawLabel="calculation_snapshot"\/>/);
+  assert.match(runPage, /const\{calculation_snapshot:snapshot,\.\.\.record\}=employee;/);
+  assert.match(runPage, /<AdvancedAudit vi=\{vi\} recordedAt=\{employee\.paid_at\} raws=\{\[\{label:"calculation_snapshot",value:snapshot\},\{label:"payroll_employee_payments",value:record\}\]\}\/>/);
   assert.match(runPage, /formatVnd\(employee\.actual_paid_amount\?\?0\)/);
   // 차액은 저장된 difference_amount 부호 그대로(+/−) 표시
   assert.match(runPage, /const difference=Number\(employee\.difference_amount\?\?0\);/);

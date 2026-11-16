@@ -68,8 +68,8 @@ test("ledger page: stored totals, review only when differences exist, raw snapsh
   assert.doesNotMatch(detailView, /reduce\([^)]*difference_amount/);
   assert.match(detail, /사유 미기록/);
   // 원본 JSON은 고급 감사자료 안에서 값 그대로(JSON.stringify) 보여준다. 기본 화면에는 없음(접힘 2단계).
-  assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(raw,null,2\)\}<\/pre>/);
-  assert.match(detail, /raw=\{employee\.calculation_snapshot\}/);
+  assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(raw\.value,null,2\)\}<\/pre>/);
+  assert.match(detail, /\{label:"calculation_snapshot",value:snapshot\}/);
   // 지급 상태 필터는 미지급 직원이 있을 때만(차액은 별도 탭)
   assert.match(detail, /const filters:PaymentLedgerFilter\[\]=counts\.unpaid>0\?PAYMENT_LEDGER_FILTERS\.filter\(value=>value!=="difference"\):\[\];/);
   assert.match(detail, /filters\.map\(value=><button key=\{value\} type="button" aria-pressed=\{activeFilter===value\}/);
@@ -106,14 +106,19 @@ test("compact ledger: spinner loading, stored totals, cost details folded, one e
   for (const field of ["calculated_net_total", "difference_total", "actual_paid_total", "actual_company_cost_total", "employee_insurance_total", "employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "employee_pit_total", "company_pit_total", "advance_total", "started_at", "completed_at"]) assert.match(costFn, new RegExp(`run\\.${field}`), field);
   assert.match(costFn, /<details data-testid="run-ledger-cost-breakdown">/);
   assert.ok(cost.length > 0);
-  assert.match(detail, /open=\{expandedId===employee\.id\} onToggle=\{\(\)=>setExpandedId\(current=>current===employee\.id\?null:employee\.id\)\}/);
-  assert.match(detail, /aria-expanded=\{open\} aria-controls=\{panelId\}/);
+  // 2026-11-16 3차: 직원 행을 누르면 한 명의 상세가 하단 시트(공통 PayrollModal)로 열린다(목록 사이 삽입 없음).
+  assert.match(detail, /<button type="button" style=\{styles\.rowButton\} aria-haspopup="dialog" onClick=\{onOpen\}>/);
+  assert.match(detail, /onOpen=\{\(\)=>setSelectedId\(employee\.id\)\}/);
+  assert.match(detail, /\{selected&&<EmployeeSheet employee=\{selected\}/);
+  assert.match(detail, /<PayrollModal title=\{employee\.employee_name\} closeLabel=\{vi\?"Đóng":"닫기"\} onClose=\{onClose\}/);
   // 지급완료 배지는 반복하지 않는다: 지급이면 금액, 미지급이면 상태만(0원을 지급처럼 보이지 않도록)
   assert.match(detail, /\{paid\?<b style=\{styles\.rowAmount\}>\{formatVnd\(employee\.actual_paid_amount\?\?0\)\}<\/b>:<span style=\{styles\.unpaid\}>/);
-  // 차액 표시: 소액(1,000₫ 미만) 반올림 차이는 중립색, 큰 차이만 강조
-  assert.match(detail, /\{paid&&difference!==0\?<span style=\{isMinorDifference\(difference\)\?\{\.\.\.styles\.rowDifference,\.\.\.styles\.minorDifference\}:styles\.rowDifference\}>/);
+  // 2026-11-16 3차: 지급내역 목록은 1,000₫ 이상 차액만 배지로(표시 정책). 차액 검토 탭·직원 상세에는 모든 차액 그대로.
+  assert.match(detail, /const showDifference=paid&&showsDifferenceBadgeInList\(difference\);/);
+  assert.match(detail, /\{showDifference\?<span style=\{styles\.rowDifference\}>/);
+  assert.match(detail, /<Row label=\{vi\?"Chênh lệch":"차액"\} value=\{signedVnd\(difference\)\}\/>/);
   // 원본 JSON은 스냅샷 영역 안의 별도 접힘 영역에 그대로 보존
-  assert.match(detail, /<details><summary style=\{styles\.summaryToggle\}>\{vi\?"Xem JSON gốc":"원본 JSON 보기"\}/);
+  assert.match(detail, /<details key=\{raw\.label\}><summary style=\{styles\.summaryToggle\}>\{vi\?"Xem JSON gốc":"원본 JSON 보기"\}/);
   assert.match(detail, /snapshot:\{[^}]*maxHeight:280,overflow:"auto"/);
 });
 
