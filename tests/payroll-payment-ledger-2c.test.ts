@@ -5,7 +5,10 @@ import test from "node:test";
 import { buildDifferenceReview, countPaymentLedgerFilters, matchesPaymentLedgerFilter, matchesPaymentLedgerQuery, summarizePaymentSnapshot, type PaymentLedgerEmployee } from "../lib/payroll/payment-ledger-view.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
-const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+// 2026-11-16 모바일 리뉴얼: page.tsx는 조회·로딩·오류만, 본문은 PayrollRunLedgerView가 표시한다.
+const detailPage = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+const detailView = read("components/payroll/PayrollRunLedgerView.tsx");
+const detail = `${detailPage}\n${detailView}`;
 const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
 const dashboardSummary = read("components/payroll/PayrollDashboardSummary.tsx");
 
@@ -58,13 +61,16 @@ test("snapshot summary only reads verified fields and never invents values", () 
 });
 
 test("ledger page: stored totals, review only when differences exist, raw snapshot preserved", () => {
-  assert.match(detail, /\{differenceRows\.length>0&&<section style=\{styles\.differenceCard\}/);
-  // 배치 전체 차액은 상단 요약에서 저장값 그대로 한 번만 표시한다(차액 검토에서 중복 표시하지 않음).
-  assert.equal((detail.match(/formatVnd\(run\.difference_total\)/g) ?? []).length, 1);
-  assert.match(detail, /"차액 합계"\} value=\{formatVnd\(run\.difference_total\)\}/);
+  // 차액은 "차액 검토" 탭에서만 목록으로 보고, 배치 차액 합계는 저장값을 그대로 쓴다(개별 값을 다시 더하지 않음).
+  assert.match(detail, /\{tab==="differences"&&<DifferencePanel rows=\{differenceRows\} storedDifferenceTotal=\{Number\(run\.difference_total\)\}/);
+  assert.match(detail, /if\(rows\.length===0\)return <p style=\{styles\.stateBox\}>/);
+  assert.match(detail, /"차액 합계"\} value=\{signedVnd\(Number\(run\.difference_total\)\)\}/);
+  assert.doesNotMatch(detailView, /reduce\([^)]*difference_amount/);
   assert.match(detail, /사유 미기록/);
   assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(employee\.calculation_snapshot,null,2\)\}<\/pre>/);
-  assert.match(detail, /PAYMENT_LEDGER_FILTERS\.map\(value=><button key=\{value\} type="button" aria-pressed=\{filter===value\}/);
+  // 지급 상태 필터는 미지급 직원이 있을 때만(차액은 별도 탭)
+  assert.match(detail, /const filters:PaymentLedgerFilter\[\]=counts\.unpaid>0\?PAYMENT_LEDGER_FILTERS\.filter\(value=>value!=="difference"\):\[\];/);
+  assert.match(detail, /filters\.map\(value=><button key=\{value\} type="button" aria-pressed=\{activeFilter===value\}/);
   assert.match(detail, /\{filterLabel\(value\)\} <span style=\{styles\.filterCount\}>\{counts\[value\]\}<\/span>/);
   // 읽기 전용: GET 조회 1회만, 필터 변경 시 추가 조회 없음
   assert.equal((detail.match(/fetch\(/g) ?? []).length, 1);
@@ -80,24 +86,27 @@ test("ledger page: load failure vs not found, retry, and stale-batch protection"
   assert.match(detail, /onClick=\{\(\)=>setReloadKey\(key=>key\+1\)\}>\{vi\?"Tải lại":"다시 조회"\}/);
   // 실패 화면은 금액·인원수 없이 렌더링된다(run 사용 전 반환)
   const errorReturn = detail.indexOf('if(state.status==="error"||!ledger)return');
-  assert.ok(errorReturn > -1 && errorReturn < detail.indexOf("const run=ledger.run;"));
+  assert.ok(errorReturn > -1 && errorReturn < detail.indexOf("<PayrollRunLedgerView key={ledger.runId} ledger={ledger} lang={lang}/>"));
 });
 
 test("compact ledger: spinner loading, stored totals, cost details folded, one expanded row, unpaid shows no amount", () => {
   assert.match(detail, /import LoadingState from "@\/components\/LoadingState";/);
   assert.match(detail, /if\(state\.status==="loading"\)return <Container><main style=\{styles\.page\}>\{back\}<LoadingState label=\{vi\?"[^"]+":"급여 지급내역을 불러오는 중입니다…"\} variant="page"\/>/);
   assert.match(payrollPage, /loading&&!overview\?<LoadingState label=\{overviewText\.loading\} variant="page"\/>/);
-  assert.match(detail, /"실제 지급 합계"\}<\/span><b style=\{styles\.mainMetricValue\}>\{formatVnd\(run\.actual_paid_total\)\}/);
-  assert.match(detail, /"계산 실수령 합계"\} value=\{formatVnd\(run\.calculated_net_total\)\}/);
-  const cost = detail.slice(detail.indexOf("<details style={styles.costDetails}>"), detail.indexOf("</details>", detail.indexOf("<details style={styles.costDetails}>")));
-  for (const field of ["employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "actual_company_cost_total", "started_at", "completed_at"]) assert.match(cost, new RegExp(`run\\.${field}`), field);
-  assert.match(detail, /const open=expandedId===employee\.id;/);
-  assert.match(detail, /onToggle=\{id=>setExpandedId\(current=>current===id\?null:id\)\}/);
+  // 주요 숫자는 전체 출금액(직원 지급 + 미배분 잔차) 하나. APP 계산·차액·회사 인건비는 접힘 상세.
+  assert.match(detail, /"전체 출금액"\}<\/span>\s*<b style=\{styles\.mainMetricValue\} data-testid="run-ledger-outflow-total">\{formatVnd\(summary\.outflowTotal\)\}/);
+  assert.match(detail, /const summary=summarizeRunOutflow\(run\.actual_paid_total,outflows\);/);
+  const costStart = detail.indexOf("<details style={styles.costDetails}");
+  const cost = detail.slice(costStart, detail.indexOf("</details>", costStart));
+  assert.ok(costStart > -1);
+  for (const field of ["calculated_net_total", "difference_total", "actual_paid_total", "employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "actual_company_cost_total", "started_at", "completed_at"]) assert.match(cost, new RegExp(`run\\.${field}`), field);
+  assert.match(detail, /open=\{expandedId===employee\.id\} onToggle=\{\(\)=>setExpandedId\(current=>current===employee\.id\?null:employee\.id\)\}/);
   assert.match(detail, /aria-expanded=\{open\} aria-controls=\{panelId\}/);
-  assert.match(detail, /\{paid\?<b style=\{styles\.rowAmount\}>\{formatVnd\(employee\.actual_paid_amount\?\?0\)\}<\/b>:null\}/);
+  // 지급완료 배지는 반복하지 않는다: 지급이면 금액, 미지급이면 상태만(0원을 지급처럼 보이지 않도록)
+  assert.match(detail, /\{paid\?<b style=\{styles\.rowAmount\}>\{formatVnd\(employee\.actual_paid_amount\?\?0\)\}<\/b>:<span style=\{styles\.unpaid\}>/);
   assert.match(detail, /\{paid&&difference!==0\?<span style=\{styles\.rowDifference\}>/);
   // 원본 JSON은 스냅샷 영역 안의 별도 접힘 영역에 그대로 보존
-  assert.match(detail, /<details><summary style=\{styles\.summary\}>\{vi\?"Dữ liệu gốc \(JSON\)":"원본 JSON"\}<\/summary><pre style=\{styles\.snapshot\}>/);
+  assert.match(detail, /<details><summary style=\{styles\.summaryToggle\}>\{vi\?"Dữ liệu gốc \(JSON\)":"원본 JSON"\}<\/summary><pre style=\{styles\.snapshot\}>/);
 });
 
 test("top payment status links to the batch ledger only when the batch is completed", () => {

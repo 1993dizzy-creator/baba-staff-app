@@ -6,7 +6,10 @@ import { getPaymentApplicabilityBadges } from "../lib/payroll/payment-ledger-vie
 import { parsePayrollMonthParam, payrollOverviewHref } from "../lib/payroll/payroll-month-param.ts";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
-const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+// 2026-11-16 모바일 리뉴얼: page.tsx는 조회·로딩·오류만, 본문은 PayrollRunLedgerView가 표시한다.
+const detailPage = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+const detailView = read("components/payroll/PayrollRunLedgerView.tsx");
+const detail = `${detailPage}\n${detailView}`;
 const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
 const keys = (snapshot: unknown, mealAllowanceEligible = false) => getPaymentApplicabilityBadges({ snapshot, month: "2026-09", mealAllowanceEligible, lang: "ko" }).map(badge => badge.key);
 
@@ -42,10 +45,15 @@ test("reduced (reconciled) snapshots: only confirmed positive insurance/TNCN amo
   assert.equal(JSON.stringify(snapshot), before);
 });
 
-test("ledger page renders status badges after the name from the snapshot, never from current settings", () => {
-  assert.match(detail, /<b style=\{styles\.name\}>\{employee\.employee_name\}<\/b><span style=\{styles\.metaLine\}>\{meta\?<small style=\{styles\.meta\}>\{meta\}<\/small>:null\}<StatusBadges badges=\{getPaymentApplicabilityBadges\(\{snapshot:employee\.calculation_snapshot,month,mealAllowanceEligible:mealAllowanceEligibleSet\.has\(employee\.user_id\),lang\}\)\}/);
+test("ledger page renders status badges in the employee detail from the snapshot, never from current settings", () => {
+  // 2026-11-16 모바일 리뉴얼: 목록은 2줄(이름·금액 / 부서·예외)만, 💯·🍚·🛡️·TNCN은 펼친 상세에서 설명과 함께.
+  assert.match(detail, /const badges=getPaymentApplicabilityBadges\(\{snapshot:employee\.calculation_snapshot,month,mealAllowanceEligible,lang\}\);/);
+  assert.match(detail, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(employee\.user_id\)\}/);
+  const rowButton = detail.slice(detail.indexOf("<button type=\"button\" style={styles.rowButton} aria-expanded={open} aria-controls={panelId} onClick={onToggle}>"), detail.indexOf("{open&&<div id={panelId}"));
+  assert.doesNotMatch(rowButton, /StatusBadges/);
+  assert.match(detail, /\{open&&<div id=\{panelId\} style=\{styles\.detailBody\}>\{paid\?<>\s*\{badges\.length>0&&<StatusBadges badges=\{badges\}/);
   assert.match(detail, /badge\.key==="attendance"\?"💯":badge\.key==="meal"\?"🍚":badge\.key==="insurance"\?"🛡️":badge\.label/);
-  assert.match(detail, /title=\{label\} aria-label=\{label\}/);
+  assert.match(detail, /title=\{label\}/);
   assert.equal((detail.match(/fetch\(/g) ?? []).length, 1);
 });
 
@@ -69,9 +77,13 @@ test("back button returns to the ledger's payroll month and the payroll page rea
   assert.match(payrollPage, /if\(urlMonth!==syncedUrlMonth\)\{setSyncedUrlMonth\(urlMonth\);if\(urlMonth&&urlMonth!==month\)/);
 });
 
-test("difference review is collapsed by default and toggled from its title", () => {
-  assert.match(detail, /const\[differenceOpen,setDifferenceOpen\]=useState\(false\);/);
-  assert.match(detail, /aria-expanded=\{differenceOpen\} aria-controls="payroll-ledger-difference-review"/);
-  assert.match(detail, /\{differenceOpen&&<ul id="payroll-ledger-difference-review"/);
-  assert.match(detail, /\{differenceRows\.length>0&&<section style=\{styles\.differenceCard\}/);
+test("difference review is its own tab; each row expands to the stored reason in full", () => {
+  // 2026-11-16: 접힘 카드 → 실제 전환 탭(지급내역/차액 검토/감사 이력). 선택한 패널만 렌더링.
+  assert.match(detail, /role="tablist"/);
+  assert.match(detail, /role="tab" id=\{`\$\{baseId\}-tab-\$\{value\}`\} aria-selected=\{selected\} aria-controls=\{`\$\{baseId\}-panel-\$\{value\}`\} tabIndex=\{selected\?0:-1\}/);
+  assert.match(detail, /role="tabpanel" id=\{`\$\{baseId\}-panel-\$\{tab\}`\} aria-labelledby=\{`\$\{baseId\}-tab-\$\{tab\}`\}/);
+  for (const value of ["payments", "differences", "audit"]) assert.match(detail, new RegExp(`\\{tab==="${value}"&&<`));
+  assert.match(detail, /const\[openId,setOpenId\]=useState<number\|null>\(null\);/);
+  // 원문은 펼친 상세에서 그대로(가공 없이) 보여준다.
+  assert.match(detail, /\{row\.reason===null\?<p style=\{styles\.missingReason\}>\{vi\?"Chưa ghi lý do":"사유 미기록"\}<\/p>:<p style=\{styles\.fullText\}>\{row\.reason\}<\/p>\}/);
 });

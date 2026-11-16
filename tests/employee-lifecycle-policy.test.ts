@@ -286,7 +286,7 @@ test("migration is atomic and preserves singleton, predecessor and due-date snap
 });
 
 test("employee payment UI records the actual payment date independently of the payroll month",()=>{
-  const detail=read("app/(protected)/admin/payroll/[runId]/page.tsx");
+  const detail=read("app/(protected)/admin/payroll/[runId]/page.tsx")+read("components/payroll/PayrollRunLedgerView.tsx");
   const payments=read("app/api/admin/payroll/payments/route.ts");
   const settings=read("components/payroll/PayrollCommonSettings.tsx");
   assert.match(detail,/payment_date/);

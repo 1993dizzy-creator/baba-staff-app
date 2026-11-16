@@ -9,7 +9,8 @@ const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 const overviewRoute = read("app/api/admin/payroll/overview/route.ts");
 const runRoute = read("app/api/admin/payroll/runs/[runId]/route.ts");
 const payrollPage = read("app/(protected)/admin/payroll/page.tsx");
-const runPage = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+// 2026-11-16 모바일 리뉴얼: 급여장부 본문은 PayrollRunLedgerView로 분리.
+const runPage = `${read("app/(protected)/admin/payroll/[runId]/page.tsx")}\n${read("components/payroll/PayrollRunLedgerView.tsx")}`;
 const compensationCard = read("components/payroll/CompensationCard.tsx");
 const usersText = read("lib/text/admin-users.ts");
 const settingsPage = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
@@ -159,14 +160,11 @@ test("run route: response still returns run/employees/audit unmodified, with mea
   assert.match(runRoute, /payrollJson\(\{ok:true,run,employees:employees\?\?\[\],audit:audit\?\?\[\],allocations:[^}]*,residuals:[^}]*,fundAccounts:fundAccounts\?\?\[\],mealAllowanceEligibleUserIds\}\)/);
 });
 
-test("run page: renders the badge next to employee_name using the same shared label function and a client Set for membership", () => {
+test("run page: renders the meal badge in the employee detail using the same shared label function and a client Set for membership", () => {
   assert.match(runPage, /import \{ mealAllowanceBadgeLabel \} from "@\/components\/payroll\/CompensationCard";/);
-  assert.match(runPage, /const mealAllowanceEligibleSet=new Set\(mealAllowanceEligibleUserIds\);/);
-  const employeeMapIndex = runPage.indexOf("employees.map(employee=>");
-  const nameIndex = runPage.indexOf("employee.employee_name", employeeMapIndex);
-  const badgeIndex = runPage.indexOf("mealAllowanceEligibleSet.has(employee.user_id)", employeeMapIndex);
-  assert.ok(employeeMapIndex > -1 && nameIndex > -1 && badgeIndex > -1);
-  assert.ok(nameIndex < badgeIndex, "badge check must come right after the employee name");
+  assert.match(runPage, /const mealAllowanceEligibleSet=useMemo\(\(\)=>new Set\(ledger\.mealAllowanceEligibleUserIds\),\[ledger\.mealAllowanceEligibleUserIds\]\);/);
+  assert.match(runPage, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(employee\.user_id\)\}/);
+  assert.match(runPage, /badge\.key==="meal"\?`\$\{month\} · \$\{mealAllowanceBadgeLabel\(lang\)\}`/);
 });
 
 test("run page: calculation_snapshot / actual_paid_amount / difference fields remain rendered exactly as before (no payment-data change)", () => {

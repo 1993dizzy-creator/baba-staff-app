@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (file: string) =>
   fs.readFileSync(path.join(process.cwd(), file), "utf8");
 const list = read("app/(protected)/admin/payroll/page.tsx");
-const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx");
+const detail = read("app/(protected)/admin/payroll/[runId]/page.tsx") + read("components/payroll/PayrollRunLedgerView.tsx");
 const settings = ["app/(protected)/admin/payroll/settings/page.tsx", "components/payroll/EmployeePayrollSettingsPanel.tsx", "components/payroll/usePayrollContracts.ts"].map((path) => read(path)).join("\n");
 const compensationCard = read("components/payroll/CompensationCard.tsx");
 const roles = read("lib/common/roles.ts");
@@ -21,7 +21,10 @@ test("payroll pages use forms and mobile cards without prompt or wide tables", (
     assert.doesNotMatch(source, /prompt\s*\(/);
   assert.doesNotMatch(list, /<table/);
   assert.match(list, /paymentBatch=\{overview\.paymentBatch\}/);
-  assert.match(detail, /Chi trả theo nhân viên|직원별 지급 내역/);
+  // 2026-11-16 모바일 리뉴얼: 직원별 지급은 "지급내역" 탭(VI "Chi trả")의 2줄 카드 목록.
+  assert.match(detail, /payments:"지급내역"/);
+  assert.match(detail, /payments:"Chi trả"/);
+  assert.doesNotMatch(detail, /<table/);
   assert.match(settings, /PayrollModal/);
 });
 test("current contract summary hides legacy calculation basis and revision labels only", () => {

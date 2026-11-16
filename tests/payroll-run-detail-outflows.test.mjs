@@ -122,6 +122,6 @@ test('one-off 2026-10 settlement code is removed and the old URL redirects to th
   const legacy=readFileSync('app/(protected)/admin/payroll/special-settlement-2026-10/page.tsx','utf8');
   assert.match(legacy,/requireRole\(PAYROLL_MANAGER_ROLES\)/);assert.match(legacy,/redirect\(/);assert.match(legacy,/\/admin\/payroll\/\$\{runId\}/);assert.match(legacy,/payrollOverviewHref\("2026-10"\)/);
   assert.doesNotMatch(legacy,/BABA_PAYROLL_SETTLEMENT_2026_10_PLAN_JSON|method:\s*"POST"|NOTHING_TO_SETTLE/);
-  const page=readFileSync('app/(protected)/admin/payroll/[runId]/page.tsx','utf8');
-  for(const text of ['지급일·계좌별 출금','Chi theo ngày · tài khoản','반올림 잔차(직원 미배분)','Chênh lệch làm tròn (không phân bổ cho nhân viên)','전체 출금 합계','Tổng chi thực tế','패널티 반환','hoàn phạt','감사 이력','Lịch sử kiểm toán'])assert.ok(page.includes(text),text);
+  const page=readFileSync('components/payroll/PayrollRunLedgerView.tsx','utf8');
+  for(const text of ['지급일·계좌별 출금','Chi theo ngày · tài khoản','반올림 잔차(직원 미배분)','Chênh lệch làm tròn (không phân bổ cho nhân viên)','전체 출금액','Tổng chi thực tế','미배분 잔차','패널티 반환','hoàn phạt','감사 이력','Kiểm toán','차액 검토','Chênh lệch'])assert.ok(page.includes(text),text);
 });
