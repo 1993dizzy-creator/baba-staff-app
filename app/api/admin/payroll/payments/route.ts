@@ -5,6 +5,7 @@ import { buildEmployeePaymentSnapshot, payrollPaymentSnapshotHash } from "@/lib/
 import { payrollJson, requirePayrollActor } from "@/lib/payroll/server";
 import { isClosedPayrollMonth } from "@/lib/payroll/payment-period";
 import { paymentFailureCodes, validPaymentTargetIds } from "@/lib/payroll/payment-preflight";
+import { SPECIAL_SETTLEMENT_MONTH } from "@/lib/payroll/special-settlement-2026-10";
 
 export const dynamic="force-dynamic";
 const validId=(value:unknown)=>{const id=Number(value);return Number.isSafeInteger(id)&&id>0?id:null};
@@ -37,6 +38,8 @@ export async function POST(request:Request){
   if(!fundAccountId)return payrollJson({ok:false,code:"PAYROLL_FUND_ACCOUNT_INVALID",message:"지급 계좌를 다시 선택해주세요.",messageVi:"Vui lòng chọn lại tài khoản chi trả."},400);
   if(!month||!userId||!paymentDate||!Number.isSafeInteger(actualPaidAmount)||actualPaidAmount<1||!expectedHash)return payrollJson({ok:false,code:"INVALID_PAYMENT"},400);
   if(!isClosedPayrollMonth(month))return payrollJson({ok:false,code:"PAYROLL_MONTH_NOT_CLOSED",message:"급여 대상 월이 아직 종료되지 않았습니다.",messageVi:"Tháng lương vẫn chưa kết thúc."},409);
+  // 2026-10 was paid from the accountant-corrected payroll (split accounts, batch rounding residual): Owner special settlement only.
+  if(month===SPECIAL_SETTLEMENT_MONTH)return payrollJson({ok:false,code:"PAYROLL_SPECIAL_SETTLEMENT_REQUIRED",message:"2026년 10월 급여는 특별 정산 화면에서만 지급완료 처리할 수 있습니다.",messageVi:"Lương tháng 10/2026 chỉ được xác nhận chi trả tại màn hình quyết toán đặc biệt."},409);
   try{
     const {data:existingBatch,error:batchError}=await supabaseServer.from("payroll_payment_batches").select("id,status").eq("payroll_month",`${month}-01`).maybeSingle();
     if(batchError)throw batchError;

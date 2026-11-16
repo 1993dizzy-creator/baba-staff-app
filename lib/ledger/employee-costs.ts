@@ -24,5 +24,16 @@ export async function loadPayrollLedgerSource(month: string) {
     const group = { paymentDate: String(payment.payment_date), fundAccountId: Number(payment.fund_account_id) };
     groups.set(`${group.paymentDate}:${group.fundAccountId}`, group);
   }
+  // Split payments (2026-10 special settlement) also touch their allocation groups.
+  const { data: allocations, error: allocationError } = await supabaseServer.from("payroll_employee_payment_allocations")
+    .select("payment_date,fund_account_id")
+    .eq("payroll_batch_id", batch.id)
+    .eq("status", "active");
+  // Tolerate code deployed before the allocation migration (table absent → no splits exist).
+  if (allocationError && !["42P01", "PGRST205"].includes(String(allocationError.code))) throw allocationError;
+  for (const allocation of allocations ?? []) {
+    const group = { paymentDate: String(allocation.payment_date), fundAccountId: Number(allocation.fund_account_id) };
+    groups.set(`${group.paymentDate}:${group.fundAccountId}`, group);
+  }
   return { batch, paymentGroups: [...groups.values()], companyCostTotal: Number(batch.actual_company_cost_total) };
 }
