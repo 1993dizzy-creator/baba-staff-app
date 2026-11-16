@@ -64,10 +64,12 @@ test("ledger page: stored totals, review only when differences exist, raw snapsh
   // 차액은 "차액 검토" 탭에서만 목록으로 보고, 배치 차액 합계는 저장값을 그대로 쓴다(개별 값을 다시 더하지 않음).
   assert.match(detail, /\{tab==="differences"&&<DifferencePanel rows=\{differenceRows\} storedDifferenceTotal=\{Number\(run\.difference_total\)\}/);
   assert.match(detail, /if\(rows\.length===0\)return <p style=\{styles\.stateBox\}>/);
-  assert.match(detail, /"차액 합계"\} value=\{signedVnd\(Number\(run\.difference_total\)\)\}/);
+  assert.match(detail, /"차액"\} value=\{signedVnd\(amount\(run\.difference_total\)\)\}/);
   assert.doesNotMatch(detailView, /reduce\([^)]*difference_amount/);
   assert.match(detail, /사유 미기록/);
-  assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(employee\.calculation_snapshot,null,2\)\}<\/pre>/);
+  // 원본 JSON은 고급 감사자료 안에서 값 그대로(JSON.stringify) 보여준다. 기본 화면에는 없음(접힘 2단계).
+  assert.match(detail, /<pre style=\{styles\.snapshot\}>\{JSON\.stringify\(raw,null,2\)\}<\/pre>/);
+  assert.match(detail, /raw=\{employee\.calculation_snapshot\}/);
   // 지급 상태 필터는 미지급 직원이 있을 때만(차액은 별도 탭)
   assert.match(detail, /const filters:PaymentLedgerFilter\[\]=counts\.unpaid>0\?PAYMENT_LEDGER_FILTERS\.filter\(value=>value!=="difference"\):\[\];/);
   assert.match(detail, /filters\.map\(value=><button key=\{value\} type="button" aria-pressed=\{activeFilter===value\}/);
@@ -91,7 +93,7 @@ test("ledger page: load failure vs not found, retry, and stale-batch protection"
 
 test("compact ledger: spinner loading, stored totals, cost details folded, one expanded row, unpaid shows no amount", () => {
   assert.match(detail, /import LoadingState from "@\/components\/LoadingState";/);
-  assert.match(detail, /if\(state\.status==="loading"\)return <Container><main style=\{styles\.page\}>\{back\}<LoadingState label=\{vi\?"[^"]+":"급여 지급내역을 불러오는 중입니다…"\} variant="page"\/>/);
+  assert.match(detail, /if\(state\.status==="loading"\)return <Container><main style=\{styles\.page\}><LoadingState label=\{vi\?"[^"]+":"급여 지급내역을 불러오는 중입니다…"\} variant="page"\/>/);
   assert.match(payrollPage, /loading&&!overview\?<LoadingState label=\{overviewText\.loading\} variant="page"\/>/);
   // 주요 숫자는 전체 출금액(직원 지급 + 미배분 잔차) 하나. APP 계산·차액·회사 인건비는 접힘 상세.
   assert.match(detail, /"전체 출금액"\}<\/span>\s*<b style=\{styles\.mainMetricValue\} data-testid="run-ledger-outflow-total">\{formatVnd\(summary\.outflowTotal\)\}/);
@@ -99,14 +101,20 @@ test("compact ledger: spinner loading, stored totals, cost details folded, one e
   const costStart = detail.indexOf("<details style={styles.costDetails}");
   const cost = detail.slice(costStart, detail.indexOf("</details>", costStart));
   assert.ok(costStart > -1);
-  for (const field of ["calculated_net_total", "difference_total", "actual_paid_total", "employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "actual_company_cost_total", "started_at", "completed_at"]) assert.match(cost, new RegExp(`run\\.${field}`), field);
+  // 2026-11-16 2차: 기본은 핵심 4항목, 보험·세금·가불·APP 기록 시각은 "세부 계산 보기"(CostDetails 안)
+  const costFn = detail.slice(detail.indexOf("function CostDetails("), detail.indexOf("function OutflowCard("));
+  for (const field of ["calculated_net_total", "difference_total", "actual_paid_total", "actual_company_cost_total", "employee_insurance_total", "employer_insurance_total", "director_insurance_amount", "insurance_remittance_total", "employee_pit_total", "company_pit_total", "advance_total", "started_at", "completed_at"]) assert.match(costFn, new RegExp(`run\\.${field}`), field);
+  assert.match(costFn, /<details data-testid="run-ledger-cost-breakdown">/);
+  assert.ok(cost.length > 0);
   assert.match(detail, /open=\{expandedId===employee\.id\} onToggle=\{\(\)=>setExpandedId\(current=>current===employee\.id\?null:employee\.id\)\}/);
   assert.match(detail, /aria-expanded=\{open\} aria-controls=\{panelId\}/);
   // 지급완료 배지는 반복하지 않는다: 지급이면 금액, 미지급이면 상태만(0원을 지급처럼 보이지 않도록)
   assert.match(detail, /\{paid\?<b style=\{styles\.rowAmount\}>\{formatVnd\(employee\.actual_paid_amount\?\?0\)\}<\/b>:<span style=\{styles\.unpaid\}>/);
-  assert.match(detail, /\{paid&&difference!==0\?<span style=\{styles\.rowDifference\}>/);
+  // 차액 표시: 소액(1,000₫ 미만) 반올림 차이는 중립색, 큰 차이만 강조
+  assert.match(detail, /\{paid&&difference!==0\?<span style=\{isMinorDifference\(difference\)\?\{\.\.\.styles\.rowDifference,\.\.\.styles\.minorDifference\}:styles\.rowDifference\}>/);
   // 원본 JSON은 스냅샷 영역 안의 별도 접힘 영역에 그대로 보존
-  assert.match(detail, /<details><summary style=\{styles\.summaryToggle\}>\{vi\?"Dữ liệu gốc \(JSON\)":"원본 JSON"\}<\/summary><pre style=\{styles\.snapshot\}>/);
+  assert.match(detail, /<details><summary style=\{styles\.summaryToggle\}>\{vi\?"Xem JSON gốc":"원본 JSON 보기"\}/);
+  assert.match(detail, /snapshot:\{[^}]*maxHeight:280,overflow:"auto"/);
 });
 
 test("top payment status links to the batch ledger only when the batch is completed", () => {

@@ -15,3 +15,15 @@ export function payrollOverviewHref(payrollMonth: string | null | undefined): st
   const month = parsePayrollMonthParam(typeof payrollMonth === "string" ? payrollMonth.slice(0, 7) : null);
   return month ? `/admin/payroll?month=${month}` : "/admin/payroll";
 }
+
+// 근태현황·급여관리·급여설정 공통 내비게이션: 선택 월(?month=YYYY-MM)을 이동 주소에 보존한다.
+// 잘못된 월은 붙이지 않아 각 화면이 기존 기본 월을 쓰게 한다. 급여설정은 월을 표시용으로만 이어받는다(정책 불변).
+export function withPayrollMonth(href: string, month: string | null | undefined): string {
+  const valid = parsePayrollMonthParam(month);
+  return valid ? `${href}?month=${valid}` : href;
+}
+
+// 지급장부 상세(/admin/payroll/123)는 급여관리 탭에 속한다.
+export function isPayrollRunPath(pathname: string): boolean {
+  return /^\/admin\/payroll\/\d+\/?$/.test(pathname);
+}

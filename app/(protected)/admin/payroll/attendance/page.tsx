@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { parsePayrollMonthParam } from "@/lib/payroll/payroll-month-param";
 import Container from "@/components/Container";
 import { useLanguage } from "@/lib/language-context";
 import { getUser, isAdmin } from "@/lib/supabase/auth";
@@ -505,15 +506,34 @@ export default function AttendanceOverviewPage() {
             });
     }, [summaries]);
 
+    // 선택 월은 URL ?month=YYYY-MM과 동기화한다(급여관리·급여설정 탭이 같은 월을 이어받음).
+    // 뒤로가기·앞으로가기나 탭 이동으로 URL 월이 바뀌면 화면 월도 따라간다(잘못된 월은 무시).
+    const urlMonthKey = parsePayrollMonthParam(searchParams.get("month"));
+    const [syncedUrlMonthKey, setSyncedUrlMonthKey] = useState(urlMonthKey);
+    if (urlMonthKey !== syncedUrlMonthKey) {
+        setSyncedUrlMonthKey(urlMonthKey);
+        if (urlMonthKey && urlMonthKey !== selectedMonthKey) {
+            const [urlYear, urlMonth] = urlMonthKey.split("-").map(Number);
+            setIsLoading(true);
+            setLoadError(false);
+            setCurrentMonth(new Date(urlYear, urlMonth - 1, 1));
+            setExpandedUserId(null);
+        }
+    }
+
     const moveMonth = (amount: number) => {
         if (earlyLeaveResolutionRef.current) return;
         monthlyOverviewRequestRef.current += 1;
         setIsLoading(true);
         setLoadError(false);
-        setCurrentMonth((prev) => {
-            return new Date(prev.getFullYear(), prev.getMonth() + amount, 1);
-        });
+        const next = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + amount, 1);
+        const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+        setCurrentMonth(next);
         setExpandedUserId(null);
+        setSyncedUrlMonthKey(nextKey);
+        const query = new URLSearchParams(searchParams.toString());
+        query.set("month", nextKey);
+        router.replace(`/admin/payroll/attendance?${query.toString()}`, { scroll: false });
     };
 
     const goDetail = (userId: number) => {

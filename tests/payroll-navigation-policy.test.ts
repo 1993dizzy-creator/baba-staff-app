@@ -61,9 +61,11 @@ test("payroll tabs keep the approved order, translations, and one-line styling",
   const tabs = read("lib/navigation/payroll-tabs.ts");
   const subnav = read("components/SubNav.tsx");
 
-  const attendanceIndex = tabs.indexOf('href: "/admin/payroll/attendance"');
-  const managementIndex = tabs.indexOf('href: "/admin/payroll"', attendanceIndex + 1);
-  const settingsIndex = tabs.indexOf('href: "/admin/payroll/settings"');
+  // 2026-11-16: 세 탭 모두 선택 월(?month)을 이어받는다(withPayrollMonth).
+  const attendanceIndex = tabs.indexOf('href: withPayrollMonth("/admin/payroll/attendance", month)');
+  const managementIndex = tabs.indexOf('href: withPayrollMonth("/admin/payroll", month)', attendanceIndex + 1);
+  const settingsIndex = tabs.indexOf('href: withPayrollMonth("/admin/payroll/settings", month)');
+  assert.ok(attendanceIndex > -1);
   assert.ok(attendanceIndex < managementIndex && managementIndex < settingsIndex);
   assert.match(tabs, /"Chấm công" : "근태현황"/);
   assert.match(tabs, /"Tiền lương" : "급여관리"/);

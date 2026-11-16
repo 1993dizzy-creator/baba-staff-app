@@ -74,3 +74,51 @@ export function shortPaymentDate(value: string | null | undefined): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
   return match ? `${Number(match[2])}/${Number(match[3])}` : value;
 }
+
+/** 장부 제목(짧게): KO "26년 10월 급여장부", VI "Sổ lương 10/26". month = "YYYY-MM" */
+export function runLedgerTitle(month: string, lang: "ko" | "vi"): string {
+  const yy = month.slice(2, 4); const mm = month.slice(5, 7);
+  return lang === "vi" ? `Sổ lương ${mm}/${yy}` : `${yy}년 ${Number(mm)}월 급여장부`;
+}
+
+/** 소액(1,000₫ 미만) 차액 = 반올림 수준. 오류처럼 강조하지 않는다(표시 색만 다름, 값은 그대로). */
+export const MINOR_DIFFERENCE_LIMIT = 1000;
+export function isMinorDifference(amount: number): boolean {
+  return Math.abs(amount) < MINOR_DIFFERENCE_LIMIT;
+}
+
+/** 차액 검토 순서: 절대값이 큰 차이부터(같으면 기존 순서 유지). 원본 배열은 바꾸지 않는다. */
+export function sortByDifferenceMagnitude<T extends { differenceAmount: number }>(rows: readonly T[]): T[] {
+  return rows.map((row, index) => ({ row, index }))
+    .sort((a, b) => Math.abs(b.row.differenceAmount) - Math.abs(a.row.differenceAmount) || a.index - b.index)
+    .map(({ row }) => row);
+}
+
+/** 목록·기본 상세용 한 줄 사유: 직원별 추가 안내가 있으면 그것, 없으면 공통 사유, 둘 다 없으면 원문. */
+export function oneLineDifferenceReason(reason: string | null | undefined, note: string | null, commonLead: string | null): string | null {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) return null;
+  return note ?? commonLead ?? text;
+}
+
+export const STORE_TIME_ZONE = "Asia/Ho_Chi_Minh";
+function zonedParts(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: STORE_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+    .formatToParts(date).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+  return { ...parts, ms: String(date.getUTCMilliseconds()).padStart(3, "0") } as Record<string, string>;
+}
+/** APP 기록 시각(짧게, 베트남 시간 24시간): KO "11/16 19:11", VI "16/11 19:11". */
+export function formatAppRecordedAt(value: string | null | undefined, lang: "ko" | "vi"): string {
+  const p = value ? zonedParts(value) : null;
+  if (!p) return "—";
+  const day = lang === "vi" ? `${p.day}/${p.month}` : `${Number(p.month)}/${Number(p.day)}`;
+  return `${day} ${p.hour}:${p.minute}`;
+}
+/** 고급 감사자료용 정확한 시각: "2026-11-16 19:11:02.642 (UTC+07:00 Asia/Ho_Chi_Minh)". 원본 ISO는 따로 함께 보여준다. */
+export function formatExactRecordedAt(value: string | null | undefined): string {
+  const p = value ? zonedParts(value) : null;
+  if (!p) return "—";
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${p.ms} (UTC+07:00 ${STORE_TIME_ZONE})`;
+}

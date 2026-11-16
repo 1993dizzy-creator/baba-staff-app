@@ -168,9 +168,13 @@ test("run page: renders the meal badge in the employee detail using the same sha
 });
 
 test("run page: calculation_snapshot / actual_paid_amount / difference fields remain rendered exactly as before (no payment-data change)", () => {
-  assert.match(runPage, /employee\.calculation_snapshot&&<details>/);
+  // 2026-11-16 2차: 스냅샷 요약은 "상세 보기", 원본 JSON은 "고급 감사자료 → 원본 JSON 보기"에 그대로 보존.
+  assert.match(runPage, /\{employee\.calculation_snapshot&&<SnapshotSummary items=\{summarizePaymentSnapshot\(employee\.calculation_snapshot\)\}/);
+  assert.match(runPage, /<AdvancedAudit vi=\{vi\} recordedAt=\{employee\.paid_at\} raw=\{employee\.calculation_snapshot\} rawLabel="calculation_snapshot"\/>/);
   assert.match(runPage, /formatVnd\(employee\.actual_paid_amount\?\?0\)/);
-  assert.match(runPage, /formatVnd\(employee\.difference_amount\?\?0\)/);
+  // 차액은 저장된 difference_amount 부호 그대로(+/−) 표시
+  assert.match(runPage, /const difference=Number\(employee\.difference_amount\?\?0\);/);
+  assert.match(runPage, /<Row label=\{vi\?"Chênh lệch":"차액"\} value=\{signedVnd\(difference\)\}\/>/);
 });
 
 // ---------------------------------------------------------------------------

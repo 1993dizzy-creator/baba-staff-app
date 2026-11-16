@@ -51,7 +51,8 @@ test("ledger page renders status badges in the employee detail from the snapshot
   assert.match(detail, /mealAllowanceEligible=\{mealAllowanceEligibleSet\.has\(employee\.user_id\)\}/);
   const rowButton = detail.slice(detail.indexOf("<button type=\"button\" style={styles.rowButton} aria-expanded={open} aria-controls={panelId} onClick={onToggle}>"), detail.indexOf("{open&&<div id={panelId}"));
   assert.doesNotMatch(rowButton, /StatusBadges/);
-  assert.match(detail, /\{open&&<div id=\{panelId\} style=\{styles\.detailBody\}>\{paid\?<>\s*\{badges\.length>0&&<StatusBadges badges=\{badges\}/);
+  // 2026-11-16 2차: 보험·TNCN 등 적용 정보는 행 펼침의 "상세 보기"(2차 펼침) 안에서만.
+  assert.match(detail, /<details data-testid="run-ledger-employee-more">[\s\S]*?\{badges\.length>0&&<StatusBadges badges=\{badges\}/);
   assert.match(detail, /badge\.key==="attendance"\?"💯":badge\.key==="meal"\?"🍚":badge\.key==="insurance"\?"🛡️":badge\.label/);
   assert.match(detail, /title=\{label\}/);
   assert.equal((detail.match(/fetch\(/g) ?? []).length, 1);
@@ -70,7 +71,8 @@ test("back button returns to the ledger's payroll month and the payroll page rea
   assert.equal(payrollOverviewHref("bad"), "/admin/payroll");
   assert.equal(parsePayrollMonthParam("2026-09"), "2026-09");
   for (const bad of [null, "", "2026-13", "2026-00", "2026-9", "abcd-01", "1999-12", "2026-09-01"]) assert.equal(parsePayrollMonthParam(bad), null, String(bad));
-  assert.match(detail, /<Link href=\{payrollOverviewHref\(ledger\?\.run\.payroll_month\)\} style=\{styles\.back\}>/);
+  // 2026-11-16: 지급장부의 ← 급여관리 버튼은 제거. 상단 급여관리 탭이 장부 월(?month)로 돌아간다(payroll-month-navigation.test.ts).
+  assert.doesNotMatch(detail, /styles\.back|payrollOverviewHref\(ledger/);
   assert.match(payrollPage, /const urlMonth=parsePayrollMonthParam\(searchParams\.get\("month"\)\);/);
   assert.match(payrollPage, /useState\(\(\)=>urlMonth\?\?currentMonth\(\)\)/);
   assert.match(payrollPage, /query\.set\("month",next\);router\.replace\(`\$\{pathname\}\?\$\{query\.toString\(\)\}`,\{scroll:false\}\)/);

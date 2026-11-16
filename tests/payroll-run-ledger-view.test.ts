@@ -52,3 +52,25 @@ test("short payment date keeps unknown formats as-is", () => {
   assert.equal(shortPaymentDate(null), "—");
   assert.equal(shortPaymentDate("legacy"), "legacy");
 });
+
+test("2nd pass helpers: short title, minor-difference tone, magnitude order, one-line reason, store-time formats", async () => {
+  const { runLedgerTitle, isMinorDifference, sortByDifferenceMagnitude, oneLineDifferenceReason, formatAppRecordedAt, formatExactRecordedAt } = await import("../lib/payroll/run-ledger-view.ts");
+  assert.equal(runLedgerTitle("2026-10", "ko"), "26년 10월 급여장부");
+  assert.equal(runLedgerTitle("2026-10", "vi"), "Sổ lương 10/26");
+  assert.equal(runLedgerTitle("2027-01", "ko"), "27년 1월 급여장부");
+  assert.equal(isMinorDifference(-14), true); assert.equal(isMinorDifference(999), true); assert.equal(isMinorDifference(-1000), false); assert.equal(isMinorDifference(1693), false);
+  const rows = [{ id: "a", differenceAmount: 2 }, { id: "b", differenceAmount: -8848 }, { id: "c", differenceAmount: 1693 }, { id: "d", differenceAmount: -2 }];
+  const before = JSON.stringify(rows);
+  assert.deepEqual(sortByDifferenceMagnitude(rows).map(row => row.id), ["b", "c", "a", "d"], "stable for equal magnitude");
+  assert.equal(JSON.stringify(rows), before);
+  assert.equal(oneLineDifferenceReason("lead · APP 계산 1₫ → 실지급 2₫ (차액 +1₫) · note", "note", "lead"), "note");
+  assert.equal(oneLineDifferenceReason("lead · APP 계산 1₫ → 실지급 2₫ (차액 +1₫)", null, "lead"), "lead");
+  assert.equal(oneLineDifferenceReason("free text", null, null), "free text");
+  assert.equal(oneLineDifferenceReason("  ", null, "lead"), null);
+  // 2026-11-16 12:11 UTC = 19:11 Asia/Ho_Chi_Minh (실행 환경 시간대와 무관)
+  assert.equal(formatAppRecordedAt("2026-11-16T12:11:02.642863+00:00", "ko"), "11/16 19:11");
+  assert.equal(formatAppRecordedAt("2026-11-16T12:11:02.642863+00:00", "vi"), "16/11 19:11");
+  assert.equal(formatAppRecordedAt("2026-11-16T17:30:00Z", "ko"), "11/17 00:30", "24h, date rolls in store time");
+  assert.equal(formatExactRecordedAt("2026-11-16T12:11:02.642863+00:00"), "2026-11-16 19:11:02.642 (UTC+07:00 Asia/Ho_Chi_Minh)");
+  assert.equal(formatAppRecordedAt(null, "ko"), "—"); assert.equal(formatExactRecordedAt("bad"), "—");
+});
