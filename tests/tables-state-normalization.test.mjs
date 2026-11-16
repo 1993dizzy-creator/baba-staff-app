@@ -8,7 +8,10 @@ const view=changes=>buildTableOverview(input({catalog:babaTableCatalog(),orders:
 const tile=(v,name='BAR4')=>v.tables.find(t=>t.name===name);
 const receipt=(changes={})=>({orderId:'paid-order',receiptId:1,paymentStatus:3,isCanceled:false,businessDate,tableName:'BAR4',paidAt:now.toISOString(),...changes});
 test('fresh zero orders: actual 27 idle seats, no physical vacancy claim and real 0/0 counts',()=>{
- const v=view();assert.ok(v.tables.every(t=>t.state==='idle'));assert.deepEqual(v.summary,{total:27,occupied:0,paid:0,free:null,reserved:null,unknown:0});
+ const v=view();assert.ok(v.tables.every(t=>t.state==='idle'));
+ const {paidCumulative,paidCumulativeEvidence,...existing}=v.summary;
+ assert.deepEqual(existing,{total:27,occupied:0,paid:0,free:null,reserved:null,unknown:0});
+ assert.equal(paidCumulative,null);assert.equal(paidCumulativeEvidence.reason,'coverage_unverified');
 });
 test('before collection: waiting is not a failure, but unobserved counts stay null; actual read/collection failures remain unknown',()=>{
  const at=new Date('2026-11-13T09:00:00+07:00');

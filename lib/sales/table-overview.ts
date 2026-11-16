@@ -5,6 +5,7 @@ import {
 
 import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
 import { evaluateOpenOrdersCronWindow } from "../pos/cukcuk/open-orders-cron-policy.ts";
+import { projectPaidCumulative, type PaidCumulativeEvidence } from "./table-paid-cumulative.ts";
 
 export type TableReceipt = ReceiptLink & { tableName?: string | null; paidAt?: string | null };
 export type TableState = "idle" | "unknown" | "occupied" | "reserved" | "paid" | "free";
@@ -23,7 +24,8 @@ export type TableOverview = {
   businessDate: string; serverNow: string; snapshotAt: string | null; catalogAt: string | null;
   catalogStatus: TableCatalog["status"]; snapshotStatus: string; unlinkedReceiptCount: number;
   tables: TableTile[]; unlinked: TableOrder[];
-  summary: { total: number | null; occupied: number | null; reserved: null; paid: number | null; free: null; unknown: number };
+  summary: { total: number | null; occupied: number | null; reserved: null; paid: number | null; free: null; unknown: number;
+    paidCumulative: number | null; paidCumulativeEvidence: PaidCumulativeEvidence };
 };
 
 const nameKey = (value: string) => value.normalize("NFC").trim().toLocaleLowerCase("vi-VN");
@@ -194,6 +196,8 @@ export function buildTableOverview(input: {
   });
   const unknown = tables.filter(table => table.state === "unknown").length;
   const countable = catalogOk && snapshotOk && unknown === 0 && !unlocatedOrder;
+  const paidCumulativeEvidence = projectPaidCumulative({ businessDate, now, snapshotAt: kpi.lastSuccessAt,
+    healthy: catalogOk && snapshotOk && !conflict && !receiptConflict, catalog, orders, receipts, cutoff: input.cutoff });
   return {
     businessDate, serverNow: now.toISOString(), snapshotAt: kpi.lastSuccessAt, catalogAt: catalog.collectedAt,
     catalogStatus: catalog.status, snapshotStatus: snapshotOk ? "ok" : waiting ? "waiting"
@@ -203,6 +207,7 @@ export function buildTableOverview(input: {
     summary: { total: catalog.status === "ok" ? tables.length : null,
       occupied: countable ? tables.filter(table => table.state === "occupied").length : null,
       paid: countable && unlinkedReceiptCount === 0 ? tables.filter(table => table.state === "paid").length : null,
-      reserved: null, free: null, unknown },
+      reserved: null, free: null, unknown,
+      paidCumulative: paidCumulativeEvidence.count, paidCumulativeEvidence },
   };
 }

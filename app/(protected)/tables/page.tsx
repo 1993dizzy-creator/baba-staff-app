@@ -7,6 +7,7 @@ import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, preferLatestOverview, verifiedOrderStart } from "@/lib/sales/table-detail-display";
+import { compactOrderAmount, verifiedCurrentOrderAmount } from "@/lib/sales/table-tile-amount";
 import styles from "./tables.module.css";
 
 // One class per state colors the whole tile, the legend swatch and the sheet badge alike.
@@ -174,8 +175,10 @@ export default function TablesPage() {
   return <main className={styles.page}>
     <h1 className={styles.srOnly}>{t.title}</h1>
     <header className={styles.overviewBar}>
-      <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paid"] as const).map(key =>
-        <div key={key}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}</dd></div>)}</dl>
+      <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paidCumulative"] as const).map(key =>
+        <div key={key} title={key === "paidCumulative" ? t.paidCumulativeHelp : undefined}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}
+          {key === "paidCumulative" && data?.summary.paidCumulative == null ? <span className={styles.srOnly}>{t.paidCumulativeReview}</span> : null}
+        </dd></div>)}</dl>
       <p className={cx(styles.basis, basisWarning && styles.basisWarning)}>
         {basisWarning ? <span className={styles.warnMark} aria-hidden="true">!</span> : null}
         {t.basis} <time dateTime={data?.snapshotAt ?? undefined} title={timestamp(data?.snapshotAt, lang)}>{clock(data?.snapshotAt)}</time>
@@ -189,6 +192,7 @@ export default function TablesPage() {
     </header>
     {loading && !data ? <p role="status" className={styles.notice}>{t.loading}</p> : null}
     {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
+    {data && data.summary.paidCumulative == null ? <p className={styles.cumulativeReview}>{t.paidCumulativeReview}</p> : null}
     <div className={styles.statusRow}>
       <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}
         title={state === "paid" ? t.completionEvidence : t[state]}>
@@ -204,12 +208,14 @@ export default function TablesPage() {
       <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>· {areaTables.length}{t.tableCountSuffix}</span></div>
       <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => {
         const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
+        const amount = data ? verifiedCurrentOrderAmount(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${amount !== null ? ` · ${t.currentOrderAmount} ${money(amount)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
-        {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}>{clock(start)}</time> : null}
+        {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}><span aria-hidden="true">🕒</span> {clock(start)}</time> : null}
+        {amount !== null ? <span className={styles.tileAmount} aria-hidden="true" title={`${t.currentOrderAmount}: ${money(amount)} · ${t.compactAmountHint}`}>{compactOrderAmount(amount)}</span> : null}
       </button>; })}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
     </section>; })}</div>

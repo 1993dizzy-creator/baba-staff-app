@@ -7,6 +7,7 @@ import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import * as detailDisplay from '../lib/sales/table-detail-display.ts';
+import * as tileAmount from '../lib/sales/table-tile-amount.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
@@ -18,6 +19,7 @@ function render(data, lang, { failed=false, selected=null, detail=null }={}) {
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
     '@/lib/language-context':{useLanguage:()=>({lang})}, '@/lib/text/tables':{tablesText},
     '@/lib/sales/table-detail-display':detailDisplay,
+    '@/lib/sales/table-tile-amount':tileAmount,
     './tables.module.css':{__esModule:true,default:new Proxy({},{get:(_,key)=>key})},
   };
   const code=ts.transpileModule(readFileSync('app/(protected)/tables/page.tsx','utf8'),{compilerOptions:{
@@ -31,9 +33,10 @@ for(const lang of ['ko','vi']){
  test(`${lang}: compact summary keeps original zero/null values, one collection basis time and actual 11/8/8 counts`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),before=JSON.stringify(data),html=render(data,lang),t=tablesText[lang];
   const summary=html.match(/<dl class="summary".*?<\/dl>/s)[0];
-  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['27','0','0']);
-  for(const key of ['total','occupied','paid'])assert.ok(summary.includes(t.summaryLabels[key]));
-  for(const key of ['reserved','unknown','free'])assert.ok(!summary.includes(t.summaryLabels[key]));
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1].replace(/<span.*?<\/span>/g,'')),['27','0','—']);
+  for(const key of ['total','occupied','paidCumulative'])assert.ok(summary.includes(t.summaryLabels[key]));
+  assert.ok(summary.includes(t.paidCumulativeReview));
+  for(const key of ['reserved','unknown','free'])assert.ok(!summary.includes(`<dt>${t.summaryLabels[key]}</dt>`));
   assert.ok(html.includes(`<h1 class="srOnly">${t.title}</h1>`));
   assert.ok(html.includes(`aria-label="${t.refresh}"`));
   // Only the order-collection time that decided the states is shown, at the right end before refresh.
@@ -67,7 +70,7 @@ for(const lang of ['ko','vi']){
   const basis=error.match(/<p class="basis basisWarning">(.*?)<\/p>/s)[1];
   assert.ok(basis.includes('>—</time>'));assert.ok(!/\d{2}:\d{2}/.test(basis));
   const summary=error.match(/<dl class="summary".*?<\/dl>/s)[0];
-  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1]),['\u2014','\u2014','\u2014']);
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1].replace(/<span.*?<\/span>/g,'')),['\u2014','\u2014','\u2014']);
  });
 
  test(`${lang}: selected sheet preserves source amounts, menu, status and timestamps`,()=>{
@@ -104,7 +107,7 @@ for(const lang of ['ko','vi']){
   orders[0].lines=[{...orders[0].lines[0],itemName:'Bánh mì thịt nướng rất dài',isOption:true,isCanceled:true,quantity:3,price:40000,amount:120000}];
   const data=overview({catalog:babaTableCatalog(),orders}),before=JSON.stringify(data),tile=data.tables.find(t=>t.name==='BAR4'),t=tablesText[lang];
   const html=render(data,lang,{selected:{kind:'table',id:tile.id}});
-  assert.ok(html.includes('class="tileStart"'));assert.ok(html.includes('>18:07</time>'));
+  assert.ok(html.includes('class="tileStart"'));assert.ok(html.includes('</span> 18:07</time>'));
   assert.equal((html.match(/class="tileStart"/g)??[]).length,1);
   assert.equal((html.match(new RegExp(`${t.currentOrders} \\[1.4\\]`,'g'))??[]).length,2);
   assert.ok(html.includes('1/3'));assert.ok(html.includes('2/3'));assert.ok(html.includes(t.orderNumberMissing));

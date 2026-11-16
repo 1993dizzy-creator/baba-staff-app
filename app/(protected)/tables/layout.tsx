@@ -24,11 +24,11 @@ export default function TablesLayout({ children }: { children: React.ReactNode }
       </nav>
       {isOverview ? <nav className={styles.subNavigation} aria-label={t.overview}>
         {[
-          { href: "/tables", label: t.tables },
-          { href: "/tables/reservations", label: t.reservations },
+          { href: "/tables", label: t.tables, icon: "🍽️" },
+          { href: "/tables/reservations", label: t.reservations, icon: "📅" },
         ].map(tab => <Link key={tab.href} href={tab.href}
           aria-current={pathname === tab.href ? "page" : undefined}
-          className={styles.subTab}>{tab.label}</Link>)}
+          className={styles.subTab}><span aria-hidden="true">{tab.icon}</span> {tab.label}</Link>)}
       </nav> : null}
     </div>
     {children}
