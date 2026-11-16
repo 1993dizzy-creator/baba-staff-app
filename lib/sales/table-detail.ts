@@ -20,8 +20,9 @@ export type TableDetail = {
   merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean }[];
   cleaning: { enabled: boolean; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" | "state_changed" | "ready";
     token?: { businessDate: string; receiptId: number; evidenceKey: string } };
-  // Deliberately no deadline. ref_date and status_changed_at have not been certified as payment completion time.
-  timer: { enabled: false; reason: "unverified_payment_time" };
+  // Only persisted server verification can provide a deadline. Receipt timestamps cannot.
+  timer: { enabled: false; reason: "unverified_payment_time" }
+    | { enabled: true; firstVerifiedAt: string; expiresAt: string; expired: boolean };
 };
 const key = (value: string | null | undefined) => value?.normalize("NFC").trim().toLocaleLowerCase("vi-VN") ?? "";
 const idKey = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";

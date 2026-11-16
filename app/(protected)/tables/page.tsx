@@ -234,6 +234,10 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning}>{compactWarning}</p> : null}
+      {tile?.paymentObservation && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>
+        {tile.paymentObservation.expired ? t.automaticallyRetired : <>{t.paymentObserved} {clock(tile.paymentObservation.firstVerifiedAt)}
+          {" · "}{t.automaticUntil} {clock(tile.paymentObservation.expiresAt)}</>}
+      </p> : null}
       {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={styles.emptyOrder} title={t.noOrders}>🍽️ {t.noCurrentOrders}</p>
         : currentOrders.length ? <section className={styles.detailSection}><h3>🍽️ {t.currentOrders}</h3>{currentOrders.map(orderView)}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}

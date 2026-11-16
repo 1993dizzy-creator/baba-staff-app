@@ -1,4 +1,7 @@
 import { authorizeCron } from "@/lib/pos/cukcuk/sales-sync-cron-shared";
+import { after } from "next/server";
+import { autoNormalActivation } from "@/lib/sales/table-auto-normal";
+import { observeVerifiedPayments } from "@/lib/sales/table-payment-observer-server";
 import { openOrdersSyncEnabled, runCentralOpenOrderSync } from "@/lib/pos/cukcuk/open-orders-sync-server";
 import {
   evaluateOpenOrdersCronWindow,
@@ -32,6 +35,10 @@ export async function GET(req: Request) {
   try {
     const { status, body } = mapOpenOrdersSyncResult(await runCentralOpenOrderSync(now));
     if (!body.ok) console.error("[POS_OPEN_ORDERS_CRON_FAILED]", body.code);
+    if (body.outcome === "committed" && autoNormalActivation()) {
+      // Registration failure also must not turn an already committed collection into failure.
+      try { after(observeVerifiedPayments); } catch { console.error("[TABLE_PAYMENT_OBSERVATION_SCHEDULE_FAILED]"); }
+    }
     return Response.json(body, { status });
   } catch (error) {
     const code = openOrdersCronErrorCode(error);

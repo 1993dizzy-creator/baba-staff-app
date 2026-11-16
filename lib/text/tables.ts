@@ -1,5 +1,6 @@
 export const tablesText = {
   ko: {
+    paymentObserved: "결제완료 최초 확인", automaticUntil: "일반 전환", automaticallyRetired: "30분 경과 · 일반 전환",
     idle: "일반 · 진행 주문 없음", unavailable: "현황 수집 오류·지연 · 현재 상태를 확인할 수 없습니다.",
     waiting: "수집대기 · 미확인", partial: "일부 테이블·결제 연결을 확인할 수 없습니다.",
     completionEvidence: "완료는 결제 증거이며 퇴석·빈자리 확정을 뜻하지 않습니다.", completedAt: "결제 영수증 시각",
@@ -35,6 +36,7 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    paymentObserved: "Ghi nhận thanh toán lần đầu", automaticUntil: "Về trạng thái thường", automaticallyRetired: "Đã qua 30 phút · Trạng thái thường",
     idle: "Bình thường · Không có đơn đang mở", unavailable: "Lỗi hoặc chậm thu thập · Chưa xác định hiện trạng.",
     waiting: "Chờ · Chưa rõ", partial: "Chưa xác định một số bàn hoặc liên kết thanh toán.",
     completionEvidence: "Hoàn tất chỉ xác nhận thanh toán, không xác nhận khách đã rời hay bàn trống.", completedAt: "Thời gian hóa đơn",

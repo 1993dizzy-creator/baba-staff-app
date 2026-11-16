@@ -25,7 +25,7 @@ export function validOrders(orders: unknown): orders is CollectedOrder[] {
 
 /** Only central read RPC + receipt evidence. No Cron invocation or order transport. */
 export async function readTableOverview(now = new Date()) {
-  if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true") {
+  if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true" || process.env.BABA_TABLE_AUTO_NORMAL_ENABLED?.trim() === "true") {
     try {
       const { readCleaningState } = await import("./table-cleaning-server");
       const state = await readCleaningState(now);

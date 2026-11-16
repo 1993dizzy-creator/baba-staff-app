@@ -37,7 +37,7 @@ const vn = (local) => new Date(`${local.length === 16 ? local + ':00' : local}+0
 const storeBusinessDate = (now) => { const t = new Date(now.getTime() + 7 * 3600_000 - 3 * 3600_000); return t.toISOString().slice(0, 10); };
 
 function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', rpcError = {}, login, cukcuk, adapterError,
-  previous = [], receipts = [] } = {}) {
+  previous = [], receipts = [], auto = false, scheduleError = false } = {}) {
   const calls = [];
   const meta = {};
   const rpc = async (name, args) => {
@@ -74,6 +74,9 @@ function harness({ at, enabled = 'true', secret = SECRET, claim = 'collecting', 
     '@/lib/sales/daily-sales-summary': { fetchAllExactPages },
   });
   const route = load('app/api/cron/pos-open-orders-sync/route.ts', {
+    'next/server': {after:fn=>{if(scheduleError)throw Error('after unavailable');calls.push('after:registered');meta.background=fn;}},
+    '@/lib/sales/table-auto-normal': {autoNormalActivation:()=>auto?'activation':null},
+    '@/lib/sales/table-payment-observer-server': {observeVerifiedPayments:async()=>{calls.push('observer');}},
     '@/lib/pos/cukcuk/sales-sync-cron-shared': cronShared,
     '@/lib/pos/cukcuk/open-orders-sync-server': sync,
     '@/lib/pos/cukcuk/open-orders-cron-policy': policy,
@@ -299,7 +302,8 @@ test('static: current route config/reuse/lock guards and the original cron deliv
   assert.match(src, /export const dynamic = "force-dynamic";/);
   assert.match(src, /export const maxDuration = 180;/);
   const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(imports, ['@/lib/pos/cukcuk/sales-sync-cron-shared', '@/lib/pos/cukcuk/open-orders-sync-server', '@/lib/pos/cukcuk/open-orders-cron-policy']);
+  assert.deepEqual(imports, ['@/lib/pos/cukcuk/sales-sync-cron-shared', 'next/server', '@/lib/sales/table-auto-normal',
+    '@/lib/sales/table-payment-observer-server', '@/lib/pos/cukcuk/open-orders-sync-server', '@/lib/pos/cukcuk/open-orders-cron-policy']);
   assert.doesNotMatch(src, /pos_open_orders_|advisory|lease_until|fetch\(|loginCukcuk|supabase/);
   assert.ok(src.indexOf('authorizeCron(req)') < src.indexOf('openOrdersSyncEnabled()'));
   assert.ok(src.indexOf('openOrdersSyncEnabled()') < src.indexOf('evaluateOpenOrdersCronWindow(now)'));
@@ -313,4 +317,15 @@ test('static: current route config/reuse/lock guards and the original cron deliv
     'app/api/cron/sales-sync', 'app/api/cron/sales-sync-final', 'lib/ledger', 'lib/pos/cukcuk/sales-receipt-sync.ts', 'lib/pos/cukcuk/sales-sync-cron-shared.ts',
     'lib/pos/cukcuk/open-orders-core.ts', 'lib/pos/cukcuk/open-orders-sync-server.ts'], { encoding: 'utf8' }).trim();
   assert.equal(touched, '');
+});
+
+test('automatic observer is registered only after commit, runs after response, and registration failure preserves success',async()=>{
+ const h=harness({auto:true}),response=await h.run();assert.equal(response.body.outcome,'committed');
+ assert.ok(h.calls.indexOf('after:registered')>h.calls.indexOf('rpc:pos_open_orders_commit'));
+ assert.equal(h.calls.includes('observer'),false);await h.meta.background();assert.equal(h.calls.at(-1),'observer');
+ for(const opts of [{claim:'fresh'},{claim:'busy'},{enabled:'false'},{rpcError:{pos_open_orders_commit:{message:'failed'}}}]){
+  const skipped=harness({auto:true,...opts});await skipped.run();assert.equal(skipped.calls.includes('after:registered'),false);
+ }
+ const failed=harness({auto:true,scheduleError:true}),r=await failed.run();assert.equal(r.status,200);assert.equal(r.body.outcome,'committed');
+ assert.ok(r.logged.some(x=>x.includes('OBSERVATION_SCHEDULE_FAILED')));
 });

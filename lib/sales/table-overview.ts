@@ -17,7 +17,8 @@ export type TableOrder = {
   amount: number; verifiedOpen: boolean; detailsNeedReview: boolean;
   lines: { id: string; name: string; quantity: number; price: number; amount: number; option: boolean; canceled: boolean }[] | null;
 };
-export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string };
+export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
+  paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
 export type TableOverview = {
   businessDate: string; serverNow: string; snapshotAt: string | null; catalogAt: string | null;
   catalogStatus: TableCatalog["status"]; snapshotStatus: string; unlinkedReceiptCount: number;
