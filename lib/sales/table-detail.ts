@@ -1,6 +1,7 @@
 import { classifyOrdersForBusinessDate, singlePaidOrderReceipt, type CollectedOrder } from "../pos/cukcuk/open-orders-core.ts";
 import type { CatalogTable, TableOverview, TableTile } from "./table-overview.ts";
 import { projectDailyTableUsage, type DailyTableUsage } from "./table-usage.ts";
+import { projectPaidOrderUsage, type PaidOrderUsage } from "./table-paid-usage.ts";
 
 // Display-only evidence. None of these timestamps authorizes a vacancy/cleaning transition.
 export type DetailReceiptRow = {
@@ -19,6 +20,7 @@ export type TableDetail = {
   table: TableTile; businessDate: string; snapshotAt: string | null; snapshotStatus: string;
   historyFrom: string; current: DetailReceipt[]; previous: DetailReceipt[]; latest: DetailReceipt | null;
   usage: DailyTableUsage;
+  paidUsage?: PaidOrderUsage | null;
   merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean }[];
   cleaning: { enabled: boolean; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" | "state_changed" | "ready";
     token?: { businessDate: string; receiptId: number; evidenceKey: string } };
@@ -97,5 +99,6 @@ export function projectTableDetail(input: {
     : merges.length ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
   return { table, businessDate: overview.businessDate, snapshotAt: overview.snapshotAt, snapshotStatus: overview.snapshotStatus,
     usage: projectDailyTableUsage({ ...input, receipts, merges }),
+    paidUsage: projectPaidOrderUsage({ ...input, receipts, latest }),
     historyFrom, current, previous, latest, merges, cleaning: { enabled: false, reason }, timer: { enabled: false, reason: "unverified_payment_time" } };
 }

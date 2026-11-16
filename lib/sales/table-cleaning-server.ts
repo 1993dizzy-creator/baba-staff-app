@@ -58,6 +58,9 @@ export async function decorateCleaningDetail(detail: TableDetail) {
   const key = state.context.keys[table.id];
   const enabled = cleaningFeatureEnabled() && state.context.manualEnabled !== false && table.state === "paid" && !!key && key.receiptId === detail.latest?.id && detail.merges.length === 0;
   return { ...detail, table, snapshotAt: state.overview.snapshotAt, snapshotStatus: state.overview.snapshotStatus,
+    paidUsage: detail.paidUsage && table.state === "paid" && state.overview.snapshotStatus === "ok"
+      && key?.receiptId === detail.paidUsage.receiptId && table.lastPaidAt === detail.paidUsage.referenceAt
+      && state.overview.snapshotAt === detail.paidUsage.snapshotAt ? detail.paidUsage : null,
     timer: table.paymentObservation ? { enabled: true as const, firstVerifiedAt: table.paymentObservation.firstVerifiedAt,
       expiresAt: table.paymentObservation.expiresAt, expired: table.paymentObservation.expired } : detail.timer,
     cleaning: { enabled, reason: table.state === "occupied" ? "active_orders" as const : table.state === "unknown" ? "snapshot_unhealthy" as const

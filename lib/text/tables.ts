@@ -1,5 +1,6 @@
 export const tablesText = {
   ko: {
+    paidOrderElapsedHint: "주문 시작부터 영수증 기준시각까지의 경과시간 · 실제 고객 착석시간 확정 아님",
     receiptInfo: "영수증 정보 · 영업일·기준시각 확인",
     menuDetails: "전체 메뉴명·단가 확인", originalMenuName: "원본 메뉴명",
     paidCumulativeReview: "완료 건수 확인 필요 · 수집·조회 상태 또는 결제 자료를 확인해 주세요.",
@@ -44,6 +45,7 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    paidOrderElapsedHint: "Từ lúc mở đơn đến giờ trên hóa đơn · Không xác nhận thời gian khách ngồi",
     receiptInfo: "Thông tin hóa đơn · Ngày kinh doanh và thời gian",
     menuDetails: "Xem tên món đầy đủ và đơn giá", originalMenuName: "Tên món gốc",
     paidCumulativeReview: "Cần kiểm tra số hóa đơn hoàn tất · Hãy kiểm tra cập nhật hoặc dữ liệu thanh toán.",

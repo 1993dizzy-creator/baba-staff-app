@@ -6,7 +6,7 @@ import { useLanguage } from "@/lib/language-context";
 import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
-import { detailTableName, orderElapsedMinutes, preferLatestOverview, verifiedOrderStart } from "@/lib/sales/table-detail-display";
+import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, verifiedOrderStart, verifiedPaidReferenceTime } from "@/lib/sales/table-detail-display";
 import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
 import styles from "./tables.module.css";
 
@@ -107,7 +107,8 @@ export default function TablesPage() {
     : detail ? t.cleaningReasons[detail.cleaning.reason] : detailFailed ? t.historyFailed : t.historyLoading;
   const snapshotStatus = detail?.snapshotStatus ?? data?.snapshotStatus;
   const snapshotAt = detail?.snapshotAt ?? data?.snapshotAt ?? null;
-  const elapsed = tile && data ? orderElapsedMinutes(tile, snapshotAt, data.serverNow, snapshotStatus ?? "") : null;
+  const elapsed = tile && data ? tile.state === "paid" ? paidOrderElapsedMinutes(detail)
+    : orderElapsedMinutes(tile, snapshotAt, data.serverNow, snapshotStatus ?? "") : null;
   const usage = detail?.usage;
   const usageCurrent = !!usage && snapshotStatus === "ok" && usage.snapshotAt === detail?.snapshotAt;
   const usageCount = usageCurrent && usage?.status === "confirmed_order_basis" ? usage.count : null;
@@ -236,12 +237,14 @@ export default function TablesPage() {
       <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>· {areaTables.length}{t.tableCountSuffix}</span></div>
       <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => {
         const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
+        const paidAt = data ? verifiedPaidReferenceTime(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${paidAt ? ` · ${t.receiptBasis} ${clock(paidAt)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
         {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}><span aria-hidden="true">🕒</span> {clock(start)}</time> : null}
+        {paidAt ? <time className={cx(styles.tileStart, styles.tilePaidTime)} dateTime={paidAt} title={t.receiptBasis}><span aria-hidden="true">🕒</span> {clock(paidAt)}</time> : null}
       </button>; })}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
     </section>; })}</div> : null}
@@ -269,7 +272,7 @@ export default function TablesPage() {
         backdropPress.current = false;
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
-        {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
+        {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "paid" && elapsed !== null ? t.paidOrderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
           <span className={styles.stateDot} data-state={snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
           {t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")

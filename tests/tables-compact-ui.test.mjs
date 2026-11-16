@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import * as detailDisplay from '../lib/sales/table-detail-display.ts';
 import * as menuDisplay from '../lib/sales/table-menu-display.ts';
+import {projectTableDetail} from '../lib/sales/table-detail.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
@@ -30,6 +31,23 @@ function render(data, lang, { failed=false, loading=false, selected=null, detail
 }
 
 for(const lang of ['ko','vi']){
+ test(`${lang}: paid tile uses receipt time and detail uses fixed original-order duration, keeping collection clock separate`,()=>{
+  const source=order('paid-65','BAR5',{status:4,orderDate:'2026-11-13T11:55:00Z'}),catalog=babaTableCatalog();
+  const r={id:900,order_id:'paid-65',ref_no:'900',business_date:'2026-11-13',table_name:'BAR5',ref_date:'2026-11-13T13:00:00Z',
+   final_amount:100000,payment_status:3,is_canceled:false,status_changed_at:null};
+  const data=overview({catalog,orders:[source],receipts:[{receiptId:r.id,orderId:r.order_id,businessDate:r.business_date,
+   tableName:r.table_name,paidAt:r.ref_date,paymentStatus:3,isCanceled:false}]}),tile=data.tables.find(t=>t.name==='BAR5');
+  const d=projectTableDetail({table:tile,catalog:catalog.tables,overview:data,orders:[source],receipts:[r],now:new Date(data.serverNow),historyFrom:data.businessDate});
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d}),t=tablesText[lang];
+  const button=html.match(/<button class="tile paid selected".*?<\/button>/s)[0];assert.ok(button.includes('class="tileStart tilePaidTime"'));
+  assert.ok(button.includes('</span> 20:00</time>'));assert.ok(!button.includes('20:30'));
+  const header=html.match(/<header class="header sheetHeader">.*?<\/header>/s)[0];
+  assert.ok(header.includes(`${t.detailStates.paid} · 65${t.minuteShort}`));assert.ok(header.includes(t.paidOrderElapsedHint));
+  assert.ok(header.includes('data-state="paid"'));assert.ok(header.includes('20:30'));assert.ok(!header.includes('20:00'));
+  for(const changed of [{...d,paidUsage:null},{...d,snapshotAt:'2026-11-13T13:31:00Z'}, {...d,table:{...tile,state:'idle'}}]){
+   const hidden=render(data,lang,{selected:{kind:'table',id:tile.id},detail:changed}).match(/<header class="header sheetHeader">.*?<\/header>/s)[0];assert.ok(!hidden.includes(`65${t.minuteShort}`));
+  }
+ });
  test(`${lang}: first loading is a status card without fictitious zero-table sections; background refresh keeps tiles`,()=>{
   const t=tablesText[lang],first=render(null,lang,{loading:true});
   assert.ok(first.includes('<div role="status" class="loadingCard">'));

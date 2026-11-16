@@ -46,6 +46,7 @@
 .tile strong { font-size:12px; font-weight:800; white-space:nowrap; }
 .tileStart { font-size:10px; line-height:14px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tileStart span { font-size:9px; }
+.tilePaidTime { color:#b91c1c; }
 /* Four BAR columns on narrow phones preserve touch targets and two-line labels. */
 @media(max-width:359px) { .barTiles { grid-template-columns:repeat(4,minmax(0,72px)); } }
 .barTiles .tile { padding-inline:1px; }

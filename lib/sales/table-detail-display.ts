@@ -1,6 +1,26 @@
 import type { TableOverview, TableTile } from "./table-overview.ts";
 import { calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
 import { DEFAULT_STALE_AFTER_MS } from "../pos/cukcuk/open-orders-core.ts";
+import type { TableDetail } from "./table-detail.ts";
+
+/** Existing server-verified receipt reference only, never a new payment clock. */
+export function verifiedPaidReferenceTime(table: TableTile, snapshotAt: string | null, serverNow: string, snapshotStatus: string, businessDate: string) {
+  if (table.state !== "paid" || snapshotStatus !== "ok" || !table.lastPaidAt || !/T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(table.lastPaidAt)) return null;
+  const paid = Date.parse(table.lastPaidAt), snapshot = Date.parse(snapshotAt ?? ""), now = Date.parse(serverNow);
+  return [paid, snapshot, now].every(Number.isFinite) && paid <= now && snapshot <= now
+    && calculateStoreBusinessDate(new Date(paid)) === businessDate ? table.lastPaidAt : null;
+}
+
+/** Reject stale detail evidence after a cleaning/context refresh. Fixed at ref_date. */
+export function paidOrderElapsedMinutes(detail: TableDetail | null | undefined) {
+  const usage = detail?.paidUsage, latest = detail?.latest;
+  if (!usage || !latest || detail?.table.state !== "paid" || detail.snapshotStatus !== "ok"
+    || detail.table.orders.some(o => o.verifiedOpen) || !latest.validPaid || latest.canceled || latest.uncertain || latest.link !== "direct"
+    || latest.businessDate !== detail.businessDate || usage.snapshotAt !== detail.snapshotAt || usage.receiptId !== latest.id
+    || usage.referenceAt !== latest.referenceAt || usage.referenceAt !== detail.table.lastPaidAt
+    || !Number.isSafeInteger(usage.minutes) || usage.minutes < 0) return null;
+  return usage.minutes;
+}
 
 /** Display only: earliest verified current order start, not customer seating time. */
 export function verifiedOrderStart(table: TableTile, snapshotAt: string | null, serverNow: string, snapshotStatus: string, businessDate: string) {
