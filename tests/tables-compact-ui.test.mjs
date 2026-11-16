@@ -178,9 +178,32 @@ for(const lang of ['ko','vi']){
    assert.ok(html.includes(`<td title="${names[i]}">${selected}`));
   }
   assert.ok(html.includes('class="menuDisclosure"'));assert.ok(html.includes('class="menuDetails"'));assert.ok(html.includes('class="menuAmounts"'));
-  assert.ok(html.includes(t.originalMenuName));for(const original of names)assert.ok(html.includes(original));
+  assert.ok(!html.includes(t.originalMenuName));assert.ok(!html.includes('fullMenuName'));
+  for(const original of names)assert.ok(html.includes(`<p class="originalMenuName">${original}</p>`));
   for(const amount of [150000,320000,640000,1234567])assert.ok(html.includes(new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount)));
   assert.ok(rows[1][0].includes(t.option));assert.ok(rows[1][0].includes(t.canceled));assert.equal(JSON.stringify({data,d}),before);
+ });
+ test(`${lang}: header dot follows the existing displayed state, with text and safe unknown fallback`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[order('dot','BAR4')]}),tile=data.tables.find(t=>t.name==='BAR4');
+  for(const state of ['occupied','paid','reserved','idle','unknown'])for(const snapshotStatus of ['ok','unavailable']){
+   const d={table:{...tile,state},snapshotAt:data.snapshotAt,snapshotStatus,current:[],latest:null,merges:[],cleaning:{enabled:false,reason:'no_payment'}};
+   const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
+   const shown=snapshotStatus==='ok'?state:'unknown',status=html.match(/<div class="sheetMeta">(.*?)<\/div>/s)[1];
+   assert.ok(status.includes(`class="stateDot" data-state="${shown}" aria-hidden="true"`));
+   assert.ok(status.includes(tablesText[lang].detailStates[shown]));assert.equal((html.match(/class="stateDot"/g)??[]).length,1);
+  }
+ });
+ test(`${lang}: expanded rows only show an unlabeled differing POS name, never repeat an identical name`,()=>{
+  const source=order('original','BAR4'),names=['[D5] Khoai tây chiên / 감자튀김','[E1] French fries','감자튀김'];
+  source.lines=names.map((itemName,i)=>({...source.lines[0],detailId:`original-${i}`,itemName}));
+  const data=overview({catalog:babaTableCatalog(),orders:[source]}),tile=data.tables.find(t=>t.name==='BAR4'),before=JSON.stringify(data);
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id}}),items=[...html.matchAll(/<details class="menuDisclosure">(.*?)<\/details>/gs)];
+  assert.equal(items.length,3);assert.ok(!html.includes(tablesText[lang].originalMenuName));assert.ok(!html.includes('fullMenuName'));
+  assert.ok(items[0][1].includes(`<p class="originalMenuName">${names[0]}</p>`));
+  assert.ok(items[0][1].includes(lang==='ko'?'[D5] 감자튀김':'[D5] Khoai tây chiên'));
+  for(const i of [1,2]){assert.ok(!items[i][1].includes('<p'));assert.equal(items[i][1].split(names[i]).length-1,1);}
+  for(const item of items)assert.ok(item[1].includes('class="menuAmounts"'));
+  assert.equal(JSON.stringify(data),before);
  });
  test(`${lang}: shared receipt cards retain all status combinations and source amounts in latest and daily history`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),tile={...data.tables.find(t=>t.name==='BAR4'),state:'paid'},t=tablesText[lang];

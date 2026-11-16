@@ -158,8 +158,7 @@ export default function TablesPage() {
             <strong className={styles.menuLineAmount}><span className={styles.srOnly}>{t.amount} </span>{money(line.amount)}</strong>
           </summary>
           <div className={styles.menuDetails}>
-            <p className={styles.fullMenuName}>{localizedTableMenuName(line.name, lang) || "—"}</p>
-            {localizedTableMenuName(line.name, lang) !== line.name ? <p>{t.originalMenuName}: {line.name}</p> : null}
+            {localizedTableMenuName(line.name, lang) !== line.name ? <p className={styles.originalMenuName}>{line.name}</p> : null}
             <dl className={styles.menuAmounts}>
               <div><dt>{t.quantity}</dt><dd>{line.quantity}</dd></div><div><dt>{t.price}</dt><dd>{money(line.price)}</dd></div>
               <div><dt>{t.amount}</dt><dd>{money(line.amount)}</dd></div>
@@ -271,6 +270,7 @@ export default function TablesPage() {
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
+          <span className={styles.stateDot} data-state={snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
           {t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
