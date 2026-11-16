@@ -182,4 +182,40 @@ for(const lang of ['ko','vi']){
   for(const amount of [150000,320000,640000,1234567])assert.ok(html.includes(new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount)));
   assert.ok(rows[1][0].includes(t.option));assert.ok(rows[1][0].includes(t.canceled));assert.equal(JSON.stringify({data,d}),before);
  });
+ test(`${lang}: shared receipt cards retain all status combinations and source amounts in latest and daily history`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[]}),tile={...data.tables.find(t=>t.name==='BAR4'),state:'paid'},t=tablesText[lang];
+  const base={id:100,number:'2601007585-12345678901234567890',businessDate:data.businessDate,referenceAt:data.snapshotAt,
+   amount:664400,validPaid:true,canceled:false,reissued:false,uncertain:false,link:'direct',lines:[]};
+  const variants=[{changes:{},labels:[t.validPayment]},
+   {changes:{canceled:true,validPaid:false},labels:[t.canceledPayment]},
+   {changes:{reissued:true,link:'verified_merge'},labels:[t.validPayment,t.reissuedPayment,t.mergedPayment]},
+   {changes:{validPaid:false,uncertain:true,link:'merge_review'},labels:[t.reviewPayment,t.mergedPayment]},
+   {changes:{canceled:true,validPaid:false,uncertain:true,reissued:true,link:'merge_review'},labels:[t.canceledPayment,t.reviewPayment,t.reissuedPayment,t.mergedPayment]}];
+  for(const {changes,labels} of variants){
+   const r={...base,...changes},d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:'ok',latest:r,
+    current:[r,{...r,id:101}],merges:[],cleaning:{enabled:false,reason:'no_payment'}};
+   const before=JSON.stringify({data,d}),html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
+   assert.equal((html.match(/class="receiptTotal"/g)??[]).length,3);assert.equal((html.match(/class="receiptInfo"/g)??[]).length,3);
+   for(const labelsHtml of html.matchAll(/<div class="receiptBadges">(.*?)<\/div>/g)){
+    const actual=[...labelsHtml[1].matchAll(/<span class="[^"]*">([^<]+)<\/span>/g)].map(m=>m[1]);assert.deepEqual(actual,labels);
+   }
+   assert.equal((html.match(/class="receiptBusinessDate"/g)??[]).length,0);
+   assert.ok(html.includes('664.400'));assert.ok(html.includes(base.number));assert.ok(html.includes(`<dt>${t.businessDate}</dt><dd>${data.businessDate}</dd>`));
+   assert.ok(!html.includes('usageHelp'));assert.equal(JSON.stringify({data,d}),before);
+  }
+ });
+ test(`${lang}: receipt day stays accessible across 03:00; another business day stays visible; missing evidence is a dash`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[]});data.businessDate='2026-11-16';
+  const tile={...data.tables.find(t=>t.name==='BAR4'),state:'paid'},t=tablesText[lang];
+  const r={id:100,number:null,businessDate:'2026-11-16',referenceAt:'2026-11-17T02:59:59+07:00',amount:null,
+   validPaid:false,canceled:false,uncertain:true,reissued:false,link:'direct',lines:[]};
+  const d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:'ok',latest:r,current:[r],merges:[],cleaning:{enabled:false,reason:'no_payment'}};
+  const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
+  const total=html.match(/<div class="receiptTotal">(.*?)<\/div>/s)[1];assert.ok(total.includes('—'));assert.ok(total.includes('02:59'));
+  assert.ok(total.includes('dateTime="2026-11-17T02:59:59+07:00"'));assert.ok(html.includes('Asia/Ho_Chi_Minh'));
+  assert.ok(html.includes(`<dd>2026-11-16</dd>`));assert.ok(!html.includes('class="receiptBusinessDate"'));assert.ok(html.includes(`${t.receiptNumber} #100`));
+  r.businessDate='2026-11-15';r.referenceAt=null;
+  const different=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
+  assert.ok(different.includes(`<p class="receiptBusinessDate">${t.businessDate}: 2026-11-15</p>`));assert.ok(!different.includes('dateTime="null"'));
+ });
 }

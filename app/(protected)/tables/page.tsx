@@ -17,8 +17,8 @@ const stateClass: Partial<Record<TableState, string>> = {
 };
 const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(" ");
 const money = (n: number) => new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(n);
-const timestamp = (value: string | null | undefined, lang: string) => value && Number.isFinite(Date.parse(value))
-  ? new Intl.DateTimeFormat(lang === "ko" ? "ko-KR" : "vi-VN", { timeZone: "Asia/Ho_Chi_Minh", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value)) : "—";
+const timestamp = (value: string | null | undefined, lang: string, full = false) => value && Number.isFinite(Date.parse(value))
+  ? new Intl.DateTimeFormat(lang === "ko" ? "ko-KR" : "vi-VN", { timeZone: "Asia/Ho_Chi_Minh", ...(full ? { year: "numeric" as const } : {}), month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value)) : "—";
 const clock = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value))
   ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value)) : "—";
 
@@ -171,14 +171,27 @@ export default function TablesPage() {
     </div>
   </article>;
   const receiptView = (receipt: DetailReceipt) => <article key={receipt.id} className={styles.receipt}>
-    <div className={styles.receiptHeading}><strong>{t.receiptNumber} #{receipt.number ?? receipt.id}</strong>
-      <span>{receipt.canceled ? t.canceledPayment : receipt.validPaid ? t.validPayment : t.reviewPayment}
-        {receipt.reissued ? ` · ${t.reissuedPayment}` : ""}{receipt.link !== "direct" ? ` · ${t.mergedPayment}` : ""}</span></div>
-    <p className={styles.estimate}>{t.finalPaid} <strong>{receipt.amount === null ? "—" : money(receipt.amount)}</strong></p>
-    <dl className={styles.facts}>
-      <div><dt>{t.receiptBasis}</dt><dd>{timestamp(receipt.referenceAt, lang)}</dd></div>
-      <div><dt>{t.businessDate}</dt><dd>{receipt.businessDate}</dd></div>
-    </dl>
+    <div className={styles.receiptHeading}>
+      <details className={styles.receiptInfo}><summary title={t.receiptInfo}>
+        <strong>{t.receiptNumber} #{receipt.number ?? receipt.id}</strong><span aria-hidden="true">⌄</span>
+      </summary><dl className={styles.receiptFacts}>
+        <div><dt>{t.businessDate}</dt><dd>{receipt.businessDate}</dd></div>
+        <div><dt>{t.receiptBasis} · Asia/Ho_Chi_Minh</dt><dd><time dateTime={receipt.referenceAt ?? undefined}>{timestamp(receipt.referenceAt, lang, true)}</time></dd></div>
+      </dl></details>
+      <div className={styles.receiptBadges}>
+        <span className={cx(styles.receiptBadge, receipt.canceled ? styles.receiptCanceled : receipt.validPaid ? styles.receiptValid : styles.receiptReview)}>
+          {receipt.canceled ? t.canceledPayment : receipt.validPaid ? t.validPayment : t.reviewPayment}</span>
+        {(receipt.canceled || receipt.validPaid) && receipt.uncertain ? <span className={cx(styles.receiptBadge, styles.receiptReview)}>{t.reviewPayment}</span> : null}
+        {receipt.reissued ? <span className={styles.receiptBadge}>{t.reissuedPayment}</span> : null}
+        {receipt.link !== "direct" ? <span className={styles.receiptBadge}>{t.mergedPayment}</span> : null}
+      </div>
+    </div>
+    <div className={styles.receiptTotal}>
+      <strong><span className={styles.srOnly}>{t.finalPaid} </span>{receipt.amount === null ? "—" : money(receipt.amount)}</strong>
+      <time dateTime={receipt.referenceAt ?? undefined} title={`${t.receiptBasis} · Asia/Ho_Chi_Minh`}>
+        <span className={styles.srOnly}>{t.receiptBasis} </span>{timestamp(receipt.referenceAt, lang)}</time>
+    </div>
+    {receipt.businessDate !== (detail?.businessDate ?? data?.businessDate) ? <p className={styles.receiptBusinessDate}>{t.businessDate}: {receipt.businessDate}</p> : null}
     {receipt.lines.length ? <details className={styles.receiptMenu}><summary>{t.receiptMenu} ({receipt.lines.length})</summary>
       <table className={styles.lines}><thead><tr><th>{t.menu}</th><th>{t.quantity}</th><th>{t.amount}</th></tr></thead><tbody>
         {receipt.lines.map(line => <tr key={line.id}><td title={line.name}>{localizedTableMenuName(line.name, lang)}{line.canceled ? ` · ${t.canceled}` : ""}</td>
