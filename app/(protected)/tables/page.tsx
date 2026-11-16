@@ -7,7 +7,6 @@ import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, preferLatestOverview, verifiedOrderStart } from "@/lib/sales/table-detail-display";
-import { compactOrderAmount, verifiedCurrentOrderAmount } from "@/lib/sales/table-tile-amount";
 import styles from "./tables.module.css";
 
 // One class per state colors the whole tile, the legend swatch and the sheet badge alike.
@@ -42,6 +41,7 @@ export default function TablesPage() {
     const controller = new AbortController();
     request.current = controller;
     setLoading(true);
+    setFailed(false);
     try {
       const response = await fetch("/api/tables", { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) });
       if (response.status === 401 || response.status === 403) {
@@ -190,7 +190,9 @@ export default function TablesPage() {
         </svg>
       </button>
     </header>
-    {loading && !data ? <p role="status" className={styles.notice}>{t.loading}</p> : null}
+    {loading && !data ? <div role="status" className={styles.loadingCard}>
+      <span className={styles.spinner} aria-hidden="true" /><span>{t.loading}</span>
+    </div> : null}
     {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
     {data && data.summary.paidCumulative == null ? <p className={styles.cumulativeReview}>{t.paidCumulativeReview}</p> : null}
     <div className={styles.statusRow}>
@@ -202,23 +204,21 @@ export default function TablesPage() {
       </span>)}</div>
       {diagnostic ? <p role="status" className={styles.diagnostic}>{diagnostic}</p> : null}
     </div>
-    <div className={styles.areas}>{areas.map(area => {
+    {data ? <div className={styles.areas}>{areas.map(area => {
       const areaTables = data?.tables.filter(item => item.area === area) ?? [];
       return <section key={area} className={styles.area}>
       <div className={styles.areaHeader}><h2>{areaName(area)}</h2><span>· {areaTables.length}{t.tableCountSuffix}</span></div>
       <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => {
         const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
-        const amount = data ? verifiedCurrentOrderAmount(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${amount !== null ? ` · ${t.currentOrderAmount} ${money(amount)}` : ""}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
         {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}><span aria-hidden="true">🕒</span> {clock(start)}</time> : null}
-        {amount !== null ? <span className={styles.tileAmount} aria-hidden="true" title={`${t.currentOrderAmount}: ${money(amount)} · ${t.compactAmountHint}`}>{compactOrderAmount(amount)}</span> : null}
       </button>; })}</div>
       {!areaTables.length ? <p className={styles.muted}>{t.noArea}</p> : null}
-    </section>; })}</div>
+    </section>; })}</div> : null}
     {data && data.unlinked.length > 0 ? <details className={styles.unlinked}><summary>{t.unlinked} ({data.unlinked.length})</summary>
       {data.unlinked.map(order => <button key={order.id} onClick={() => setSelected({ kind: "order", id: order.id })}>
         {order.tableName?.trim().toUpperCase() === "BAR" ? t.barUnlinked : order.tableName || t.unknown} · {t.order} {order.number ?? "—"}</button>)}
@@ -243,7 +243,6 @@ export default function TablesPage() {
         backdropPress.current = false;
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
-        {tile ? <p className={styles.usageCount}>{t.todayUsage.replace("{count}", usageCount === null ? "—" : String(usageCount))}</p> : null}
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
           {t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
@@ -256,7 +255,7 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning}>{compactWarning}</p> : null}
-      {tile ? <p className={styles.usageHelp}>
+      {tile && tile.state !== "idle" ? <p className={styles.usageHelp}>
         {usageCount === null ? `${usageCurrent && usage?.status === "review" ? t.usageReview : t.usageUnavailable} · ` : ""}
         {usageCurrent && usage && usage.verifiedOrderCount > 0 ? `${t.verifiedOrders.replace("{count}", String(usage.verifiedOrderCount))} · ` : ""}{t.usageBasis}
       </p> : null}
@@ -264,13 +263,16 @@ export default function TablesPage() {
         {tile.paymentObservation.expired ? t.automaticallyRetired : <>{t.paymentObserved} {clock(tile.paymentObservation.firstVerifiedAt)}
           {" · "}{t.automaticUntil} {clock(tile.paymentObservation.expiresAt)}</>}
       </p> : null}
-      {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={styles.emptyOrder} title={t.noOrders}>🍽️ {t.noCurrentOrders}</p>
+      {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
+        <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}
           {retainedOrders.length ? <details className={styles.detailSection}><summary>{t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
       {tile ? <>
         {tile.state === "paid" && !detail && !detailFailed ? <p role="status" className={styles.muted}>{t.historyLoading}</p> : null}
-        {detail?.latest ? <section className={styles.detailSection}><h3>🧾 {tile.state === "occupied" ? t.pastPayment : t.latestPayment}</h3>
+        {detail?.latest ? <section className={styles.detailSection}><h3>🧾 {tile.state === "occupied" ? t.pastPayment : t.latestPayment}
+          {usageCount !== null && Number.isSafeInteger(usageCount) && usageCount >= 2
+            ? <span className={styles.usageCount}> · {t.todayUsage.replace("{count}", String(usageCount))}</span> : null}</h3>
           {receiptView(detail.latest)}
           {tile.state === "paid" && !detail.merges.length ? <p className={styles.paymentSafety}>{t.completionEvidence}</p> : null}
         </section> : null}

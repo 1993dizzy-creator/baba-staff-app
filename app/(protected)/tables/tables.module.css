@@ -27,22 +27,25 @@
 .statusDetails p { margin:4px 0; overflow-wrap:anywhere; }
 .muted { color:#6b7280; font-size:11px; line-height:1.45; margin:5px 0; overflow-wrap:anywhere; }
 .notice { border:1px solid #e5e7eb; border-radius:10px; background:#f3f4f6; padding:9px 10px; color:#4b5563; line-height:1.45; }
+.loadingCard { display:flex; align-items:center; gap:10px; margin-top:10px; border:1px solid #e5e7eb; border-radius:10px; background:#f3f4f6; padding:14px 12px; color:#4b5563; }
+.spinner { width:18px; height:18px; flex:0 0 18px; border:2px solid #cbd5e1; border-top-color:#475569; border-radius:50%; animation:tableLoading .8s linear infinite; }
+@keyframes tableLoading { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .spinner { animation:none; } }
 .statusRow { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 8px; margin-top:7px; }
 .legend { display:flex; flex-wrap:wrap; justify-content:flex-start; flex:0 0 auto; max-width:100%; gap:4px 12px; padding:0 2px; color:#374151; font-size:10.5px; line-height:1.4; }
 .legend > span { display:inline-flex; gap:5px; align-items:center; }
 .swatch { width:12px; height:12px; border:1.5px solid #e5e7eb; border-radius:3px; display:inline-block; flex-shrink:0; background:#fff; }
 .areas { display:grid; gap:6px; margin-top:8px; }
-.area { border:1px solid #e5e7eb; border-radius:10px; padding:8px 6px; min-width:0; background:#f5f7fa; }
+.area { border:1px solid #e5e7eb; border-radius:10px; padding:7px 6px; min-width:0; background:#f5f7fa; }
 .areaHeader { display:flex; align-items:baseline; justify-content:flex-start; gap:4px; margin:0 2px 6px; line-height:16px; }
 .areaHeader h2 { font-size:12px; font-weight:800; margin:0; }
 .areaHeader span { font-size:11px; font-weight:600; color:#6b7280; }
 .tiles { display:grid; grid-template-columns:repeat(4,minmax(0,72px)); justify-content:center; gap:4px; }
 .barTiles { grid-template-columns:repeat(6,minmax(0,60px)); }
-.tile { position:relative; min-height:74px; height:74px; min-width:44px; border:1.5px solid #e5e7eb; background:#fff; color:#111827; border-radius:7px; padding:3px; display:flex; flex-direction:column; gap:1px; align-items:center; justify-content:center; }
+.tile { position:relative; min-height:60px; height:60px; min-width:44px; border:1.5px solid #e5e7eb; background:#fff; color:#111827; border-radius:7px; padding:4px 3px; display:flex; flex-direction:column; gap:1px; align-items:center; justify-content:center; }
 .tile strong { font-size:12px; font-weight:800; white-space:nowrap; }
 .tileStart { font-size:10px; line-height:14px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tileStart span { font-size:9px; }
-.tileAmount { font-size:9px; line-height:13px; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* Four BAR columns on narrow phones preserve touch targets and two-line labels. */
 @media(max-width:359px) { .barTiles { grid-template-columns:repeat(4,minmax(0,72px)); } }
 .barTiles .tile { padding-inline:1px; }
@@ -58,7 +61,7 @@
 .sheetHeader { position:sticky; top:0; z-index:1; background:#111827; color:#fff; padding:12px; margin:0 -12px 12px; border:0; border-radius:18px 18px 0 0; align-items:flex-start; }
 .sheetTitle { display:flex; flex-direction:column; align-items:flex-start; gap:5px; min-width:0; flex:1; }
 .sheetTitle h2 { font-weight:800; }
-.sheetTitle .usageCount { margin:0; font-size:11px; color:#dbeafe; overflow-wrap:anywhere; }
+.usageCount { font-size:12px; font-weight:600; color:#4b5563; overflow-wrap:anywhere; }
 .usageHelp { color:#6b7280; margin:0 0 12px; overflow-wrap:anywhere; }
 .sheetMeta { display:flex; align-items:center; flex-wrap:wrap; gap:4px 8px; font-size:12px; color:#f3f4f6; }
 .detailState { overflow-wrap:anywhere; }
@@ -70,6 +73,7 @@
 .header .closeButton { font-size:28px; line-height:1; }
 .compactWarning { margin:8px 0 12px; padding:8px 10px; color:#92400e; background:#fffbeb; border-radius:8px; overflow-wrap:anywhere; }
 .emptyOrder { margin:16px 0 0; }
+.sheet .idleEmpty { display:flex; align-items:center; justify-content:center; gap:6px; margin:22px 0; font-size:15px; font-weight:700; text-align:center; }
 .detailSection { margin-top:16px; padding-top:14px; border-top:1px solid #e5e7eb; }
 .sheet > .detailSection:first-of-type { margin-top:0; padding-top:8px; border-top:0; }
 .detailSection .order:first-of-type { margin-top:8px; padding-top:0; border-top:0; }

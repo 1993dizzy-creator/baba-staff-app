@@ -45,7 +45,7 @@ export const tablesText = {
     paidCumulativeReview: "Cần kiểm tra số hóa đơn hoàn tất · Hãy kiểm tra cập nhật hoặc dữ liệu thanh toán.",
     paidCumulativeHelp: "Số hóa đơn đã thanh toán hợp lệ trong ngày kinh doanh · Không phải số bàn hay lượt khách",
     currentOrderAmount: "Tổng tạm tính của đơn đang mở", compactAmountHint: "Rút gọn VND · ≈ là lược bớt đơn vị nhỏ · Xem số tiền chính xác trong chi tiết",
-    todayUsage: "Số lượt sử dụng hôm nay: {count}", usageBasis: "Theo nhóm đơn đã xác minh · Có thể khác số lượt khách thực tế.",
+    todayUsage: "Đã sử dụng {count} lượt hôm nay", usageBasis: "Theo nhóm đơn đã xác minh · Có thể khác số lượt khách thực tế.",
     usageReview: "Cần kiểm tra số lượt sử dụng", usageUnavailable: "Chưa đủ dữ liệu đơn đã xác minh", verifiedOrders: "{count} đơn đã xác minh",
     orderNumberMissing: "Chưa rõ số đơn", orderStartedHint: "Giờ mở đơn hiện tại đã xác minh · Không phải giờ khách ngồi",
     paymentObserved: "Ghi nhận thanh toán lần đầu", automaticUntil: "Về trạng thái thường", automaticallyRetired: "Đã qua 30 phút · Trạng thái thường",
