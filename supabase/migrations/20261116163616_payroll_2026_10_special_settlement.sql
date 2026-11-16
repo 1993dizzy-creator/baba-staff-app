@@ -14,8 +14,11 @@
 --      allocations and re-projects every group the payment touched.
 --   6. payroll_refresh_payment_tax_totals_v1 (same signature): company cost also
 --      includes the batch's residuals (zero for every batch without residuals).
---   7. payroll_settle_2026_10_v1: Owner-only, payroll month 2026-10 only, atomic
---      multi-employee settlement through the existing payroll_pay_employee_v2 path.
+--   7. payroll_settle_2026_10_v1: payroll managers (owner/master via
+--      payroll_assert_actor_v2), payroll month 2026-10 only, exactly 17 employees
+--      in ONE atomic call through the existing payroll_pay_employee_v2 path. Any
+--      result other than completed 17/17 with exact cash groups rolls back.
+--      Completed batches stay non-cancellable (existing payroll_cancel_* rule).
 -- Personal payroll amounts are NOT in this file; they arrive as RPC arguments.
 begin;
 
@@ -501,6 +504,70 @@ begin
 end;
 $$;
 
+-- Read-only proof of the completed 2026-10 settlement. Returns null when the
+-- batch, 17/17 payments, cash groups, movements and company cost all agree;
+-- otherwise the first mismatch name. Used on first execution and on replay.
+create or replace function public.payroll_settle_2026_10_final_state_v1(
+  p_month date,
+  p_expected_groups jsonb,
+  p_run_id bigint,
+  p_paid_total bigint,
+  p_cost_total bigint
+) returns text
+language plpgsql stable security definer set search_path=pg_catalog,public as $$
+declare
+  c_employee_count constant integer := 17;
+  v_run public.payroll_payment_batches%rowtype;
+  v_prefix text := 'payroll-payment-group:' || to_char(p_month, 'YYYY-MM') || ':';
+  v_active jsonb;
+  v_active_count integer;
+  v_expected jsonb;
+  v_expected_total numeric;
+  v_residual numeric;
+begin
+  select * into v_run from public.payroll_payment_batches where payroll_month = p_month;
+  if v_run.id is null or v_run.id is distinct from p_run_id then return 'batch'; end if;
+  if v_run.status <> 'completed' or v_run.paid_employee_count <> c_employee_count or v_run.target_employee_count <> c_employee_count
+     or (select count(*) from public.payroll_employee_payments where payroll_batch_id = v_run.id and payment_status = 'paid') <> c_employee_count then
+    return 'completion';
+  end if;
+  if p_paid_total is null or v_run.actual_paid_total <> p_paid_total then return 'paid_total'; end if;
+  if p_cost_total is null or v_run.actual_company_cost_total <> p_cost_total then return 'company_cost_total'; end if;
+
+  select coalesce(jsonb_object_agg(t.source_snapshot->>'groupKey', t.amount), '{}'::jsonb), count(*)::integer
+  into v_active, v_active_count
+  from public.ledger_transactions t
+  where t.source_type = 'payroll_payment_group' and t.status = 'confirmed'
+    and t.source_snapshot->>'groupKey' like v_prefix || '%'
+    and not exists (select 1 from public.ledger_transactions r
+      where r.correction_of_id = t.id and r.source_type = 'payroll_payment_group_reversal');
+  select coalesce(jsonb_object_agg(v_prefix || (e->>'paymentDate') || ':' || (e->>'fundAccountId'), (e->>'amount')::numeric), '{}'::jsonb),
+    coalesce(sum((e->>'amount')::numeric), 0)
+  into v_expected, v_expected_total
+  from jsonb_array_elements(p_expected_groups) e;
+  if v_active_count <> jsonb_array_length(p_expected_groups) or v_active <> v_expected then return 'cash_groups'; end if;
+  if exists (
+    select 1 from public.ledger_transactions t
+    where t.source_type = 'payroll_payment_group' and t.status = 'confirmed'
+      and t.source_snapshot->>'groupKey' like v_prefix || '%'
+      and not exists (select 1 from public.ledger_transactions r
+        where r.correction_of_id = t.id and r.source_type = 'payroll_payment_group_reversal')
+      and ((select count(*) from public.ledger_movements m where m.transaction_id = t.id) <> 1
+        or not exists (select 1 from public.ledger_movements m where m.transaction_id = t.id
+          and m.fund_account_id = (t.source_snapshot->>'fundAccountId')::bigint and m.amount = -t.amount))
+  ) then return 'movements'; end if;
+  select coalesce(sum(amount), 0) into v_residual from public.payroll_payment_group_residuals where payroll_batch_id = v_run.id;
+  if v_expected_total <> p_paid_total + v_residual then return 'cash_total'; end if;
+  if (select count(*) from public.ledger_transactions t
+      where t.source_type = 'payroll_completed_batch' and t.status = 'confirmed'
+        and t.source_key = 'payroll-batch:' || v_run.id || ':company-cost'
+        and t.amount = v_run.actual_company_cost_total and t.recognition_month = p_month) <> 1 then
+    return 'company_cost_transaction';
+  end if;
+  return null;
+end;
+$$;
+
 create or replace function public.payroll_settle_2026_10_v1(
   p_month date,
   p_targets jsonb,
@@ -538,17 +605,14 @@ declare
   v_result jsonb;
   v_group_key text;
   v_group_amount numeric;
-  v_residual_id bigint;
-  v_residual_amount bigint;
+  c_employee_count constant integer := 17;
+  v_mismatch text;
   v_residual_ids bigint[] := '{}'::bigint[];
   v_new_id bigint;
   g record;
 begin
+  -- Same payroll-manager policy as every payroll RPC (active owner or master).
   perform public.payroll_assert_actor_v2(p_actor_user_id);
-  perform 1 from public.users where id = p_actor_user_id and is_active = true and lower(role::text) = 'owner';
-  if not found then
-    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_OWNER_REQUIRED' using errcode = '42501';
-  end if;
   if p_month is distinct from date '2026-10-01' then
     raise exception 'PAYROLL_SPECIAL_SETTLEMENT_MONTH_NOT_ALLOWED' using errcode = '22023';
   end if;
@@ -638,16 +702,41 @@ begin
   ) then
     raise exception 'PAYROLL_SPECIAL_SETTLEMENT_GROUP_UNDECLARED' using errcode = '22023';
   end if;
+  -- Exactly the 17-person roster, every one payable, every one paid in this single call.
+  if jsonb_typeof(p_targets) is distinct from 'array'
+     or jsonb_array_length(p_targets) <> c_employee_count
+     or jsonb_array_length(p_payments) <> c_employee_count
+     or exists (select 1 from jsonb_array_elements(p_targets) t
+       where jsonb_typeof(t) is distinct from 'object'
+         or coalesce(t->>'userId', '') !~ '^[1-9][0-9]{0,15}$'
+         or (t->>'isPayable') is distinct from 'true'
+         or jsonb_typeof(t->'failureCodes') is distinct from 'array'
+         or jsonb_array_length(t->'failureCodes') > 0)
+     or (select array_agg(x order by x) from (select (t->>'userId')::bigint x from jsonb_array_elements(p_targets) t
+         where coalesce(t->>'userId', '') ~ '^[1-9][0-9]{0,15}$') q)
+        is distinct from (select array_agg(x order by x) from unnest(v_user_ids) x) then
+    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_SCOPE_MISMATCH' using errcode = '22023';
+  end if;
 
   perform public.payroll_lock_months_v1(array[p_month] || v_dates);
 
-  -- Idempotent replay: the same request key returns the recorded result only.
+  -- Idempotent replay: same key + same request/plan hash, and the recorded
+  -- final state must still hold. Nothing is written on replay.
   select * into v_existing from public.payroll_special_settlement_requests where request_key = p_request_key;
   if found then
-    if v_existing.request_hash = p_request_hash and v_existing.payroll_month = p_month then
-      return v_existing.result || jsonb_build_object('replayed', true);
+    if v_existing.request_hash <> p_request_hash or v_existing.plan_hash <> p_plan_hash or v_existing.payroll_month <> p_month then
+      raise exception 'PAYROLL_SPECIAL_SETTLEMENT_REQUEST_CONFLICT' using errcode = '23505';
     end if;
-    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_REQUEST_CONFLICT' using errcode = '23505';
+    v_mismatch := public.payroll_settle_2026_10_final_state_v1(p_month, p_expected_groups,
+      (v_existing.result->>'runId')::bigint, (v_existing.result->>'actualPaidTotal')::bigint, (v_existing.result->>'actualCompanyCostTotal')::bigint);
+    if v_mismatch is not null then
+      raise exception 'PAYROLL_SPECIAL_SETTLEMENT_REPLAY_STATE_MISMATCH:%', v_mismatch using errcode = '55000';
+    end if;
+    return v_existing.result || jsonb_build_object('replayed', true);
+  end if;
+  -- One atomic execution only: an existing batch means the month is already settled.
+  if exists (select 1 from public.payroll_payment_batches where payroll_month = p_month) then
+    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_BATCH_EXISTS' using errcode = '23505';
   end if;
 
   -- Each employee goes through the existing approval path (hash, roster,
@@ -681,22 +770,13 @@ begin
       'allocationCount', jsonb_array_length(v_payment->'allocations')));
   end loop;
 
-  -- Batch residuals: identical re-submission is a no-op; a different one is rejected.
+  -- Batch residuals (the batch was created in this call; duplicates violate the unique key).
   for v_item in select value from jsonb_array_elements(p_residuals) loop
-    select r.id, r.amount into v_residual_id, v_residual_amount from public.payroll_payment_group_residuals r
-      where r.payroll_batch_id = v_run_id and r.payment_date = (v_item->>'paymentDate')::date
-        and r.fund_account_id = (v_item->>'fundAccountId')::bigint;
-    if v_residual_id is not null then
-      if v_residual_amount <> (v_item->>'amount')::bigint then
-        raise exception 'PAYROLL_SPECIAL_SETTLEMENT_RESIDUAL_CONFLICT' using errcode = '23505';
-      end if;
-    else
-      insert into public.payroll_payment_group_residuals(payroll_batch_id, payment_date, fund_account_id, amount, reason, request_key, created_by)
-      values (v_run_id, (v_item->>'paymentDate')::date, (v_item->>'fundAccountId')::bigint,
-        (v_item->>'amount')::bigint, btrim(v_item->>'reason'), p_request_key, p_actor_user_id)
-      returning id into v_new_id;
-      v_residual_ids := v_residual_ids || v_new_id;
-    end if;
+    insert into public.payroll_payment_group_residuals(payroll_batch_id, payment_date, fund_account_id, amount, reason, request_key, created_by)
+    values (v_run_id, (v_item->>'paymentDate')::date, (v_item->>'fundAccountId')::bigint,
+      (v_item->>'amount')::bigint, btrim(v_item->>'reason'), p_request_key, p_actor_user_id)
+    returning id into v_new_id;
+    v_residual_ids := v_residual_ids || v_new_id;
   end loop;
   perform public.payroll_refresh_payment_tax_totals_v1(v_run_id);
 
@@ -716,30 +796,43 @@ begin
   end loop;
 
   select * into v_run from public.payroll_payment_batches where id = v_run_id;
+  if v_run.status is distinct from 'completed' or v_run.paid_employee_count <> c_employee_count
+     or v_run.target_employee_count <> c_employee_count then
+    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_NOT_COMPLETE:%:%/%', v_run.status, v_run.paid_employee_count, v_run.target_employee_count using errcode = '55000';
+  end if;
 
-  -- Final cash groups must equal the declared outflows exactly once complete;
-  -- while partially paid they may never exceed them.
-  for v_item in select value from jsonb_array_elements(p_expected_groups) loop
-    v_group_key := 'payroll-payment-group:' || to_char(p_month, 'YYYY-MM') || ':' || (v_item->>'paymentDate') || ':' || (v_item->>'fundAccountId');
-    select t.amount into v_group_amount
-    from public.ledger_transactions t
-    where t.source_type = 'payroll_payment_group' and t.status = 'confirmed'
-      and t.source_snapshot->>'groupKey' = v_group_key
-      and not exists (select 1 from public.ledger_transactions r
-        where r.correction_of_id = t.id and r.source_type = 'payroll_payment_group_reversal')
-    order by t.id desc limit 1;
-    if (v_run.status = 'completed' and coalesce(v_group_amount, 0) <> (v_item->>'amount')::numeric)
-       or coalesce(v_group_amount, 0) > (v_item->>'amount')::numeric then
-      raise exception 'PAYROLL_SPECIAL_SETTLEMENT_GROUP_MISMATCH:%:%', v_group_key, coalesce(v_group_amount, 0) using errcode = '55000';
+  -- Every stored payment must equal what this request recorded.
+  for v_payment in select value from jsonb_array_elements(p_payments) loop
+    select a into v_primary from jsonb_array_elements(v_payment->'allocations') a where a->>'kind' = 'salary';
+    if not exists (
+      select 1 from public.payroll_employee_payments p
+      where p.payroll_batch_id = v_run_id and p.user_id = (v_payment->>'userId')::bigint and p.payment_status = 'paid'
+        and p.actual_paid_amount = (v_payment->>'actualPaidAmount')::bigint
+        and p.calculated_net_amount = (v_payment->>'calculatedNetAmount')::bigint
+        and p.calculation_hash = v_payment->>'calculationHash'
+        and p.payment_date = (v_primary->>'paymentDate')::date
+        and p.fund_account_id = (v_primary->>'fundAccountId')::bigint
+        and (jsonb_array_length(v_payment->'allocations') = 1
+          and not exists (select 1 from public.payroll_employee_payment_allocations a where a.employee_payment_id = p.id)
+          or jsonb_array_length(v_payment->'allocations') > 1
+          and (select count(*) from public.payroll_employee_payment_allocations a where a.employee_payment_id = p.id and a.status = 'active') = jsonb_array_length(v_payment->'allocations')
+          and (select sum(a.amount) from public.payroll_employee_payment_allocations a where a.employee_payment_id = p.id and a.status = 'active') = p.actual_paid_amount)
+    ) then
+      raise exception 'PAYROLL_SPECIAL_SETTLEMENT_PAYMENT_MISMATCH:%', v_payment->>'userId' using errcode = '55000';
     end if;
   end loop;
 
-  if v_run.status = 'completed' then
-    v_company_cost := public.ledger_sync_payroll_batch_company_cost_v1(v_run_id, p_actor_user_id);
-    v_status := coalesce(v_company_cost->>'status', '');
-    if v_status not in ('created', 'updated', 'unchanged', 'drift') then
-      raise exception 'PAYROLL_COMPANY_COST_SYNC_FAILED:%', v_status using errcode = '55000';
-    end if;
+  v_company_cost := public.ledger_sync_payroll_batch_company_cost_v1(v_run_id, p_actor_user_id);
+  v_status := coalesce(v_company_cost->>'status', '');
+  if v_status <> 'created' then
+    raise exception 'PAYROLL_COMPANY_COST_SYNC_FAILED:%', v_status using errcode = '55000';
+  end if;
+  select * into v_run from public.payroll_payment_batches where id = v_run_id;
+
+  v_mismatch := public.payroll_settle_2026_10_final_state_v1(p_month, p_expected_groups, v_run_id,
+    (select sum((p->>'actualPaidAmount')::bigint) from jsonb_array_elements(p_payments) p)::bigint, v_run.actual_company_cost_total);
+  if v_mismatch is not null then
+    raise exception 'PAYROLL_SPECIAL_SETTLEMENT_GROUP_MISMATCH:%', v_mismatch using errcode = '55000';
   end if;
 
   v_result := jsonb_build_object(
@@ -771,6 +864,7 @@ revoke all on function public.payroll_refresh_payment_tax_totals_v1(bigint) from
 revoke all on function public.ledger_project_payroll_payment_group_v1(date,date,bigint,bigint) from public, anon, authenticated;
 revoke all on function public.payroll_cancel_employee_payment_v3(bigint,bigint,text,bigint) from public, anon, authenticated;
 revoke all on function public.payroll_settle_2026_10_v1(date,jsonb,jsonb,jsonb,jsonb,text,text,text,bigint,text,jsonb,bigint) from public, anon, authenticated;
+revoke all on function public.payroll_settle_2026_10_final_state_v1(date,jsonb,bigint,bigint,bigint) from public, anon, authenticated, service_role;
 grant execute on function public.ledger_project_payroll_payment_group_v1(date,date,bigint,bigint) to service_role;
 grant execute on function public.payroll_cancel_employee_payment_v3(bigint,bigint,text,bigint) to service_role;
 grant execute on function public.payroll_settle_2026_10_v1(date,jsonb,jsonb,jsonb,jsonb,text,text,text,bigint,text,jsonb,bigint) to service_role;

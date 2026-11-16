@@ -6,7 +6,8 @@ import LoadingState from "@/components/LoadingState";
 import { useLanguage } from "@/lib/language-context";
 import { formatVnd } from "@/lib/payroll/payroll-page-money";
 
-// 2026-10 special settlement (Owner only). Records the accountant-corrected payroll
+// 2026-10 special settlement (payroll managers: owner/master, via the payroll layout
+// and API permission check). Records the accountant-corrected payroll
 // that was ALREADY paid on 11/10 (bank + cash) and 11/14 (cash). No money is sent.
 type Allocation = { paymentDate: string; fundAccountId: number; amount: number; kind: "salary" | "penalty_refund"; note: string | null };
 type Row = { userId: number; employeeName: string; calculatedNetAmount: number | null; actualPaidAmount: number; differenceAmount: number | null; differenceReason: string | null; allocations: Allocation[]; paymentStatus: "unpaid" | "paid"; isPayable: boolean; failureCodes: string[] };

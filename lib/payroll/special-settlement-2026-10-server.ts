@@ -74,7 +74,10 @@ export async function loadSettlementContext() {
 export async function executeSettlement(input: { actorUserId: number; previewToken: string; requestKey: string }) {
   const context = await loadSettlementContext();
   const { plan, planHash, overview, targets, snapshots, preview } = context;
-  if (context.batch?.status === "completed") throw new SettlementError("PAYROLL_BATCH_COMPLETED", 409);
+  // Every check below runs on a fresh server-side recalculation of ALL roster
+  // employees (overview → preflight → snapshot → hash). Nothing calculated by
+  // the client is trusted; the client only proves which preview it confirmed.
+  if (context.batch) throw new SettlementError(context.batch.status === "completed" ? "PAYROLL_BATCH_COMPLETED" : "PAYROLL_SPECIAL_SETTLEMENT_BATCH_EXISTS", 409);
   if (preview.blockers.length) throw new SettlementError("SETTLEMENT_BLOCKED", 409, { blockers: preview.blockers });
   if (preview.previewToken !== input.previewToken) throw new SettlementError("PAYROLL_CALCULATION_STALE", 409);
   const planByUser = new Map(plan.employees.map(employee => [employee.userId, employee]));
@@ -98,8 +101,9 @@ export async function executeSettlement(input: { actorUserId: number; previewTok
   return data as Record<string, unknown>;
 }
 
-const KNOWN_CODES = ["PAYROLL_SPECIAL_SETTLEMENT_OWNER_REQUIRED", "PAYROLL_SPECIAL_SETTLEMENT_MONTH_NOT_ALLOWED", "PAYROLL_SPECIAL_SETTLEMENT_REQUEST_CONFLICT",
-  "PAYROLL_SPECIAL_SETTLEMENT_RESIDUAL_CONFLICT", "PAYROLL_SPECIAL_SETTLEMENT_GROUP_MISMATCH", "PAYROLL_SPECIAL_SETTLEMENT_GROUP_UNDECLARED",
+const KNOWN_CODES = ["PAYROLL_SPECIAL_SETTLEMENT_MONTH_NOT_ALLOWED", "PAYROLL_SPECIAL_SETTLEMENT_REQUEST_CONFLICT",
+  "PAYROLL_SPECIAL_SETTLEMENT_REPLAY_STATE_MISMATCH", "PAYROLL_SPECIAL_SETTLEMENT_SCOPE_MISMATCH", "PAYROLL_SPECIAL_SETTLEMENT_BATCH_EXISTS",
+  "PAYROLL_SPECIAL_SETTLEMENT_NOT_COMPLETE", "PAYROLL_SPECIAL_SETTLEMENT_PAYMENT_MISMATCH", "PAYROLL_SPECIAL_SETTLEMENT_GROUP_MISMATCH", "PAYROLL_SPECIAL_SETTLEMENT_GROUP_UNDECLARED",
   "PAYROLL_SPECIAL_SETTLEMENT_ALLOCATION_MISMATCH", "PAYROLL_LEDGER_PROJECTION_FAILED", "PAYROLL_COMPANY_COST_SYNC_FAILED", "PAYROLL_EMPLOYEE_ALREADY_PAID",
   "PAYROLL_BATCH_COMPLETED", "PAYROLL_BATCH_TARGET_MISMATCH", "PAYROLL_BATCH_PREFLIGHT_FAILED", "PAYROLL_FUND_ACCOUNT_INVALID", "FIRST_MONTH_POLICY_REVIEW_REQUIRED",
   "PAYROLL_PAYMENT_REASON_REQUIRED", "PAYROLL_INVALID_PAYMENT_REQUEST", "PAYROLL_FORBIDDEN"];
@@ -107,7 +111,7 @@ export function settlementErrorCode(message: string) { return KNOWN_CODES.find(c
 function settlementErrorStatus(message: string) {
   const code = settlementErrorCode(message);
   if (code === "PAYROLL_SPECIAL_SETTLEMENT_FAILED" || code === "PAYROLL_COMPANY_COST_SYNC_FAILED") return 500;
-  if (code.endsWith("OWNER_REQUIRED") || code === "PAYROLL_FORBIDDEN") return 403;
-  if (code === "PAYROLL_INVALID_PAYMENT_REQUEST" || code === "PAYROLL_FUND_ACCOUNT_INVALID" || code.endsWith("ALLOCATION_MISMATCH") || code.endsWith("GROUP_UNDECLARED")) return 400;
+  if (code === "PAYROLL_FORBIDDEN") return 403;
+  if (code === "PAYROLL_INVALID_PAYMENT_REQUEST" || code === "PAYROLL_FUND_ACCOUNT_INVALID" || code.endsWith("ALLOCATION_MISMATCH") || code.endsWith("GROUP_UNDECLARED") || code.endsWith("SCOPE_MISMATCH")) return 400;
   return 409;
 }

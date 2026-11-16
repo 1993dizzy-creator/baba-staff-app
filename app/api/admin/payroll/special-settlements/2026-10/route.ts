@@ -5,13 +5,8 @@ import { validSettlementRequestKey } from "@/lib/payroll/special-settlement-2026
 export const dynamic = "force-dynamic";
 
 // 2026-10 only: records the accountant-corrected payroll that was ALREADY paid
-// (11/10 bank + cash, 11/14 cash). Owner only. Nothing here sends money.
-async function requireOwner() {
-  const auth = await requirePayrollActor();
-  if (auth.response || !auth.actor) return { actor: null, response: auth.response };
-  if (auth.actor.role !== "owner") return { actor: null, response: payrollJson({ ok: false, code: "OWNER_REQUIRED" }, 403) };
-  return { actor: auth.actor, response: null };
-}
+// (11/10 bank + cash, 11/14 cash). Payroll managers (owner/master) via the
+// common payroll permission check. Nothing here sends money.
 function failure(error: unknown) {
   if (error instanceof SettlementError) return payrollJson({ ok: false, code: error.code, ...(error.detail ?? {}) }, error.status);
   console.error("[PAYROLL_SPECIAL_SETTLEMENT_FAILED]", error);
@@ -19,7 +14,7 @@ function failure(error: unknown) {
 }
 
 export async function GET() {
-  const auth = await requireOwner(); if (!auth.actor) return auth.response;
+  const auth = await requirePayrollActor(); if (auth.response || !auth.actor) return auth.response;
   try {
     const { planHash, batch, preview } = await loadSettlementContext();
     return payrollJson({ ok: true, month: "2026-10", planHash, batch, ...preview });
@@ -27,7 +22,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireOwner(); if (!auth.actor) return auth.response;
+  const auth = await requirePayrollActor(); if (auth.response || !auth.actor) return auth.response;
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const previewToken = typeof body?.previewToken === "string" && /^[0-9a-f]{64}$/.test(body.previewToken) ? body.previewToken : null;
   const requestKey = validSettlementRequestKey(body?.requestKey) ? body!.requestKey as string : null;

@@ -10,6 +10,8 @@ import { stablePayrollSourceHash } from "./source-export/stable-hash.ts";
 export const SPECIAL_SETTLEMENT_MONTH = "2026-10";
 export const SPECIAL_SETTLEMENT_MIN_PAYMENT_DATE = "2026-11-01";
 export const SPECIAL_SETTLEMENT_MAX_RESIDUAL = 1000;
+// October 2026 roster size; the DB function enforces the same constant.
+export const SPECIAL_SETTLEMENT_EMPLOYEE_COUNT = 17;
 
 export type SettlementAllocationKind = "salary" | "penalty_refund";
 export type SettlementAllocation = { paymentDate: string; fundAccountId: number; amount: number; kind: SettlementAllocationKind; note: string | null };
@@ -152,7 +154,11 @@ export function buildSettlementPreview(plan: SettlementPlan, planHash: string, c
       failureCodes: candidate.failureCodes, calculationHash: candidate.calculationHash,
     });
   }
+  if (plan.employees.length !== SPECIAL_SETTLEMENT_EMPLOYEE_COUNT) blockers.push(`PLAN_EMPLOYEE_COUNT:${plan.employees.length}`);
+  if (candidates.length !== SPECIAL_SETTLEMENT_EMPLOYEE_COUNT) blockers.push(`ROSTER_EMPLOYEE_COUNT:${candidates.length}`);
   const unpaid = rows.filter(row => row.paymentStatus === "unpaid");
+  // All-or-nothing: either nobody is recorded yet (settle all) or everyone is (done).
+  if (unpaid.length > 0 && unpaid.length < rows.length) blockers.push("BATCH_PARTIALLY_PAID");
   if (blockers.length === 0 && unpaid.length === 0) blockers.push("NOTHING_TO_SETTLE");
   const previewToken = stablePayrollSourceHash({
     planHash,
