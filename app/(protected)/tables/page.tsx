@@ -7,6 +7,7 @@ import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, preferLatestOverview, verifiedOrderStart } from "@/lib/sales/table-detail-display";
+import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
 import styles from "./tables.module.css";
 
 // One class per state colors the whole tile, the legend swatch and the sheet badge alike.
@@ -145,13 +146,26 @@ export default function TablesPage() {
     {order.detailsNeedReview ? <p className={styles.notice}>{t.detailsReview}</p> : null}
     <div className={styles.orderMenu}>
       {order.lines ? <ul className={styles.menuItems}>{order.lines.map(line => <li key={line.id} className={styles.menuItem}>
-        <div className={styles.menuName}><strong>{line.name || "—"}</strong>
-          {line.option ? <span className={styles.menuFlag}>{t.option}</span> : null}
-          {line.canceled ? <span className={cx(styles.menuFlag, styles.canceledFlag)}>{t.canceled}</span> : null}</div>
-        <dl className={styles.menuAmounts}>
-          <div><dt>{t.quantity}</dt><dd>{line.quantity}</dd></div><div><dt>{t.price}</dt><dd>{money(line.price)}</dd></div>
-          <div><dt>{t.amount}</dt><dd>{money(line.amount)}</dd></div>
-        </dl>
+        <details className={styles.menuDisclosure}>
+          <summary className={styles.menuRow} title={t.menuDetails}>
+            <span className={styles.menuName}><span className={styles.menuLabel}>
+              <strong>{localizedTableMenuName(line.name, lang) || "—"}</strong><span className={styles.menuToggle} aria-hidden="true">⌄</span>
+            </span>{line.option || line.canceled ? <span className={styles.menuFlags}>
+              {line.option ? <span className={styles.menuFlag}>{t.option}</span> : null}
+              {line.canceled ? <span className={cx(styles.menuFlag, styles.canceledFlag)}>{t.canceled}</span> : null}
+            </span> : null}</span>
+            <span className={styles.menuQuantity}><span className={styles.srOnly}>{t.quantity} </span>×{line.quantity}</span>
+            <strong className={styles.menuLineAmount}><span className={styles.srOnly}>{t.amount} </span>{money(line.amount)}</strong>
+          </summary>
+          <div className={styles.menuDetails}>
+            <p className={styles.fullMenuName}>{localizedTableMenuName(line.name, lang) || "—"}</p>
+            {localizedTableMenuName(line.name, lang) !== line.name ? <p>{t.originalMenuName}: {line.name}</p> : null}
+            <dl className={styles.menuAmounts}>
+              <div><dt>{t.quantity}</dt><dd>{line.quantity}</dd></div><div><dt>{t.price}</dt><dd>{money(line.price)}</dd></div>
+              <div><dt>{t.amount}</dt><dd>{money(line.amount)}</dd></div>
+            </dl>
+          </div>
+        </details>
       </li>)}</ul> : <p>{t.noLines}</p>}
       <p className={cx(styles.estimate, styles.orderEstimate)}>{t.estimate} <strong>{money(order.amount)}</strong></p>
     </div>
@@ -167,7 +181,7 @@ export default function TablesPage() {
     </dl>
     {receipt.lines.length ? <details className={styles.receiptMenu}><summary>{t.receiptMenu} ({receipt.lines.length})</summary>
       <table className={styles.lines}><thead><tr><th>{t.menu}</th><th>{t.quantity}</th><th>{t.amount}</th></tr></thead><tbody>
-        {receipt.lines.map(line => <tr key={line.id}><td>{line.name}{line.canceled ? ` · ${t.canceled}` : ""}</td>
+        {receipt.lines.map(line => <tr key={line.id}><td title={line.name}>{localizedTableMenuName(line.name, lang)}{line.canceled ? ` · ${t.canceled}` : ""}</td>
           <td>{line.quantity ?? "—"}</td><td>{line.amount === null ? "—" : money(line.amount)}</td></tr>)}
       </tbody></table></details> : <p className={styles.muted}>{t.noLines}</p>}
   </article>;
@@ -255,10 +269,6 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning}>{compactWarning}</p> : null}
-      {tile && tile.state !== "idle" ? <p className={styles.usageHelp}>
-        {usageCount === null ? `${usageCurrent && usage?.status === "review" ? t.usageReview : t.usageUnavailable} · ` : ""}
-        {usageCurrent && usage && usage.verifiedOrderCount > 0 ? `${t.verifiedOrders.replace("{count}", String(usage.verifiedOrderCount))} · ` : ""}{t.usageBasis}
-      </p> : null}
       {tile?.paymentObservation && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>
         {tile.paymentObservation.expired ? t.automaticallyRetired : <>{t.paymentObserved} {clock(tile.paymentObservation.firstVerifiedAt)}
           {" · "}{t.automaticUntil} {clock(tile.paymentObservation.expiresAt)}</>}
