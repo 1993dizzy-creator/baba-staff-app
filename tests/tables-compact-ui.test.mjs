@@ -7,19 +7,17 @@ import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import * as detailDisplay from '../lib/sales/table-detail-display.ts';
-import * as tileAmount from '../lib/sales/table-tile-amount.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
-function render(data, lang, { failed=false, selected=null, detail=null }={}) {
+function render(data, lang, { failed=false, loading=false, selected=null, detail=null }={}) {
   let hook=0;
-  const states=[data,false,failed,selected,detail?{key:`${selected.id}:${data.serverNow}`,detail,failed:false}:null], mod={exports:{}};
+  const states=[data,loading,failed,selected,detail?{key:`${selected.id}:${data.serverNow}`,detail,failed:false}:null], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
     '@/lib/language-context':{useLanguage:()=>({lang})}, '@/lib/text/tables':{tablesText},
     '@/lib/sales/table-detail-display':detailDisplay,
-    '@/lib/sales/table-tile-amount':tileAmount,
     './tables.module.css':{__esModule:true,default:new Proxy({},{get:(_,key)=>key})},
   };
   const code=ts.transpileModule(readFileSync('app/(protected)/tables/page.tsx','utf8'),{compilerOptions:{
@@ -30,6 +28,16 @@ function render(data, lang, { failed=false, selected=null, detail=null }={}) {
 }
 
 for(const lang of ['ko','vi']){
+ test(`${lang}: first loading is a status card without fictitious zero-table sections; background refresh keeps tiles`,()=>{
+  const t=tablesText[lang],first=render(null,lang,{loading:true});
+  assert.ok(first.includes('<div role="status" class="loadingCard">'));
+  assert.ok(first.includes('class="spinner" aria-hidden="true"'));assert.ok(first.includes(t.loading));
+  assert.ok(!first.includes('class="area"'));assert.ok(!first.includes(t.noArea));
+  const refresh=render(overview({catalog:babaTableCatalog(),orders:[]}),lang,{loading:true});
+  assert.ok(!refresh.includes('class="loadingCard"'));assert.equal((refresh.match(/class="tile"/g)??[]).length,27);
+  const error=render(null,lang,{failed:true});assert.ok(error.includes('role="alert"'));assert.ok(error.includes(t.failed));
+  assert.ok(!error.includes('class="loadingCard"'));assert.ok(!error.includes('class="area"'));
+ });
  test(`${lang}: compact summary keeps original zero/null values, one collection basis time and actual 11/8/8 counts`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),before=JSON.stringify(data),html=render(data,lang),t=tablesText[lang];
   const summary=html.match(/<dl class="summary".*?<\/dl>/s)[0];
@@ -108,6 +116,10 @@ for(const lang of ['ko','vi']){
   const data=overview({catalog:babaTableCatalog(),orders}),before=JSON.stringify(data),tile=data.tables.find(t=>t.name==='BAR4'),t=tablesText[lang];
   const html=render(data,lang,{selected:{kind:'table',id:tile.id}});
   assert.ok(html.includes('class="tileStart"'));assert.ok(html.includes('</span> 18:07</time>'));
+  assert.ok(!html.includes('tileAmount'));
+  for(const button of html.matchAll(/<button class="tile[^\"]*".*?<\/button>/g)){
+   assert.ok(!button[0].includes(t.currentOrderAmount));assert.ok(!button[0].includes(t.compactAmountHint));
+  }
   assert.equal((html.match(/class="tileStart"/g)??[]).length,1);
   assert.equal((html.match(new RegExp(`${t.currentOrders} \\[1.4\\]`,'g'))??[]).length,2);
   assert.ok(html.includes('1/3'));assert.ok(html.includes('2/3'));assert.ok(html.includes(t.orderNumberMissing));
@@ -122,13 +134,27 @@ for(const lang of ['ko','vi']){
   }
  });
 
- test(`${lang}: usage is qualified; stale counts and prior-seven-day UI never display`,()=>{
+ test(`${lang}: usage is absent from the header and idle help; only verified 2+ counts appear beside existing recent payment`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),tile=data.tables.find(t=>t.name==='BAR4');
   const d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:data.snapshotStatus,current:[],previous:[{id:99}],latest:null,merges:[],
    cleaning:{enabled:false,reason:'no_payment'},usage:{count:1,status:'confirmed_order_basis',verifiedOrderCount:1,snapshotAt:data.snapshotAt}};
-  const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d}),t=tablesText[lang];
-  assert.ok(html.includes(t.todayUsage.replace('{count}','1')));assert.ok(html.includes(t.usageBasis));assert.ok(!html.includes(t.priorHistory));
-  d.usage.snapshotAt='2026-11-13T12:00:00Z';const stale=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
-  assert.ok(stale.includes(t.todayUsage.replace('{count}','—')));
+  const selected={kind:'table',id:tile.id},t=tablesText[lang];
+  const latest={id:100,number:'100',validPaid:true,canceled:false,reissued:false,link:'direct',amount:100000,
+   referenceAt:data.snapshotAt,businessDate:data.businessDate,lines:[]};
+  for(const count of [0,1,null,2,3])for(const hasPayment of [false,true]){
+   d.latest=hasPayment?latest:null;d.usage.count=count;
+   const html=render(data,lang,{selected,detail:d}),header=html.match(/<header class="header sheetHeader">.*?<\/header>/s)[0];
+   assert.ok(!header.includes('usageCount'));assert.ok(!header.includes(t.todayUsage.split('{count}')[0]));
+   assert.ok(!html.includes('class="usageHelp"'));assert.ok(!html.includes(t.usageUnavailable));assert.ok(!html.includes(t.priorHistory));
+   assert.equal(html.includes('class="usageCount"'),hasPayment&&count>=2);
+   if(hasPayment&&count>=2)assert.ok(html.includes(`${t.latestPayment}<span class="usageCount"> · ${t.todayUsage.replace('{count}',String(count))}</span></h3>`));
+   assert.ok(html.includes('class="emptyOrder idleEmpty"'));assert.ok(html.includes(t.noCurrentOrders));
+  }
+  d.latest=latest;d.usage.count=3;
+  for(const change of [{status:'review'},{status:'unavailable'},{snapshotAt:'2026-11-13T12:00:00Z'}]){
+   const html=render(data,lang,{selected,detail:{...d,usage:{...d.usage,...change}}});assert.ok(!html.includes('class="usageCount"'));
+  }
+  d.table={...tile,state:'unknown'};d.snapshotStatus='unavailable';
+  const unknown=render(data,lang,{selected,detail:d});assert.ok(!unknown.includes('idleEmpty'));assert.ok(unknown.includes('role="alert"'));assert.ok(unknown.includes('class="usageHelp"'));
  });
 }
