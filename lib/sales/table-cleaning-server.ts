@@ -8,6 +8,7 @@ import { babaTableCatalog } from "./baba-table-catalog";
 import { buildTableOverview } from "./table-overview";
 import { validOrders } from "./table-overview-server";
 import { detailNumber, type DetailReceiptRow, type TableDetail } from "./table-detail";
+import { projectReceiptOrderUsage } from "./table-paid-usage";
 import { autoNormalActivation, applyPaymentObservations, type PaymentObservation } from "./table-auto-normal";
 
 export const cleaningFeatureEnabled = () => process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true"
@@ -57,10 +58,18 @@ export async function decorateCleaningDetail(detail: TableDetail) {
   const table = state.overview.tables.find(t => t.id === detail.table.id)!;
   const key = state.context.keys[table.id];
   const enabled = cleaningFeatureEnabled() && state.context.manualEnabled !== false && table.state === "paid" && !!key && key.receiptId === detail.latest?.id && detail.merges.length === 0;
+  // Rebind display-only timing to the already-read atomic context. A newer
+  // snapshot must not silently drop otherwise valid order/receipt duration.
+  const current = detail.current.map(receipt => ({ ...receipt, orderUsage: projectReceiptOrderUsage({
+    overview: state.overview, orders: state.context.snapshot.orders, receipts: state.context.receipts,
+    receipt, now: new Date(state.overview.serverNow),
+  }) }));
+  const latest = detail.latest ? current.find(r => r.id === detail.latest!.id) ?? { ...detail.latest, orderUsage: null } : null;
+  const usage = latest?.orderUsage;
   return { ...detail, table, snapshotAt: state.overview.snapshotAt, snapshotStatus: state.overview.snapshotStatus,
-    paidUsage: detail.paidUsage && table.state === "paid" && state.overview.snapshotStatus === "ok"
-      && key?.receiptId === detail.paidUsage.receiptId && table.lastPaidAt === detail.paidUsage.referenceAt
-      && state.overview.snapshotAt === detail.paidUsage.snapshotAt ? detail.paidUsage : null,
+    current, latest,
+    paidUsage: usage && table.state === "paid" && state.overview.snapshotStatus === "ok"
+      && key?.receiptId === usage.receiptId && table.lastPaidAt === usage.referenceAt ? usage : null,
     timer: table.paymentObservation ? { enabled: true as const, firstVerifiedAt: table.paymentObservation.firstVerifiedAt,
       expiresAt: table.paymentObservation.expiresAt, expired: table.paymentObservation.expired } : detail.timer,
     cleaning: { enabled, reason: table.state === "occupied" ? "active_orders" as const : table.state === "unknown" ? "snapshot_unhealthy" as const

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {projectPaidOrderUsage} from '../lib/sales/table-paid-usage.ts';
-import {paidOrderElapsedMinutes,verifiedPaidReferenceTime,orderElapsedMinutes} from '../lib/sales/table-detail-display.ts';
+import {paidOrderElapsedMinutes,verifiedPaidReferenceTime,orderElapsedMinutes,receiptOrderTimeRange,verifiedReceiptOrderUsage} from '../lib/sales/table-detail-display.ts';
 import {projectTableDetail} from '../lib/sales/table-detail.ts';
 import {buildTableOverview} from '../lib/sales/table-overview.ts';
 import {babaTableCatalog} from '../lib/sales/baba-table-catalog.ts';
@@ -31,21 +31,21 @@ test('zero and sub-minute boundaries are valid; end before start is never publis
   assert.equal(scenario({receipts:[receipt(900,{ref_date:end})]}).d.paidUsage?.minutes??null,expected);
  }
 });
-test('lost original table is not rescued by TableOrder tableName receipt fallback',()=>{
+test('lost table name still permits exact OrderId processing time without certifying physical occupancy',()=>{
  const {d}=scenario({orders:[source('paid-900',{tableName:null})]});assert.equal(d.table.state,'paid');
- assert.equal(d.table.orders[0].tableName,'BAR5');assert.equal(d.paidUsage,null);
+ assert.equal(d.table.orders[0].tableName,'BAR5');assert.equal(d.paidUsage.minutes,65);assert.deepEqual(d.paidUsage,d.latest.orderUsage);
 });
 test('missing/invalid/future/local-zone-less starts, observations and mismatched tables fail closed',()=>{
  const {input}=scenario();
  for(const change of [{orderDate:''},{orderDate:'invalid'},{orderDate:'2026-11-16T14:00:00'},
   {orderDate:'2026-11-16T15:06:00Z'},{orderDate:'2026-11-15T19:59:59Z'},
-  {providerObservedAt:null},{providerObservedAt:'2026-11-16T15:11:00Z'}, {tableName:null},{tableName:'BAR8'},{status:5},{status:null}]){
+  {providerObservedAt:null},{providerObservedAt:'2026-11-16T15:11:00Z'}, {tableName:'BAR8'},{status:5},{status:null}]){
   assert.equal(projectPaidOrderUsage({...input,orders:[source('paid-900',change)]}),null);
  }
  assert.equal(projectPaidOrderUsage({...input,orders:[]}),null);assert.equal(projectPaidOrderUsage({...input,orders:[source(),source()]}),null);
- for(const changes of [{ref_date:'invalid'},{ref_date:'2026-11-16T15:11:00Z'},{table_name:null},{table_name:'BAR8'},{order_id:null}])
+ for(const changes of [{ref_date:'invalid'},{ref_date:'2026-11-16T15:11:00Z'},{table_name:'BAR8'},{order_id:null}])
   assert.equal(projectPaidOrderUsage({...input,receipts:[receipt(900,changes)]}),null);
- assert.equal(projectPaidOrderUsage({...input,catalog:[...input.catalog,input.catalog.find(t=>t.name==='BAR5')]}),null);
+ assert.equal(projectPaidOrderUsage({...input,orders:[source('paid-900',{tableName:null})]}).minutes,65);
 });
 test('cancellation/reissue uses the sole valid receipt; duplicate active receipts hide usage',()=>{
  const canceled=receipt(899,{order_id:'paid-900',payment_status:4,is_canceled:true});
@@ -89,6 +89,10 @@ test('real SQL-backed cleaning decoration clears usage on automatic expiry/manua
   await addOrder(f.db,f.day,{id:'paid-order',status:4});
   await f.db.exec("update pos_open_orders_private.orders set order_date=(select ref_date from pos_sales_receipts where id=100)-interval '65 minutes' where order_id='paid-order'");
   let d=await f.getDetail();assert.equal(paidOrderElapsedMinutes(d),65);assert.equal(d.paidUsage.receiptId,100);
+  const beforeRefresh=d;
+  await f.db.exec("update pos_open_orders_private.orders set table_name=null where order_id='paid-order'; update pos_open_orders_private.sync_state set last_success_at=clock_timestamp()");
+  d=await f.service.decorateCleaningDetail(beforeRefresh);assert.notEqual(d.snapshotAt,beforeRefresh.snapshotAt);
+  assert.equal(paidOrderElapsedMinutes(d),65);assert.deepEqual(d.paidUsage,d.latest.orderUsage);
   await observe(f.db,f.day,f.activation);await f.db.exec("update table_operations_private.payment_observations set first_verified_at=clock_timestamp()-interval '31 minutes'");
   d=await f.getDetail();assert.equal(d.table.state,'idle');assert.equal(d.paidUsage,null);
   await f.db.exec('update table_operations_private.payment_observations set first_verified_at=clock_timestamp()');
@@ -97,4 +101,21 @@ test('real SQL-backed cleaning decoration clears usage on automatic expiry/manua
   d=await f.getDetail();assert.equal(d.table.state,'idle');assert.equal(d.paidUsage,null);
   await addOrder(f.db,f.day);d=await f.getDetail();assert.equal(d.table.state,'occupied');assert.equal(d.paidUsage,null);
  }finally{await f.db.close();names.forEach((n,i)=>saved[i]===undefined?delete process.env[n]:process.env[n]=saved[i]);}
+});
+test('every historical valid receipt has its own fixed range while a new order is occupied',()=>{
+ const d=scenario({orders:[source(),source('paid-901',{orderDate:'2026-11-16T14:50:00Z'}),source('active',{status:1,orderDate:'2026-11-16T15:06:00Z'})],
+  receipts:[receipt(),receipt(901,{ref_date:'2026-11-16T15:09:00Z'})]}).d;
+ assert.equal(d.table.state,'occupied');assert.equal(d.paidUsage,null);
+ assert.deepEqual(d.current.map(r=>r.orderUsage.minutes),[19,65]);
+ assert.equal(receiptOrderTimeRange(d.current[1].orderUsage,'분'),'11.16 21:00 ~ 22:05 · 65분');
+ assert.equal(verifiedReceiptOrderUsage(d.current[0],d.snapshotAt,'ok',day).minutes,19);
+});
+test('calendar midnight repeats both dates; one business day remains enforced across 03:00',()=>{
+ const at=new Date('2026-11-17T01:10:00+07:00'),d=scenario({at,orders:[source('paid-900',{orderDate:'2026-11-16T23:50:00+07:00',providerObservedAt:at.toISOString()})],
+  receipts:[receipt(900,{ref_date:'2026-11-17T00:55:00+07:00'})]}).d;
+ assert.equal(receiptOrderTimeRange(d.latest.orderUsage,'p'),'11.16 23:50 ~ 11.17 00:55 · 65p');
+ const late=scenario({at:new Date('2026-11-17T03:10:00+07:00'),businessDate:'2026-11-17',
+  orders:[source('paid-900',{businessDate:'2026-11-17',orderDate:'2026-11-17T02:30:00+07:00',providerObservedAt:'2026-11-17T03:10:00+07:00'})],
+  receipts:[receipt(900,{business_date:'2026-11-17',ref_date:'2026-11-17T03:05:00+07:00'})]}).d;
+ assert.equal(late.latest.orderUsage,null);
 });

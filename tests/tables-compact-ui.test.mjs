@@ -31,6 +31,22 @@ function render(data, lang, { failed=false, loading=false, selected=null, detail
 }
 
 for(const lang of ['ko','vi']){
+ test(`${lang}: occupied history 0/1/2/3 and paid 1/2/3 never duplicate a receipt and history follows merge evidence`,()=>{
+  const data=overview({catalog:babaTableCatalog(),orders:[]}),base=data.tables.find(t=>t.name==='BAR4'),t=tablesText[lang];
+  const receipt=id=>({id,number:String(id),businessDate:data.businessDate,referenceAt:data.snapshotAt,amount:100000,
+   canceled:false,validPaid:true,uncertain:false,reissued:false,link:'direct',lines:[]});
+  for(const state of ['occupied','paid'])for(const count of [0,1,2,3]){
+   const rows=Array.from({length:count},(_,i)=>receipt(100+i)),d={table:{...base,state},businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:'ok',latest:rows[0]??null,
+    current:rows.length?[...rows,rows[0]]:[],merges:[{receiptId:8885,tables:['BAR4'],receiptTable:'BAR4',verified:true}],cleaning:{enabled:false,reason:'merge_review'}};
+   const html=render(data,lang,{selected:{kind:'table',id:base.id},detail:d}),foldCount=state==='occupied'?count:Math.max(count-1,0);
+   assert.equal((html.match(/class="receiptTotal"/g)??[]).length,count);
+   assert.equal(html.includes('class="detailSection paymentHistory"'),foldCount>0);
+   if(foldCount){assert.ok(html.includes(`${t.paymentHistory} · ${data.businessDate} (${foldCount})`));assert.ok(html.indexOf(`🔗 ${t.mergedPayment}`)<html.indexOf(`${t.paymentHistory} ·`));}
+   if(state==='occupied'){assert.ok(!html.includes(t.pastPayment));assert.ok(!html.includes(`🧾 ${t.latestPayment}`));}
+   if(state==='paid'&&count)assert.ok(html.includes(`🧾 ${t.latestPayment}`));
+   for(const r of rows)assert.equal(html.split(`${t.receiptNumber} #${r.number}</strong>`).length-1,1);
+  }
+ });
  test(`${lang}: paid tile uses receipt time and detail uses fixed original-order duration, keeping collection clock separate`,()=>{
   const source=order('paid-65','BAR5',{status:4,orderDate:'2026-11-13T11:55:00Z'}),catalog=babaTableCatalog();
   const r={id:900,order_id:'paid-65',ref_no:'900',business_date:'2026-11-13',table_name:'BAR5',ref_date:'2026-11-13T13:00:00Z',
@@ -236,7 +252,7 @@ for(const lang of ['ko','vi']){
    const r={...base,...changes},d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:'ok',latest:r,
     current:[r,{...r,id:101}],merges:[],cleaning:{enabled:false,reason:'no_payment'}};
    const before=JSON.stringify({data,d}),html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
-   assert.equal((html.match(/class="receiptTotal"/g)??[]).length,3);assert.equal((html.match(/class="receiptInfo"/g)??[]).length,3);
+   assert.equal((html.match(/class="receiptTotal"/g)??[]).length,2);assert.equal((html.match(/class="receiptInfo"/g)??[]).length,2);
    for(const labelsHtml of html.matchAll(/<div class="receiptBadges">(.*?)<\/div>/g)){
     const actual=[...labelsHtml[1].matchAll(/<span class="[^"]*">([^<]+)<\/span>/g)].map(m=>m[1]);assert.deepEqual(actual,labels);
    }
@@ -252,8 +268,8 @@ for(const lang of ['ko','vi']){
    validPaid:false,canceled:false,uncertain:true,reissued:false,link:'direct',lines:[]};
   const d={table:tile,businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus:'ok',latest:r,current:[r],merges:[],cleaning:{enabled:false,reason:'no_payment'}};
   const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
-  const total=html.match(/<div class="receiptTotal">(.*?)<\/div>/s)[1];assert.ok(total.includes('—'));assert.ok(total.includes('02:59'));
-  assert.ok(total.includes('dateTime="2026-11-17T02:59:59+07:00"'));assert.ok(html.includes('Asia/Ho_Chi_Minh'));
+  const total=html.match(/<div class="receiptTotal">(.*?)<\/div>/s)[1],timing=html.match(/<p class="receiptTiming".*?<\/p>/s)[0];assert.ok(total.includes('—'));assert.ok(timing.includes('02:59'));
+  assert.ok(timing.includes('dateTime="2026-11-17T02:59:59+07:00"'));assert.ok(html.includes('Asia/Ho_Chi_Minh'));
   assert.ok(html.includes(`<dd>2026-11-16</dd>`));assert.ok(!html.includes('class="receiptBusinessDate"'));assert.ok(html.includes(`${t.receiptNumber} #100`));
   r.businessDate='2026-11-15';r.referenceAt=null;
   const different=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});

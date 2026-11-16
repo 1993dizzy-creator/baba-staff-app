@@ -4,6 +4,7 @@ import {loadTs} from './sales-auth-harness.mjs';
 import * as core from '../../lib/pos/cukcuk/open-orders-core.ts';
 import * as policy from '../../lib/sales/table-overview.ts';
 import * as detail from '../../lib/sales/table-detail.ts';
+import * as paidUsage from '../../lib/sales/table-paid-usage.ts';
 import {babaTableCatalog} from '../../lib/sales/baba-table-catalog.ts';
 import {addStoreDays} from '../../lib/store-settings/business-time-core.ts';
 import {evaluateOpenOrdersCronWindow} from '../../lib/pos/cukcuk/open-orders-cron-policy.ts';
@@ -28,7 +29,7 @@ export async function cleaningServiceFixture({auto=false}={}){
   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:day,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
   '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=>scope},
   '@/lib/pos/cukcuk/open-orders-core':core,'@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},
-  './baba-table-catalog':{babaTableCatalog},'./table-overview':policy,'./table-detail':detail,'./table-auto-normal':autoNormal,
+  './baba-table-catalog':{babaTableCatalog},'./table-overview':policy,'./table-detail':detail,'./table-paid-usage':paidUsage,'./table-auto-normal':autoNormal,
   './daily-sales-summary':{fetchAllExactPages(){throw Error('Unexpected non-atomic read');}}};
  const overviewServer=loadTs('lib/sales/table-overview-server.ts',deps);
  const service=loadTs('lib/sales/table-cleaning-server.ts',{...deps,'./table-overview-server':{validOrders:overviewServer.validOrders}});

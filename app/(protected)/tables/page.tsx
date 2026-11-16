@@ -6,7 +6,7 @@ import { useLanguage } from "@/lib/language-context";
 import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
 import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
-import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, verifiedOrderStart, verifiedPaidReferenceTime } from "@/lib/sales/table-detail-display";
+import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, receiptOrderTimeRange, tablePaymentHistory, verifiedOrderStart, verifiedPaidReferenceTime, verifiedReceiptOrderUsage } from "@/lib/sales/table-detail-display";
 import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
 import styles from "./tables.module.css";
 
@@ -112,6 +112,8 @@ export default function TablesPage() {
   const usage = detail?.usage;
   const usageCurrent = !!usage && snapshotStatus === "ok" && usage.snapshotAt === detail?.snapshotAt;
   const usageCount = usageCurrent && usage?.status === "confirmed_order_basis" ? usage.count : null;
+  const standaloneReceipt = tile?.state !== "occupied" ? detail?.latest ?? null : null;
+  const paymentHistory = tablePaymentHistory(detail, standaloneReceipt?.id);
   const compactWarning = saveState?.id === tile?.id && saveState?.error ? t.cleanFailed
     : detailFailed && tile?.state !== "idle" ? t.historyUnavailableShort
     : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
@@ -170,7 +172,9 @@ export default function TablesPage() {
       <p className={cx(styles.estimate, styles.orderEstimate)}>{t.estimate} <strong>{money(order.amount)}</strong></p>
     </div>
   </article>;
-  const receiptView = (receipt: DetailReceipt) => <article key={receipt.id} className={styles.receipt}>
+  const receiptView = (receipt: DetailReceipt) => {
+    const timing = verifiedReceiptOrderUsage(receipt, snapshotAt, snapshotStatus ?? "", detail?.businessDate ?? "");
+    return <article key={receipt.id} className={styles.receipt}>
     <div className={styles.receiptHeading}>
       <details className={styles.receiptInfo}><summary title={t.receiptInfo}>
         <strong>{t.receiptNumber} #{receipt.number ?? receipt.id}</strong><span aria-hidden="true">⌄</span>
@@ -188,16 +192,17 @@ export default function TablesPage() {
     </div>
     <div className={styles.receiptTotal}>
       <strong><span className={styles.srOnly}>{t.finalPaid} </span>{receipt.amount === null ? "—" : money(receipt.amount)}</strong>
-      <time dateTime={receipt.referenceAt ?? undefined} title={`${t.receiptBasis} · Asia/Ho_Chi_Minh`}>
-        <span className={styles.srOnly}>{t.receiptBasis} </span>{timestamp(receipt.referenceAt, lang)}</time>
     </div>
+    <p className={styles.receiptTiming} title={timing ? t.paidOrderElapsedHint : `${t.receiptBasis} · Asia/Ho_Chi_Minh`}>
+      {timing ? receiptOrderTimeRange(timing, t.minuteShort) : <>{t.paymentTimeLabel} <time dateTime={receipt.referenceAt ?? undefined}>{timestamp(receipt.referenceAt, lang)}</time></>}
+    </p>
     {receipt.businessDate !== (detail?.businessDate ?? data?.businessDate) ? <p className={styles.receiptBusinessDate}>{t.businessDate}: {receipt.businessDate}</p> : null}
     {receipt.lines.length ? <details className={styles.receiptMenu}><summary>{t.receiptMenu} ({receipt.lines.length})</summary>
       <table className={styles.lines}><thead><tr><th>{t.menu}</th><th>{t.quantity}</th><th>{t.amount}</th></tr></thead><tbody>
         {receipt.lines.map(line => <tr key={line.id}><td title={line.name}>{localizedTableMenuName(line.name, lang)}{line.canceled ? ` · ${t.canceled}` : ""}</td>
           <td>{line.quantity ?? "—"}</td><td>{line.amount === null ? "—" : money(line.amount)}</td></tr>)}
       </tbody></table></details> : <p className={styles.muted}>{t.noLines}</p>}
-  </article>;
+  </article>; };
 
   return <main className={styles.page}>
     <h1 className={styles.srOnly}>{t.title}</h1>
@@ -296,14 +301,12 @@ export default function TablesPage() {
           {retainedOrders.length ? <details className={styles.detailSection}><summary>{t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
       {tile ? <>
         {tile.state === "paid" && !detail && !detailFailed ? <p role="status" className={styles.muted}>{t.historyLoading}</p> : null}
-        {detail?.latest ? <section className={styles.detailSection}><h3>🧾 {tile.state === "occupied" ? t.pastPayment : t.latestPayment}
+        {standaloneReceipt ? <section className={styles.detailSection}><h3>🧾 {t.latestPayment}
           {usageCount !== null && Number.isSafeInteger(usageCount) && usageCount >= 2
             ? <span className={styles.usageCount}> · {t.todayUsage.replace("{count}", String(usageCount))}</span> : null}</h3>
-          {receiptView(detail.latest)}
-          {tile.state === "paid" && !detail.merges.length ? <p className={styles.paymentSafety}>{t.completionEvidence}</p> : null}
+          {receiptView(standaloneReceipt)}
+          {tile.state === "paid" && !detail?.merges.length ? <p className={styles.paymentSafety}>{t.completionEvidence}</p> : null}
         </section> : null}
-        {detail && (detail.current.length > 1 || !detail.latest && detail.current.length > 0) ? <details className={styles.detailSection}>
-          <summary>{t.paymentHistory} · {detail.businessDate} ({detail.current.length})</summary>{detail.current.map(receiptView)}</details> : null}
         {detail?.merges.length ? <section className={styles.detailSection}><h3>🔗 {t.mergedPayment}</h3>
           {detail.merges.map(merge => <article key={merge.receiptId} className={styles.receipt}>
             <strong>{t.receiptNumber} #{detail.current.find(r => r.id === merge.receiptId)?.number ?? merge.receiptId}</strong>
@@ -311,6 +314,8 @@ export default function TablesPage() {
             <p>{t.sourceTables}: {merge.tables.join(" · ")}</p><p>{t.receiptTable}: {merge.receiptTable ?? "—"}</p>
           </article>)}<p className={styles.paymentSafety}>{t.mergeSafety}</p>
         </section> : null}
+        {detail && paymentHistory.length > 0 ? <details className={`${styles.detailSection} ${styles.paymentHistory}`}>
+          <summary>{t.paymentHistory} · {detail.businessDate} ({paymentHistory.length})</summary>{paymentHistory.map(receiptView)}</details> : null}
       </> : null}
     </dialog>
   </main>;

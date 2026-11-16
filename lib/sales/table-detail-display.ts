@@ -1,7 +1,34 @@
 import type { TableOverview, TableTile } from "./table-overview.ts";
 import { calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
 import { DEFAULT_STALE_AFTER_MS } from "../pos/cukcuk/open-orders-core.ts";
-import type { TableDetail } from "./table-detail.ts";
+import type { DetailReceipt, TableDetail } from "./table-detail.ts";
+import type { PaidOrderUsage } from "./table-paid-usage.ts";
+
+export function verifiedReceiptOrderUsage(receipt: DetailReceipt, snapshotAt: string | null, snapshotStatus: string, businessDate: string) {
+  const usage = receipt.orderUsage;
+  if (!usage || snapshotStatus !== "ok" || !receipt.validPaid || receipt.canceled || receipt.uncertain || receipt.link !== "direct"
+    || receipt.businessDate !== businessDate || usage.snapshotAt !== snapshotAt || usage.receiptId !== receipt.id || usage.referenceAt !== receipt.referenceAt
+    || !Number.isSafeInteger(usage.minutes) || usage.minutes < 0) return null;
+  const start = Date.parse(usage.startedAt), end = Date.parse(usage.referenceAt);
+  return Number.isFinite(start) && Number.isFinite(end) && start <= end && Math.floor((end - start) / 60_000) === usage.minutes ? usage : null;
+}
+
+/** Fixed VN local range. Repeat the date only when local calendar dates differ. */
+export function receiptOrderTimeRange(usage: PaidOrderUsage, minuteSuffix: string) {
+  const parts = (value: string) => Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value)).map(p => [p.type, p.value]));
+  const a = parts(usage.startedAt), b = parts(usage.referenceAt), same = a.year === b.year && a.month === b.month && a.day === b.day;
+  return `${a.month}.${a.day} ${a.hour}:${a.minute} ~ ${same ? "" : `${b.month}.${b.day} `}${b.hour}:${b.minute} · ${usage.minutes}${minuteSuffix}`;
+}
+
+/** UI only: current-day IDs once, excluding an already displayed standalone card. */
+export function tablePaymentHistory(detail: TableDetail | null, standaloneId?: number) {
+  const seen = new Set<number>();
+  return detail?.current.filter(receipt => {
+    if (receipt.businessDate !== detail.businessDate || receipt.id === standaloneId || seen.has(receipt.id)) return false;
+    seen.add(receipt.id); return true;
+  }) ?? [];
+}
 
 /** Existing server-verified receipt reference only, never a new payment clock. */
 export function verifiedPaidReferenceTime(table: TableTile, snapshotAt: string | null, serverNow: string, snapshotStatus: string, businessDate: string) {
@@ -19,6 +46,8 @@ export function paidOrderElapsedMinutes(detail: TableDetail | null | undefined) 
     || latest.businessDate !== detail.businessDate || usage.snapshotAt !== detail.snapshotAt || usage.receiptId !== latest.id
     || usage.referenceAt !== latest.referenceAt || usage.referenceAt !== detail.table.lastPaidAt
     || !Number.isSafeInteger(usage.minutes) || usage.minutes < 0) return null;
+  const shared = verifiedReceiptOrderUsage(latest, detail.snapshotAt, detail.snapshotStatus, detail.businessDate);
+  if (!shared || shared.startedAt !== usage.startedAt || shared.minutes !== usage.minutes) return null;
   return usage.minutes;
 }
 

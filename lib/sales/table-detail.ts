@@ -1,7 +1,7 @@
 import { classifyOrdersForBusinessDate, singlePaidOrderReceipt, type CollectedOrder } from "../pos/cukcuk/open-orders-core.ts";
 import type { CatalogTable, TableOverview, TableTile } from "./table-overview.ts";
 import { projectDailyTableUsage, type DailyTableUsage } from "./table-usage.ts";
-import { projectPaidOrderUsage, type PaidOrderUsage } from "./table-paid-usage.ts";
+import { projectReceiptOrderUsage, type PaidOrderUsage } from "./table-paid-usage.ts";
 
 // Display-only evidence. None of these timestamps authorizes a vacancy/cleaning transition.
 export type DetailReceiptRow = {
@@ -14,6 +14,7 @@ export type DetailReceipt = {
   amount: number | null; referenceAt: string | null; statusObservedAt: string | null;
   canceled: boolean; reissued: boolean; validPaid: boolean; uncertain: boolean;
   link: "direct" | "verified_merge" | "merge_review";
+  orderUsage?: PaidOrderUsage | null;
   lines: { id: number; name: string; quantity: number | null; amount: number | null; canceled: boolean }[];
 };
 export type TableDetail = {
@@ -94,11 +95,12 @@ export function projectTableDetail(input: {
   const current = projected.filter(r => r.businessDate === overview.businessDate);
   const previous = projected.filter(r => r.businessDate >= historyFrom && r.businessDate < overview.businessDate);
   const latest = current.find(r => r.validPaid) ?? null;
+  for (const receipt of current) receipt.orderUsage = projectReceiptOrderUsage({ ...input, receipts, receipt });
   const reason = table.state === "occupied" || table.orders.some(o => o.verifiedOpen) ? "active_orders"
     : overview.snapshotStatus !== "ok" || table.state === "unknown" ? "snapshot_unhealthy"
     : merges.length ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
   return { table, businessDate: overview.businessDate, snapshotAt: overview.snapshotAt, snapshotStatus: overview.snapshotStatus,
     usage: projectDailyTableUsage({ ...input, receipts, merges }),
-    paidUsage: projectPaidOrderUsage({ ...input, receipts, latest }),
+    paidUsage: table.state === "paid" && !table.orders.some(o => o.verifiedOpen) && latest?.referenceAt === table.lastPaidAt ? latest.orderUsage ?? null : null,
     historyFrom, current, previous, latest, merges, cleaning: { enabled: false, reason }, timer: { enabled: false, reason: "unverified_payment_time" } };
 }
