@@ -7,6 +7,7 @@ import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import * as detailDisplay from '../lib/sales/table-detail-display.ts';
+import * as menuDisplay from '../lib/sales/table-menu-display.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
 
@@ -18,6 +19,7 @@ function render(data, lang, { failed=false, loading=false, selected=null, detail
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
     '@/lib/language-context':{useLanguage:()=>({lang})}, '@/lib/text/tables':{tablesText},
     '@/lib/sales/table-detail-display':detailDisplay,
+    '@/lib/sales/table-menu-display':menuDisplay,
     './tables.module.css':{__esModule:true,default:new Proxy({},{get:(_,key)=>key})},
   };
   const code=ts.transpileModule(readFileSync('app/(protected)/tables/page.tsx','utf8'),{compilerOptions:{
@@ -155,6 +157,29 @@ for(const lang of ['ko','vi']){
    const html=render(data,lang,{selected,detail:{...d,usage:{...d.usage,...change}}});assert.ok(!html.includes('class="usageCount"'));
   }
   d.table={...tile,state:'unknown'};d.snapshotStatus='unavailable';
-  const unknown=render(data,lang,{selected,detail:d});assert.ok(!unknown.includes('idleEmpty'));assert.ok(unknown.includes('role="alert"'));assert.ok(unknown.includes('class="usageHelp"'));
+  const unknown=render(data,lang,{selected,detail:d});assert.ok(!unknown.includes('idleEmpty'));assert.ok(unknown.includes('role="alert"'));assert.ok(!unknown.includes('class="usageHelp"'));
+ });
+ test(`${lang}: compact current rows and receipt menus share name selection while retaining original prices, quantities and source names`,()=>{
+  const source=order('menu','BAR4',{totalAmount:1234567});
+  const names=['[N1] Rượu Soju Chamisul fresh/ 참이슬','[H1] Trái Cây Thập Cẩm / 모듬 과일 안주'];
+  source.lines=names.map((itemName,i)=>({...source.lines[0],detailId:`menu-${i}`,itemName,quantity:i+1,price:150000+i*170000,
+   amount:i===0?150000:640000,isOption:i===1,isCanceled:i===1}));
+  const data=overview({catalog:babaTableCatalog(),orders:[source]}),tile=data.tables.find(t=>t.name==='BAR4');
+  const latest={id:100,number:'100',validPaid:true,canceled:false,reissued:false,link:'direct',amount:790000,
+   referenceAt:data.snapshotAt,businessDate:data.businessDate,lines:names.map((name,i)=>({id:i+1,name,quantity:i+1,amount:i===0?150000:640000,canceled:i===1}))};
+  const d={table:tile,snapshotAt:data.snapshotAt,snapshotStatus:'ok',businessDate:data.businessDate,latest,current:[latest],merges:[],
+   cleaning:{enabled:false,reason:'active_orders'},usage:{status:'review',count:null,verifiedOrderCount:2,snapshotAt:data.snapshotAt}};
+  const before=JSON.stringify({data,d}),html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d}),t=tablesText[lang];
+  assert.ok(!html.includes('usageHelp'));for(const key of ['usageBasis','usageUnavailable','usageReview','verifiedOrders'])assert.ok(!html.includes(t[key].replace('{count}','2')));
+  const rows=[...html.matchAll(/<summary class="menuRow".*?<\/summary>/g)];assert.equal(rows.length,2);
+  for(const [i,row] of rows.entries()){
+   const selected=menuDisplay.localizedTableMenuName(names[i],lang);assert.ok(row[0].includes(selected));assert.ok(!row[0].includes(names[i]));
+   assert.ok(row[0].includes(`×${i+1}`));assert.ok(row[0].includes('menuLineAmount'));assert.ok(!row[0].includes('menuAmounts'));
+   assert.ok(html.includes(`<td title="${names[i]}">${selected}`));
+  }
+  assert.ok(html.includes('class="menuDisclosure"'));assert.ok(html.includes('class="menuDetails"'));assert.ok(html.includes('class="menuAmounts"'));
+  assert.ok(html.includes(t.originalMenuName));for(const original of names)assert.ok(html.includes(original));
+  for(const amount of [150000,320000,640000,1234567])assert.ok(html.includes(new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND',maximumFractionDigits:0}).format(amount)));
+  assert.ok(rows[1][0].includes(t.option));assert.ok(rows[1][0].includes(t.canceled));assert.equal(JSON.stringify({data,d}),before);
  });
 }
