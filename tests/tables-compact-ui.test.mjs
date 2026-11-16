@@ -33,9 +33,9 @@ for(const lang of ['ko','vi']){
  test(`${lang}: compact summary keeps original zero/null values, one collection basis time and actual 11/8/8 counts`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[]}),before=JSON.stringify(data),html=render(data,lang),t=tablesText[lang];
   const summary=html.match(/<dl class="summary".*?<\/dl>/s)[0];
-  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1].replace(/<span.*?<\/span>/g,'')),['27','0','—']);
+  assert.deepEqual([...summary.matchAll(/<dd>(.*?)<\/dd>/g)].map(m=>m[1].replace(/<span.*?<\/span>/g,'')),['27','0','0']);
   for(const key of ['total','occupied','paidCumulative'])assert.ok(summary.includes(t.summaryLabels[key]));
-  assert.ok(summary.includes(t.paidCumulativeReview));
+  assert.ok(!summary.includes(t.paidCumulativeReview));
   for(const key of ['reserved','unknown','free'])assert.ok(!summary.includes(`<dt>${t.summaryLabels[key]}</dt>`));
   assert.ok(html.includes(`<h1 class="srOnly">${t.title}</h1>`));
   assert.ok(html.includes(`aria-label="${t.refresh}"`));

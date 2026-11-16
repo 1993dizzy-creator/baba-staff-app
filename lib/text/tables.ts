@@ -1,7 +1,7 @@
 export const tablesText = {
   ko: {
-    paidCumulativeReview: "누적 완료 확인 필요 · 영업일 전체 자료의 완전성을 확인할 수 없습니다.",
-    paidCumulativeHelp: "검증된 테이블별 결제완료 건수 · 실제 방문 횟수나 현재 파란 테이블 수와 다름",
+    paidCumulativeReview: "완료 건수 확인 필요 · 수집·조회 상태 또는 결제 자료를 확인해 주세요.",
+    paidCumulativeHelp: "현재 영업일의 유효 결제완료 영수증 건수 · 테이블 수·고객 방문 횟수 아님",
     currentOrderAmount: "현재 진행 주문 예상금액", compactAmountHint: "VND 축약 표시 · ≈는 일부 단위 생략 · 상세창에서 정확한 금액 확인",
     todayUsage: "오늘 이용 {count}회", usageBasis: "확인된 주문 묶음 기준 · 실제 고객 방문 횟수와 다를 수 있습니다.",
     usageReview: "이용 횟수 확인 필요", usageUnavailable: "확인된 주문 자료 부족", verifiedOrders: "확인된 주문 {count}건",
@@ -27,7 +27,7 @@ export const tablesText = {
     historyLoading: "결제 이력 확인 중…", historyFailed: "결제 이력을 불러올 수 없습니다. 청소완료는 사용할 수 없습니다.",
     mergeSafety: "주문 연결 증거이며 물리적 이동·퇴석·빈자리 확정을 뜻하지 않습니다.", mergeVerified: "연결 증거 확인", mergeReview: "연결 재확인 필요",
     sourceTables: "기존 주문 테이블", receiptTable: "영수증 표기 테이블", retainedOrders: "수집된 이전 주문 · 현재 진행 여부 확인 필요",
-    summaryLabels: { total: "전체", occupied: "사용 중", unknown: "확인 필요", reserved: "예약", paid: "완료", paidCumulative: "누적 완료", free: "빈자리" },
+    summaryLabels: { total: "전체", occupied: "사용 중", unknown: "확인 필요", reserved: "예약", paid: "완료", paidCumulative: "완료", free: "빈자리" },
     basis: "기준", basisWarning: "수집 지연·오류 · 현장에서 확인해 주세요.", tableCountSuffix: "개",
     reviewCount: "확인 필요 {count}개 · 빈자리 안내 금지", catalogCheck: "목록 확인 필요 · 빈자리 안내 금지",
     ordersCheck: "주문 확인 필요 · 빈자리 안내 금지", statusInfo: "상태 안내",
@@ -42,8 +42,8 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
-    paidCumulativeReview: "Cần kiểm tra lũy kế · Chưa xác minh dữ liệu đầy đủ cho cả ngày kinh doanh.",
-    paidCumulativeHelp: "Số lần thanh toán đã xác minh theo bàn · Khác số lượt khách và số bàn màu xanh hiện tại",
+    paidCumulativeReview: "Cần kiểm tra số hóa đơn hoàn tất · Hãy kiểm tra cập nhật hoặc dữ liệu thanh toán.",
+    paidCumulativeHelp: "Số hóa đơn đã thanh toán hợp lệ trong ngày kinh doanh · Không phải số bàn hay lượt khách",
     currentOrderAmount: "Tổng tạm tính của đơn đang mở", compactAmountHint: "Rút gọn VND · ≈ là lược bớt đơn vị nhỏ · Xem số tiền chính xác trong chi tiết",
     todayUsage: "Số lượt sử dụng hôm nay: {count}", usageBasis: "Theo nhóm đơn đã xác minh · Có thể khác số lượt khách thực tế.",
     usageReview: "Cần kiểm tra số lượt sử dụng", usageUnavailable: "Chưa đủ dữ liệu đơn đã xác minh", verifiedOrders: "{count} đơn đã xác minh",
@@ -69,7 +69,7 @@ export const tablesText = {
     historyLoading: "Đang tải lịch sử…", historyFailed: "Chưa tải được lịch sử. Chưa thể xác nhận dọn bàn.",
     mergeSafety: "Chỉ xác nhận liên kết đơn, không xác nhận chuyển bàn, khách rời hay bàn trống.", mergeVerified: "Đã kiểm tra liên kết", mergeReview: "Cần kiểm tra lại liên kết",
     sourceTables: "Bàn của đơn gốc", receiptTable: "Bàn ghi trên hóa đơn", retainedOrders: "Đơn đã thu thập · Cần kiểm tra hiện trạng",
-    summaryLabels: { total: "Tổng", occupied: "Đang dùng", unknown: "Cần kiểm tra", reserved: "Đặt", paid: "Hoàn tất", paidCumulative: "Lũy kế", free: "Trống" },
+    summaryLabels: { total: "Tổng", occupied: "Đang dùng", unknown: "Cần kiểm tra", reserved: "Đặt", paid: "Hoàn tất", paidCumulative: "Hoàn tất", free: "Trống" },
     basis: "Lúc", basisWarning: "Thu thập chậm hoặc lỗi · Hãy kiểm tra tại chỗ.", tableCountSuffix: " bàn",
     reviewCount: "{count} bàn chưa rõ · Không báo bàn trống", catalogCheck: "Kiểm tra danh sách · Không báo bàn trống",
     ordersCheck: "Kiểm tra đơn · Không báo bàn trống", statusInfo: "Thông tin trạng thái",

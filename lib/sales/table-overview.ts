@@ -196,8 +196,8 @@ export function buildTableOverview(input: {
   });
   const unknown = tables.filter(table => table.state === "unknown").length;
   const countable = catalogOk && snapshotOk && unknown === 0 && !unlocatedOrder;
-  const paidCumulativeEvidence = projectPaidCumulative({ businessDate, now, snapshotAt: kpi.lastSuccessAt,
-    healthy: catalogOk && snapshotOk && !conflict && !receiptConflict, catalog, orders, receipts, cutoff: input.cutoff });
+  const paidCumulativeEvidence = projectPaidCumulative({ businessDate, now,
+    healthy: snapshotOk && !conflict && !receiptConflict, receipts, cutoff: input.cutoff });
   return {
     businessDate, serverNow: now.toISOString(), snapshotAt: kpi.lastSuccessAt, catalogAt: catalog.collectedAt,
     catalogStatus: catalog.status, snapshotStatus: snapshotOk ? "ok" : waiting ? "waiting"

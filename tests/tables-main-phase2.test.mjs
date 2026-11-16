@@ -11,59 +11,56 @@ import {compactOrderAmount,verifiedCurrentOrderAmount} from '../lib/sales/table-
 import {tablesNavigationText} from '../lib/text/tables-navigation.ts';
 import {cleaningServiceFixture} from './helpers/tables-cleaning-service-fixture.mjs';
 import {addOrder} from './helpers/tables-cleaning-fixture.mjs';
-const catalog=babaTableCatalog(),id=name=>catalog.tables.find(t=>t.name===name).id;
+const catalog=babaTableCatalog();
 const receipt=(receiptId,orderId,tableName='BAR4',changes={})=>({receiptId,orderId,tableName,businessDate,
  paidAt:now.toISOString(),paymentStatus:3,isCanceled:false,...changes});
 const paid=(key,name='BAR4',changes={})=>order(key,name,{status:4,orderDate:'2026-11-13T12:00:00Z',...changes});
 const run=(orders=[],receipts=[],extra={})=>overview({catalog,orders,receipts,...extra});
 
-test('cumulative completion projection counts independent payments, not current paid tiles or visits',()=>{
+test('completion receipts count independently of current paid tiles or visits',()=>{
  const first=run([paid('one')],[receipt(1,'one')]),before=JSON.stringify(first);
- assert.equal(first.summary.paid,1);assert.equal(first.summary.paidCumulative,null);
- assert.equal(first.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+ assert.equal(first.summary.paid,1);assert.equal(first.summary.paidCumulative,1);
  const two=run([paid('one'),paid('two')],[receipt(1,'one'),receipt(2,'two')]);
- assert.equal(two.summary.paid,1);assert.equal(two.summary.paidCumulativeEvidence.byTable[id('BAR4')],2);
- assert.equal(two.summary.paidCumulativeEvidence.verifiedObservedCount,2);
- assert.equal(two.summary.paidCumulativeEvidence.reason,'coverage_unverified');
+ assert.equal(two.summary.paid,1);assert.equal(two.summary.paidCumulative,2);
+ assert.equal(two.summary.paidCumulativeEvidence.reason,'verified_receipts');
  const active=run([paid('one'),order('new','BAR4')],[receipt(1,'one')]);
- assert.equal(active.tables.find(t=>t.name==='BAR4').state,'occupied');assert.equal(active.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+ assert.equal(active.tables.find(t=>t.name==='BAR4').state,'occupied');assert.equal(active.summary.paidCumulative,1);
  assert.equal(JSON.stringify(first),before);
 });
 
 test('repeated OrderId and cancellation/reissue are one completion; ambiguous active receipts never count',()=>{
  const o=paid('one'),r=receipt(1,'one');
- assert.equal(run([o,o],[r,r]).summary.paidCumulativeEvidence.verifiedObservedCount,1);
- assert.equal(run([o],[{...r,isCanceled:true,paymentStatus:4},receipt(2,'one')]).summary.paidCumulativeEvidence.verifiedObservedCount,1);
+ assert.equal(run([o,o],[r,r]).summary.paidCumulative,1);
+ assert.equal(run([o],[{...r,isCanceled:true,paymentStatus:4},receipt(2,'one')]).summary.paidCumulative,1);
  const conflict=run([o],[r,receipt(2,'one')]);
  assert.equal(conflict.summary.paidCumulative,null);assert.equal(conflict.summary.paidCumulativeEvidence.reason,'evidence_conflict');
- assert.equal(conflict.summary.paidCumulativeEvidence.verifiedObservedCount,0);
- assert.equal(run([o],[{...r,isCanceled:true,paymentStatus:4}]).summary.paidCumulativeEvidence.verifiedObservedCount,0);
+ assert.equal(conflict.summary.paidCumulativeEvidence.count,null);
+ assert.equal(run([o],[{...r,isCanceled:true,paymentStatus:4}]).summary.paidCumulative,0);
  for(const changed of [{isCanceled:null},{paidAt:'invalid'},{paidAt:'2026-11-14T13:30:00Z'},{orderId:''}])assert.equal(run([o],[{...r,...changed}]).summary.paidCumulative,null);
 });
 
-test('#8885 counts each verified source table once, same-table merged orders once, never receipt TableName movement',()=>{
+test('#8885 is one paid receipt regardless of merged source tables, missing names or movement',()=>{
  const orders=[paid('target','BAR8'),...['BAR9','BAR11'].map((name,i)=>order('member-'+i,name,{orderDate:'2026-11-13T12:00:00Z',
   closureReceiptId:8885,closureMergedIntoOrderId:'target',closureConfirmedAt:now.toISOString()}))];
  const rows=[receipt(8885,'target','2')],e=run(orders,rows).summary.paidCumulativeEvidence;
- assert.equal(e.verifiedObservedCount,3);assert.equal(e.byTable[id('2')],undefined);
- for(const name of ['BAR8','BAR9','BAR11'])assert.equal(e.byTable[id(name)],1);
- const same=orders.map(o=>({...o,tableName:'BAR4'}));assert.equal(run(same,rows).summary.paidCumulativeEvidence.byTable[id('BAR4')],1);
+ assert.equal(e.count,1);
+ const same=orders.map(o=>({...o,tableName:'BAR4'}));assert.equal(run(same,rows).summary.paidCumulative,1);
  for(const group of [orders.slice(1),orders.map(o=>({...o,closureConfirmedAt:'2026-11-14T13:30:00Z'}))]){
-  assert.equal(run(group,rows).summary.paidCumulativeEvidence.verifiedObservedCount,0);
+  assert.equal(run(group,rows).summary.paidCumulative,1);
  }
  const moved=run([paid('one')],[receipt(1,'one','BAR6')]).summary.paidCumulativeEvidence;
- assert.equal(moved.reason,'evidence_conflict');assert.deepEqual(moved.byTable,{});
+ assert.equal(moved.reason,'verified_receipts');assert.equal(moved.count,1);
 });
 
-test('no full-day coverage never publishes zero; unhealthy reads/03:00 cannot retain another day totals',()=>{
- assert.equal(run().summary.paidCumulative,null);assert.equal(run().summary.paidCumulativeEvidence.reason,'coverage_unverified');
- assert.equal(run([],[receipt(1,'one')]).summary.paidCumulativeEvidence.reason,'evidence_conflict');
+test('healthy empty receipt reads publish zero; unhealthy reads and 03:00 cannot retain another day totals',()=>{
+ assert.equal(run().summary.paidCumulative,0);assert.equal(run().summary.paidCumulativeEvidence.reason,'verified_receipts');
+ assert.equal(run([],[receipt(1,'one')]).summary.paidCumulative,1);
  for(const extra of [{enabled:false},{readFailed:true},{sync:null},{sync:{businessDate,lastSuccessAt:'2026-11-13T10:00:00Z',lastAttemptAt:now.toISOString(),lastErrorCode:null}}]){
-  const e=run([paid('one')],[receipt(1,'one')],extra).summary.paidCumulativeEvidence;assert.equal(e.status,'unavailable');assert.equal(e.verifiedObservedCount,null);
+  const e=run([paid('one')],[receipt(1,'one')],extra).summary.paidCumulativeEvidence;assert.equal(e.status,'unavailable');assert.equal(e.count,null);
  }
  const at=new Date('2026-11-14T03:00:00+07:00'),day='2026-11-14';
  const next=run([paid('one')],[receipt(1,'one')],{now:at,businessDate:day,sync:{businessDate:day,lastSuccessAt:at.toISOString(),lastAttemptAt:at.toISOString(),lastErrorCode:null}});
- assert.equal(next.summary.paidCumulativeEvidence.verifiedObservedCount,0);assert.equal(next.summary.paidCumulative,null);
+ assert.equal(next.summary.paidCumulative,0);
 });
 
 test('manual save and automatic retirement preserve observed completion proof; new order remains occupied',async()=>{
@@ -73,16 +70,16 @@ test('manual save and automatic retirement preserve observed completion proof; n
   process.env.BABA_TABLE_CLEANING_ENABLED='true';process.env.POS_OPEN_ORDERS_READ_ENABLED='true';process.env.BABA_TABLE_AUTO_NORMAL_ENABLED='true';process.env.BABA_TABLE_AUTO_NORMAL_ACTIVATION=f.activation;
   await addOrder(f.db,f.day,{id:'paid-order',status:4});
   await f.db.exec("update pos_open_orders_private.orders set order_date=(select ref_date from pos_sales_receipts where id=100)-interval '1 minute' where order_id='paid-order'");
-  const first=await f.service.readCleaningState();assert.equal(first.overview.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+  const first=await f.service.readCleaningState();assert.equal(first.overview.summary.paidCumulative,1);
   const {observe}=await import('./helpers/tables-auto-normal-fixture.mjs');await observe(f.db,f.day,f.activation);
   await f.db.exec("update table_operations_private.payment_observations set first_verified_at=clock_timestamp()-interval '31 minutes'");
   let s=await f.service.readCleaningState();assert.equal(s.overview.tables.find(t=>t.id===f.tableId).state,'idle');
-  assert.equal(s.overview.summary.paid,0);assert.equal(s.overview.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+  assert.equal(s.overview.summary.paid,0);assert.equal(s.overview.summary.paidCumulative,1);
   await f.db.exec('update table_operations_private.payment_observations set first_verified_at=clock_timestamp()');
   const d=await f.getDetail();await f.service.confirmTableCleaning(f.tableId,1,{requestId:'00000000-0000-4000-8000-000000000081',...d.cleaning.token});
-  s=await f.service.readCleaningState();assert.equal(s.overview.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+  s=await f.service.readCleaningState();assert.equal(s.overview.summary.paidCumulative,1);
   await addOrder(f.db,f.day);s=await f.service.readCleaningState();assert.equal(s.overview.tables.find(t=>t.id===f.tableId).state,'occupied');
-  assert.equal(s.overview.summary.paidCumulativeEvidence.verifiedObservedCount,1);
+  assert.equal(s.overview.summary.paidCumulative,1);
  }finally{await f.db.close();names.forEach((n,i)=>saved[i]===undefined?delete process.env[n]:process.env[n]=saved[i]);}
 });
 
