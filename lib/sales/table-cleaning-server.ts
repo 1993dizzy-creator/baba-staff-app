@@ -14,6 +14,7 @@ import { autoNormalActivation, applyPaymentObservations, type PaymentObservation
 export const cleaningFeatureEnabled = () => process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true"
   && process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
 type Key = { receiptId: number; evidenceKey: string; autoKey?: string };
+const cleaningError = (code: string, stage: string) => Object.assign(new Error(code), { stage });
 type Context = { enabled: true; snapshot: { sync: OpenOrderSyncState | null; orders: CollectedOrder[] };
   receipts: (DetailReceiptRow & { version: string })[]; keys: Record<string, Key>; cleanedTableIds: string[];
   manualEnabled?: boolean; serverNow?: string; observations?: Record<string, PaymentObservation>; reviewTableIds?: string[] };
@@ -78,18 +79,23 @@ export async function decorateCleaningDetail(detail: TableDetail) {
 }
 
 export async function confirmTableCleaning(tableId: string, actorId: number, request: { requestId: string; businessDate: string; receiptId: number; evidenceKey: string }) {
-  if (!cleaningFeatureEnabled()) throw Error("CLEANING_DISABLED");
-  const state = await readCleaningState();
-  if (!state) throw Error("CLEANING_DISABLED");
+  if (!cleaningFeatureEnabled()) throw cleaningError("CLEANING_DISABLED", "feature");
+  let state;
+  try { state = await readCleaningState(); } catch { throw cleaningError("CLEANING_UNAVAILABLE", "context"); }
+  if (!state) throw cleaningError("CLEANING_DISABLED", "feature");
   const table = state.base.tables.find(t => t.id === tableId), key = state.context.keys[tableId];
-  if (state.day !== request.businessDate || table?.state !== "paid" || !key || key.receiptId !== request.receiptId || key.evidenceKey !== request.evidenceKey) throw Error("CLEANING_STALE");
-  const result = await supabaseServer.rpc("tables_cleaning_confirm_v1", { p_scope: state.scope, p_day: state.day,
+  if (state.day !== request.businessDate || table?.state !== "paid" || !key || key.receiptId !== request.receiptId || key.evidenceKey !== request.evidenceKey) throw cleaningError("CLEANING_STALE", "evidence");
+  let result;
+  try { result = await supabaseServer.rpc("tables_cleaning_confirm_v1", { p_scope: state.scope, p_day: state.day,
     p_table: tableId, p_actor: actorId, p_request: request.requestId, p_receipt: key.receiptId, p_key: key.evidenceKey,
     p_snapshot: state.context.snapshot, p_receipts: state.context.receipts }).abortSignal(AbortSignal.timeout(15_000));
-  if (result.error) throw Error(result.error.code === "40001" ? "CLEANING_STALE" : "CLEANING_UNAVAILABLE");
-  if (result.data?.saved !== true) throw Error("CLEANING_UNAVAILABLE");
+  } catch { throw cleaningError("CLEANING_UNAVAILABLE", "confirm_rpc"); }
+  if (result.error) throw cleaningError(result.error.code === "40001" ? "CLEANING_STALE" : "CLEANING_UNAVAILABLE", "confirm_rpc");
+  if (result.data?.saved !== true) throw cleaningError("CLEANING_UNAVAILABLE", "confirm_rpc");
   // Never synthesize idle. A newly collected order can already take precedence here.
-  const refreshed = await readCleaningState();
-  if (!refreshed) throw Error("CLEANING_UNAVAILABLE");
-  return { eventId: result.data.eventId, overview: refreshed.overview };
+  try {
+    const refreshed = await readCleaningState();
+    if (refreshed) return { saved: true as const, eventId: result.data.eventId, overview: refreshed.overview };
+  } catch { /* The write was confirmed. Never misreport it as a failed save. */ }
+  return { saved: true as const, eventId: result.data.eventId, overview: null, refreshRequired: true as const };
 }

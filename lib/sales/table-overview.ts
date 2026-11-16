@@ -25,6 +25,7 @@ export type TableOverview = {
   catalogStatus: TableCatalog["status"]; snapshotStatus: string; unlinkedReceiptCount: number;
   tables: TableTile[]; unlinked: TableOrder[];
   summary: { total: number | null; occupied: number | null; reserved: null; paid: number | null; free: null; unknown: number;
+    occupiedConfirmed?: number | null; occupiedPartial?: boolean;
     paidCumulative: number | null; paidCumulativeEvidence: PaidCumulativeEvidence };
 };
 
@@ -206,6 +207,8 @@ export function buildTableOverview(input: {
     // idle and paid never certify physical vacancy. Unknown totals remain null, not zero.
     summary: { total: catalog.status === "ok" ? tables.length : null,
       occupied: countable ? tables.filter(table => table.state === "occupied").length : null,
+      occupiedConfirmed: catalogOk && snapshotOk && !conflict && !receiptConflict ? tables.filter(table => table.state === "occupied").length : null,
+      occupiedPartial: catalogOk && snapshotOk && !conflict && !receiptConflict && (unknown > 0 || unlocatedOrder),
       paid: countable && unlinkedReceiptCount === 0 ? tables.filter(table => table.state === "paid").length : null,
       reserved: null, free: null, unknown,
       paidCumulative: paidCumulativeEvidence.count, paidCumulativeEvidence },

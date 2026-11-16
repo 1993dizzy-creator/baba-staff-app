@@ -27,5 +27,8 @@ export function applyPaymentObservations(overview: TableOverview, observations: 
   }
   if (overview.summary.paid !== null) overview.summary.paid = overview.tables.filter(t => t.state === "paid").length;
   overview.summary.unknown = overview.tables.filter(t => t.state === "unknown").length;
-  if (overview.summary.unknown) { overview.summary.occupied = null; overview.summary.paid = null; }
+  if (overview.summary.unknown) {
+    overview.summary.occupied = null; overview.summary.paid = null;
+    if (overview.summary.occupiedConfirmed != null) overview.summary.occupiedPartial = true;
+  }
 }

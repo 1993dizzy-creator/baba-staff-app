@@ -8,6 +8,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { tablesText } from '../lib/text/tables.ts';
 import * as detailDisplay from '../lib/sales/table-detail-display.ts';
 import * as menuDisplay from '../lib/sales/table-menu-display.ts';
+import * as refreshDisplay from '../lib/sales/table-detail-refresh.ts';
+import * as cleaningFeedback from '../lib/sales/table-cleaning-feedback.ts';
 import {projectTableDetail} from '../lib/sales/table-detail.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
@@ -21,6 +23,8 @@ function render(data, lang, { failed=false, loading=false, selected=null, detail
     '@/lib/language-context':{useLanguage:()=>({lang})}, '@/lib/text/tables':{tablesText},
     '@/lib/sales/table-detail-display':detailDisplay,
     '@/lib/sales/table-menu-display':menuDisplay,
+    '@/lib/sales/table-detail-refresh':refreshDisplay,
+    '@/lib/sales/table-cleaning-feedback':cleaningFeedback,
     './tables.module.css':{__esModule:true,default:new Proxy({},{get:(_,key)=>key})},
   };
   const code=ts.transpileModule(readFileSync('app/(protected)/tables/page.tsx','utf8'),{compilerOptions:{
@@ -220,10 +224,10 @@ for(const lang of ['ko','vi']){
  test(`${lang}: header dot follows the existing displayed state, with text and safe unknown fallback`,()=>{
   const data=overview({catalog:babaTableCatalog(),orders:[order('dot','BAR4')]}),tile=data.tables.find(t=>t.name==='BAR4');
   for(const state of ['occupied','paid','reserved','idle','unknown'])for(const snapshotStatus of ['ok','unavailable']){
-   const d={table:{...tile,state},snapshotAt:data.snapshotAt,snapshotStatus,current:[],latest:null,merges:[],cleaning:{enabled:false,reason:'no_payment'}};
+   const d={table:{...tile,state},businessDate:data.businessDate,snapshotAt:data.snapshotAt,snapshotStatus,current:[],latest:null,merges:[],cleaning:{enabled:false,reason:'no_payment'}};
    const html=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
    const shown=snapshotStatus==='ok'?state:'unknown',status=html.match(/<div class="sheetMeta">(.*?)<\/div>/s)[1];
-   assert.ok(status.includes(`class="stateDot" data-state="${shown}" aria-hidden="true"`));
+   assert.ok(status.includes(`class="stateDot" data-state="${shown}" aria-hidden="true"`),`${state}/${snapshotStatus}: ${status}`);
    assert.ok(status.includes(tablesText[lang].detailStates[shown]));assert.equal((html.match(/class="stateDot"/g)??[]).length,1);
   }
  });

@@ -10,7 +10,7 @@ const receipt=(changes={})=>({orderId:'paid-order',receiptId:1,paymentStatus:3,i
 test('fresh zero orders: actual 27 idle seats, no physical vacancy claim and real 0/0 counts',()=>{
  const v=view();assert.ok(v.tables.every(t=>t.state==='idle'));
  const {paidCumulative,paidCumulativeEvidence,...existing}=v.summary;
- assert.deepEqual(existing,{total:27,occupied:0,paid:0,free:null,reserved:null,unknown:0});
+ assert.deepEqual(existing,{total:27,occupied:0,occupiedConfirmed:0,occupiedPartial:false,paid:0,free:null,reserved:null,unknown:0});
  assert.equal(paidCumulative,0);assert.equal(paidCumulativeEvidence.reason,'verified_receipts');
 });
 test('before collection: waiting is not a failure, but unobserved counts stay null; actual read/collection failures remain unknown',()=>{

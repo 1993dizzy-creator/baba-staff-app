@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/lib/language-context";
 import { tablesText } from "@/lib/text/tables";
 import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
-import type { DetailReceipt, TableDetail } from "@/lib/sales/table-detail";
+import type { DetailReceipt } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, receiptOrderTimeRange, tablePaymentHistory, verifiedOrderStart, verifiedPaidReferenceTime, verifiedReceiptOrderUsage } from "@/lib/sales/table-detail-display";
 import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
+import { selectTableDetail, unavailableTableOverview, type TableDetailResult } from "@/lib/sales/table-detail-refresh";
+import { cleaningResponseFailure, type CleaningFailure } from "@/lib/sales/table-cleaning-feedback";
 import styles from "./tables.module.css";
 
 // One class per state colors the whole tile, the legend swatch and the sheet badge alike.
@@ -26,14 +28,15 @@ export default function TablesPage() {
   const { lang } = useLanguage();
   const t = tablesText[lang];
   const router = useRouter();
-  const [data, setData] = useState<TableOverview | null>(null);
+  const [received, setData] = useState<TableOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const data = useMemo(() => failed && received ? unavailableTableOverview(received) : received, [failed, received]);
   const [selected, setSelected] = useState<{ kind: "table" | "order"; id: string } | null>(null);
-  const [detailResult, setDetailResult] = useState<{ key: string; detail: TableDetail | null; failed: boolean } | null>(null);
-  const [saveState, setSaveState] = useState<{ id: string; busy: boolean; error: boolean } | null>(null);
+  const [detailResult, setDetailResult] = useState<TableDetailResult | null>(null);
+  const [saveState, setSaveState] = useState<{ id: string; busy: boolean; error: CleaningFailure | null } | null>(null);
   const saving = useRef(false);
-  const cleaningRequest = useRef<{ key: string; requestId: string } | null>(null);
+  const cleaningRequests = useRef(new Map<string, string>());
   const dialog = useRef<HTMLDialogElement>(null);
   const backdropPress = useRef(false);
   const request = useRef<AbortController | null>(null);
@@ -42,17 +45,16 @@ export default function TablesPage() {
     const controller = new AbortController();
     request.current = controller;
     setLoading(true);
-    setFailed(false);
     try {
       const response = await fetch("/api/tables", { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) });
       if (response.status === 401 || response.status === 403) {
         setData(null); setSelected(null); router.replace("/login"); return;
       }
       const result = await response.json();
-      if (!response.ok || !result.ok || !result.overview) throw Error("unavailable");
+      if (!response.ok || !result.ok || !result.overview || !Number.isFinite(Date.parse(result.overview.serverNow))) throw Error("unavailable");
       if (!controller.signal.aborted) { setData(previous => preferLatestOverview(previous, result.overview)); setFailed(false); }
     } catch {
-      if (!controller.signal.aborted) { setData(null); setSelected(null); setFailed(true); }
+      if (!controller.signal.aborted) setFailed(true);
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
@@ -75,9 +77,12 @@ export default function TablesPage() {
   }, [selected]);
 
   useEffect(() => {
-    if (selected?.kind !== "table" || !data) return;
+    if (selected?.kind !== "table" || !data || failed) return;
     const controller = new AbortController();
     const key = `${selected.id}:${data.serverNow}`;
+    setDetailResult(previous => ({ key: previous?.key ?? key,
+      detail: previous?.detail?.table.id === selected.id && previous.detail.businessDate === data.businessDate ? previous.detail : null,
+      failed: false, pending: true }));
     void (async () => {
       try {
         const response = await fetch(`/api/tables/${encodeURIComponent(selected.id)}/detail`, {
@@ -86,53 +91,78 @@ export default function TablesPage() {
         if (controller.signal.aborted) return;
         if (response.status === 401 || response.status === 403) { setSelected(null); router.replace("/login"); return; }
         const result = await response.json();
-        if (!response.ok || !result.ok || !result.detail || result.detail.table?.id !== selected.id) throw Error("detail_unavailable");
-        if (!controller.signal.aborted) setDetailResult({ key, detail: result.detail, failed: false });
+        if (!response.ok || !result.ok || !result.detail || result.detail.table?.id !== selected.id || result.detail.businessDate !== data.businessDate) throw Error("detail_unavailable");
+        if (!controller.signal.aborted) setDetailResult(previous => {
+          if (previous?.detail?.table.id === selected.id && previous.detail.businessDate === data.businessDate
+            && Date.parse(result.detail.snapshotAt ?? "") < Date.parse(previous.detail.snapshotAt ?? "")) return { ...previous, pending: false, failed: true };
+          return { key, detail: result.detail, failed: false, pending: false };
+        });
+        if (!controller.signal.aborted && result.detail.snapshotStatus === "ok") setSaveState(previous => previous?.id === selected.id && previous.error?.kind === "saved_refresh" ? { ...previous, error: null } : previous);
       } catch {
-        if (!controller.signal.aborted) setDetailResult({ key, detail: null, failed: true });
+        if (!controller.signal.aborted) setDetailResult(previous => ({ key: previous?.key ?? key,
+          detail: previous?.detail?.table.id === selected.id && previous.detail.businessDate === data.businessDate ? previous.detail : null,
+          failed: true, pending: false }));
       }
     })();
     return () => controller.abort();
-  }, [selected, data, router]);
+  }, [selected, data, failed, router]);
 
-  const detail = selected?.kind === "table" && detailResult?.key === `${selected.id}:${data?.serverNow}` ? detailResult.detail : null;
-  const detailFailed = selected?.kind === "table" && detailResult?.key === `${selected.id}:${data?.serverNow}` && detailResult.failed;
-  const tile = detail?.table ?? (selected?.kind === "table" ? data?.tables.find(item => item.id === selected.id) : null);
+  const presentation = selectTableDetail(detailResult, data, selected?.kind === "table" ? selected.id : undefined);
+  const detail = presentation.detail;
+  const detailFailed = selected?.kind === "table" && !!detailResult?.failed;
+  const detailFresh = presentation.fresh;
+  const tile = presentation.tile;
   const unlinked = selected?.kind === "order" ? data?.unlinked.find(item => item.id === selected.id) : null;
   const detailOrders = tile?.orders ?? (unlinked ? [unlinked] : []);
   const currentOrders = detailOrders.filter(order => order.verifiedOpen);
   const retainedOrders = detailOrders.filter(order => !order.verifiedOpen);
   const cleaningReason = tile?.state === "occupied" || currentOrders.length ? t.cleaningReasons.active_orders
     : tile?.state === "unknown" ? t.cleaningReasons.snapshot_unhealthy
-    : detail ? t.cleaningReasons[detail.cleaning.reason] : detailFailed ? t.historyFailed : t.historyLoading;
-  const snapshotStatus = detail?.snapshotStatus ?? data?.snapshotStatus;
-  const snapshotAt = detail?.snapshotAt ?? data?.snapshotAt ?? null;
-  const elapsed = tile && data ? tile.state === "paid" ? paidOrderElapsedMinutes(detail)
+    : !detailFresh ? detailFailed ? t.historyFailed : t.historyLoading
+    : detail ? t.cleaningReasons[detail.cleaning.reason] : t.historyLoading;
+  const snapshotStatus = presentation.snapshotStatus;
+  const snapshotAt = presentation.snapshotAt;
+  const elapsed = tile && data ? tile.state === "paid" ? (snapshotStatus === "ok" && tile.lastPaidAt === detail?.table.lastPaidAt ? paidOrderElapsedMinutes(detail) : null)
     : orderElapsedMinutes(tile, snapshotAt, data.serverNow, snapshotStatus ?? "") : null;
   const usage = detail?.usage;
   const usageCurrent = !!usage && snapshotStatus === "ok" && usage.snapshotAt === detail?.snapshotAt;
   const usageCount = usageCurrent && usage?.status === "confirmed_order_basis" ? usage.count : null;
-  const standaloneReceipt = tile?.state !== "occupied" ? detail?.latest ?? null : null;
+  const standaloneReceipt = tile?.state !== "occupied" && !presentation.paymentChanged ? detail?.latest ?? null : null;
   const paymentHistory = tablePaymentHistory(detail, standaloneReceipt?.id);
-  const compactWarning = saveState?.id === tile?.id && saveState?.error ? t.cleanFailed
+  const cleaningFailure = saveState && saveState.id === tile?.id ? saveState.error : null;
+  const compactWarning = cleaningFailure && cleaningFailure.kind !== "saved_refresh" ? t.cleaningErrors[cleaningFailure.kind]
     : detailFailed && tile?.state !== "idle" ? t.historyUnavailableShort
     : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
   const cleanTable = async () => {
-    if (saving.current || !tile || tile.state !== "paid" || !detail?.cleaning.enabled || !detail.cleaning.token) return;
-    const id = tile.id, token = detail.cleaning.token, key = `${id}:${token.evidenceKey}`;
-    if (cleaningRequest.current?.key !== key) cleaningRequest.current = { key, requestId: crypto.randomUUID() };
+    if (saving.current || !detailFresh || !tile || tile.state !== "paid" || !detail?.cleaning.enabled || !detail.cleaning.token) return;
+    const id = tile.id, token = detail.cleaning.token, key = `${token.businessDate}:${id}:${token.receiptId}:${token.evidenceKey}`;
     saving.current = true;
-    setSaveState({ id, busy: true, error: false });
+    setSaveState({ id, busy: true, error: null });
+    let attempted = false;
     try {
+      if (!cleaningRequests.current.has(key)) cleaningRequests.current.set(key, crypto.randomUUID());
+      attempted = true;
       const response = await fetch(`/api/tables/${encodeURIComponent(id)}/clean`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...token, requestId: cleaningRequest.current.requestId }), signal: AbortSignal.timeout(20_000) });
-      if (response.status === 401 || response.status === 403) { setSelected(null); router.replace("/login"); return; }
-      const result = await response.json();
-      if (!response.ok || !result.ok || !result.overview) throw Error("cleaning_failed");
-      setData(previous => preferLatestOverview(previous, result.overview));
-      setSaveState({ id, busy: false, error: false });
+        body: JSON.stringify({ ...token, requestId: cleaningRequests.current.get(key) }), signal: AbortSignal.timeout(20_000) });
+      if (response.status === 401) { setSelected(null); router.replace("/login"); return; }
+      const result = await response.json().catch(() => ({ ok: false, code: response.ok ? "INVALID_RESPONSE" : "CLEANING_UNAVAILABLE" }));
+      if (!response.ok || !result.ok) {
+        setSaveState({ id, busy: false, error: cleaningResponseFailure(response.status, result) });
+        setDetailResult(previous => previous?.detail?.table.id === id ? { ...previous, pending: true } : previous);
+        await load(); return;
+      }
+      setDetailResult(previous => previous?.detail?.table.id === id ? { ...previous, pending: true } : previous);
+      if (result.overview) {
+        setData(previous => preferLatestOverview(previous, result.overview));
+        setSaveState({ id, busy: false, error: null });
+      } else if (result.saved === true && result.refreshRequired) {
+        setSaveState({ id, busy: false, error: { kind: "saved_refresh", code: "CLEANING_SAVED_REFRESH_REQUIRED", stage: "reload" } });
+        await load();
+      } else throw Error("invalid_cleaning_response");
     } catch {
-      setSaveState({ id, busy: false, error: true });
+      setSaveState({ id, busy: false, error: { kind: attempted ? "network" : "request", code: attempted ? "CLEANING_NETWORK" : "CLEANING_REQUEST_FAILED" } });
+      setDetailResult(previous => previous?.detail?.table.id === id ? { ...previous, pending: true } : previous);
+      await load();
     } finally { saving.current = false; }
   };
   const areaName = (key: string) => key === "bar" ? t.bar : key === "floor1" ? t.floor1 : key === "floor2" ? t.floor2 : key.replace(/^other:/, "");
@@ -140,7 +170,7 @@ export default function TablesPage() {
   const diagnostic = data ? data.catalogStatus !== "ok" ? t.unavailable
     : data.snapshotStatus === "waiting" ? t.waiting
     : data.snapshotStatus !== "ok" ? t.unavailable
-    : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 ? t.partial : null : null;
+    : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 || data.summary.occupiedPartial ? t.partial : null : null;
   // The basis is the last successful order collection that decided the states, never the browser clock.
   const basisWarning = failed || !!data && (data.catalogStatus !== "ok" || !["ok", "waiting"].includes(data.snapshotStatus));
   const orderView = (order: TableOrder, index: number, current = false) => <article key={order.id} className={styles.order}>
@@ -173,7 +203,7 @@ export default function TablesPage() {
     </div>
   </article>;
   const receiptView = (receipt: DetailReceipt) => {
-    const timing = verifiedReceiptOrderUsage(receipt, snapshotAt, snapshotStatus ?? "", detail?.businessDate ?? "");
+    const timing = verifiedReceiptOrderUsage(receipt, detail?.snapshotAt ?? null, snapshotStatus === "ok" ? detail?.snapshotStatus ?? "" : "unavailable", detail?.businessDate ?? "");
     return <article key={receipt.id} className={styles.receipt}>
     <div className={styles.receiptHeading}>
       <details className={styles.receiptInfo}><summary title={t.receiptInfo}>
@@ -208,8 +238,9 @@ export default function TablesPage() {
     <h1 className={styles.srOnly}>{t.title}</h1>
     <header className={styles.overviewBar}>
       <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paidCumulative"] as const).map(key =>
-        <div key={key} title={key === "paidCumulative" ? t.paidCumulativeHelp : undefined}><dt>{t.summaryLabels[key]}</dt><dd>{data?.summary[key] ?? "—"}
+        <div key={key} title={key === "paidCumulative" ? t.paidCumulativeHelp : key === "occupied" && data?.summary.occupiedPartial ? t.confirmedOccupied : undefined}><dt>{t.summaryLabels[key]}</dt><dd>{key === "occupied" && data?.summary.occupied == null && data?.summary.occupiedConfirmed != null && data.summary.occupiedPartial ? `${data.summary.occupiedConfirmed}+` : data?.summary[key] ?? "—"}
           {key === "paidCumulative" && data?.summary.paidCumulative == null ? <span className={styles.srOnly}>{t.paidCumulativeReview}</span> : null}
+          {key === "occupied" && data?.summary.occupiedPartial && data.summary.occupiedConfirmed != null ? <span className={styles.srOnly}>{t.confirmedOccupied}</span> : null}
         </dd></div>)}</dl>
       <p className={cx(styles.basis, basisWarning && styles.basisWarning)}>
         {basisWarning ? <span className={styles.warnMark} aria-hidden="true">!</span> : null}
@@ -225,7 +256,7 @@ export default function TablesPage() {
     {loading && !data ? <div role="status" className={styles.loadingCard}>
       <span className={styles.spinner} aria-hidden="true" /><span>{t.loading}</span>
     </div> : null}
-    {failed ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
+    {failed && !loading ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
     {data && data.summary.paidCumulative == null ? <p className={styles.cumulativeReview}>{t.paidCumulativeReview}</p> : null}
     <div className={styles.statusRow}>
       <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}
@@ -283,17 +314,16 @@ export default function TablesPage() {
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
       </div><div className={styles.sheetActions}>
-        {tile?.state === "paid" && snapshotStatus === "ok" ? <button disabled={!detail?.cleaning.enabled || saveState?.busy} className={styles.cleanButton}
-          aria-label={t.cleanAction} title={detail?.cleaning.enabled ? t.cleanAction : cleaningReason} aria-describedby="table-cleaning-reason"
+        {tile?.state === "paid" && snapshotStatus === "ok" ? <button disabled={!detailFresh || !detail?.cleaning.enabled || saveState?.busy} className={styles.cleanButton}
+          aria-label={t.cleanAction} title={detailFresh && detail?.cleaning.enabled ? t.cleanAction : cleaningReason} aria-describedby="table-cleaning-reason"
           aria-busy={saveState?.id === tile.id && saveState.busy} onClick={() => void cleanTable()}>🧹</button> : null}
         <button className={styles.closeButton} aria-label={t.close} title={t.close} onClick={() => setSelected(null)}>×</button>
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
-      {compactWarning ? <p role="alert" className={styles.compactWarning}>{compactWarning}</p> : null}
-      {tile?.paymentObservation && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>
-        {tile.paymentObservation.expired ? t.automaticallyRetired : <>{t.paymentObserved} {clock(tile.paymentObservation.firstVerifiedAt)}
-          {" · "}{t.automaticUntil} {clock(tile.paymentObservation.expiresAt)}</>}
-      </p> : null}
+      {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code} data-status={cleaningFailure?.status}>{compactWarning}</p> : null}
+      {detail && !detailFresh ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
+      {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
+      {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}
       {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>

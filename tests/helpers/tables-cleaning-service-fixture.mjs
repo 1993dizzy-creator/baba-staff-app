@@ -16,13 +16,16 @@ export async function cleaningServiceFixture({auto=false}={}){
  await db.exec('update table_operations_private.config set enabled=true');
  let activation=null;
  if(auto){await db.exec(AUTO_NORMAL);activation=await enableAuto(db);}
- let failWrite=false,changeBeforeWrite=null;
+ let failWrite=false,changeBeforeWrite=null,failRead=false,failReadAfterWrite=false;
  const adapter={rpc(name,args){return {abortSignal:async()=>{
+  if(['tables_cleaning_context_v1','tables_auto_context_v1'].includes(name)&&failRead)return {data:null,error:{code:'offline'}};
   if(name==='tables_cleaning_confirm_v1'&&failWrite)return {data:null,error:{code:typeof failWrite==='string'?failWrite:'offline'}};
   if(name==='tables_cleaning_confirm_v1'&&changeBeforeWrite)await changeBeforeWrite(db);
   if(!['tables_cleaning_context_v1','tables_cleaning_confirm_v1','tables_auto_context_v1','tables_observe_payments_v1'].includes(name))throw Error('Unexpected RPC');
   const fields=Object.keys(args),values=Object.values(args).map(v=>typeof v==='object'?JSON.stringify(v):v);
-  try{return {data:(await db.query(`select public.${name}(${fields.map((k,i)=>`${k} => $${i+1}`).join(',')}) r`,values)).rows[0].r,error:null};}
+  try{const data=(await db.query(`select public.${name}(${fields.map((k,i)=>`${k} => $${i+1}`).join(',')}) r`,values)).rows[0].r;
+   if(name==='tables_cleaning_confirm_v1'&&data?.saved&&failReadAfterWrite)failRead=true;
+   return {data,error:null};}
   catch(error){return {data:null,error:{code:error.code,message:error.message}};}
  }};}};
  const deps={'server-only':{},'@/lib/supabase/server':{supabaseServer:adapter},
@@ -40,5 +43,6 @@ export async function cleaningServiceFixture({auto=false}={}){
    orders:state.context.snapshot.orders,receipts:state.context.receipts,now:new Date(),historyFrom:state.day});
   return service.decorateCleaningDetail(result);
  }
- return {db,day,service,tableId,getDetail,adapter,activation,context:()=>context(db,day),setFailWrite:value=>{failWrite=value;},setBeforeWrite:fn=>{changeBeforeWrite=fn;}};
+ return {db,day,service,tableId,getDetail,adapter,activation,context:()=>context(db,day),setFailWrite:value=>{failWrite=value;},setBeforeWrite:fn=>{changeBeforeWrite=fn;},
+  setFailRead:value=>{failRead=value;},setFailReadAfterWrite:value=>{failReadAfterWrite=value;}};
 }
