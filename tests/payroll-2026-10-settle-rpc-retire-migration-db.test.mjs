@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readdirSync} from 'node:fs';
 import {PGlite} from '@electric-sql/pglite';
 import {btree_gist} from '@electric-sql/pglite/contrib/btree_gist';
 import {install,read} from './helpers/payroll-batch-safety-fixture.mjs';
@@ -64,22 +65,62 @@ test('standard payroll for another month still pays, cancels and completes after
   }finally{await db.close();}
 });
 
-test('guard: an October batch that is not the recorded special settlement aborts and drops nothing',async()=>{
+// Every refused precondition: nothing dropped, no row or function changed (whole transaction rolled back).
+async function assertRefused(db,pattern,label){
+  const rows=await state(db),fns=await functions(db);
+  await assert.rejects(retire(db),pattern,label);
+  assert.ok(await exists(db,SETTLE_SIG),label);assert.ok(await exists(db,FINAL_SIG),label);
+  assert.deepEqual(await functions(db),fns,label);assert.deepEqual(await state(db),rows,label);
+}
+// Fixture-only tampering of a settled synthetic DB (append-only triggers bypassed for the fixture only).
+async function tampered(sql){
+  const db=await database();await settle(db,syntheticPlan());
+  await db.exec(`set session_replication_role=replica;${sql};set session_replication_role=origin;`);
+  return db;
+}
+const copyRequest="insert into payroll_special_settlement_requests(payroll_month,request_key,request_hash,plan_hash,user_ids,result,created_by) select payroll_month,'request-key-0002-abcdef',request_hash,plan_hash,user_ids,result,created_by from payroll_special_settlement_requests";
+const copyApplied="insert into payroll_payment_audit_logs(payroll_batch_id,action,actor_user_id,reason,after_snapshot) select payroll_batch_id,action,actor_user_id,reason,after_snapshot from payroll_payment_audit_logs where action='special_settlement_applied'";
+
+test('guard: no October batch (fresh replay, or other months only) is refused',async()=>{
+  const fresh=await install(new PGlite({extensions:{btree_gist}}));try{
+    await fresh.exec(read(MIGRATION));await assertRefused(fresh,/PRECONDITION:batch_count:0/,'fresh replay');
+  }finally{await fresh.close();}
   const db=await database();try{
-    await db.query(`select payroll_pay_employee_v3('2026-10-01',$1,201,$2,'h',1000000,1000000,null,'2026-11-10',2,1,'monthly-payroll-v12','{}',0)`,[JSON.stringify(targets(IDS)),JSON.stringify(snapshot())]);
-    const rows=await state(db),fns=await functions(db);
-    await assert.rejects(retire(db),/PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION/);
-    assert.ok(await exists(db,SETTLE_SIG));assert.ok(await exists(db,FINAL_SIG));
-    assert.deepEqual(await functions(db),fns);assert.deepEqual(await state(db),rows);
+    const done=(await db.query(`select payroll_pay_employee_v3('2026-09-01',$1,201,$2,'h',500000,500000,null,'2026-11-12',1,1,'monthly-payroll-v12','{}',0) r`,[JSON.stringify(targets([201])),JSON.stringify(snapshot())])).rows[0].r;
+    assert.equal(done.status,'completed');
+    await assertRefused(db,/PRECONDITION:batch_count:0/,'September batch only');
   }finally{await db.close();}
 });
 
-test('fresh replay without any October batch applies cleanly',async()=>{
+test('guard: an incomplete October batch is refused',async()=>{
+  const db=await database();try{
+    await db.query(`select payroll_pay_employee_v3('2026-10-01',$1,201,$2,'h',1000000,1000000,null,'2026-11-10',2,1,'monthly-payroll-v12','{}',0)`,[JSON.stringify(targets(IDS)),JSON.stringify(snapshot())]);
+    await assertRefused(db,/PRECONDITION:status:paying/,'paying batch');
+  }finally{await db.close();}
+});
+
+for(const [label,sql,pattern] of [
+  // payroll_payment_batches_completion_check already forces paid = target on a completed batch.
+  ['batch employee counts differ from 17',"update payroll_payment_batches set target_employee_count=18,paid_employee_count=18",/PRECONDITION:employees:18\/18\/17/],
+  // payroll_employee_payments_state_check is dropped in the fixture only, to reach a 16-paid-row state.
+  ['paid payment rows differ from 17',"alter table payroll_employee_payments drop constraint payroll_employee_payments_state_check;update payroll_employee_payments set payment_status='unpaid' where user_id=217",/PRECONDITION:employees:17\/17\/16/],
+  ['no settlement request',"delete from payroll_special_settlement_requests",/PRECONDITION:requests:0/],
+  ['two settlement requests',copyRequest,/PRECONDITION:requests:2/],
+  ['no applied audit row',"delete from payroll_payment_audit_logs where action='special_settlement_applied'",/PRECONDITION:applied_audit:0\/0/],
+  ['two applied audit rows',copyApplied,/PRECONDITION:applied_audit:2\/2/],
+  ['shared function missing',"drop function payroll_refresh_payment_tax_totals_v1(bigint)",/PRECONDITION:shared_functions/],
+  ['another object depends on a target (RESTRICT)',"create view qa_depends_on_final_state as select payroll_settle_2026_10_final_state_v1(null::date,'[]'::jsonb,0,0,0) x",/depend/],
+])test(`guard: ${label} rolls back everything`,async()=>{
+  const db=await tampered(sql);try{await assertRefused(db,pattern,label);}finally{await db.close();}
+});
+
+test('fresh full replay is already impossible upstream: applied correction 20261115085910 aborts without its pinned rows',async()=>{
   const db=await install(new PGlite({extensions:{btree_gist}}));try{
-    await db.exec(read(MIGRATION));
-    await retire(db);
-    assert.equal(await exists(db,SETTLE_SIG),false);assert.equal(await exists(db,FINAL_SIG),false);
-    for(const sig of SHARED)assert.ok(await exists(db,sig),sig);
+    // Empty stand-ins only so its LOCK TABLE line runs; its first check reads payroll_employee_payments.
+    for(const t of ['employee_level_program_versions','employee_level_audit_logs','payroll_part_time_extra_work_decisions'])
+      await db.exec(`create table if not exists public.${t}(id bigint)`);
+    const dir='supabase/migrations',name=readdirSync(dir).find(n=>n.startsWith('20261115085910_'));
+    await assert.rejects(db.exec(read(`${dir}/${name}`)),/PAID_PAYMENT_BASELINE_MISMATCH: rows 0/);
   }finally{await db.close();}
 });
 
