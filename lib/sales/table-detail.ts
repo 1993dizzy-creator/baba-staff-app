@@ -18,6 +18,7 @@ export type DetailReceipt = {
   lines: { id: number; name: string; quantity: number | null; amount: number | null; canceled: boolean }[];
 };
 export type TableDetail = {
+  collection?: TableOverview["collection"];
   table: TableTile; businessDate: string; snapshotAt: string | null; snapshotStatus: string;
   historyFrom: string; current: DetailReceipt[]; previous: DetailReceipt[]; latest: DetailReceipt | null;
   usage: DailyTableUsage;
@@ -100,6 +101,7 @@ export function projectTableDetail(input: {
     : overview.snapshotStatus !== "ok" || table.state === "unknown" ? "snapshot_unhealthy"
     : merges.length ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
   return { table, businessDate: overview.businessDate, snapshotAt: overview.snapshotAt, snapshotStatus: overview.snapshotStatus,
+    collection: overview.collection,
     usage: projectDailyTableUsage({ ...input, receipts, merges }),
     paidUsage: table.state === "paid" && !table.orders.some(o => o.verifiedOpen) && latest?.referenceAt === table.lastPaidAt ? latest.orderUsage ?? null : null,
     historyFrom, current, previous, latest, merges, cleaning: { enabled: false, reason }, timer: { enabled: false, reason: "unverified_payment_time" } };

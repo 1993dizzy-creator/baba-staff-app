@@ -24,7 +24,7 @@ const occupied = [['o1', '1', '18:46'], ['o13', '13', '19:32'], ['o18', '18', '1
   ['oBAR9', 'BAR9', '17:38'], ['oBAR11', 'BAR11', '20:17'], ['oBAR7', 'BAR7', '20:22'], ['o6', '6', '20:22']];
 
 const build = transition => buildTableOverview({
-  businessDate, now, enabled: true, catalog: babaTableCatalog(), sync, collectionExpected: true, cutoff: '03:00',
+  businessDate, now, enabled: true, catalog: babaTableCatalog(), sync, cutoff: '03:00',
   orders: [...paidBefore.map(([id, , start]) => paidOrder(id, start)), ...occupied.map(([id, table, start]) => open(id, table, start)),
     ...transition.orders],
   receipts: [...paidBefore.map(([id, table, , paid], i) => receipt(8000 + i, id, table, paid)), ...transition.receipts],

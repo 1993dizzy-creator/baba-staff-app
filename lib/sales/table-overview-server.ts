@@ -4,7 +4,6 @@ import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adap
 import { addStoreDays } from "@/lib/store-settings/business-time-core";
 import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
 import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyncState } from "@/lib/pos/cukcuk/open-orders-core";
-import { evaluateOpenOrdersCronWindow } from "@/lib/pos/cukcuk/open-orders-cron-policy";
 import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
 import { buildTableOverview, type TableReceipt } from "./table-overview";
@@ -59,6 +58,8 @@ export async function readTableOverview(now = new Date()) {
         ? payload.orders.map(order => ({ ...order, totalAmount: typeof order?.totalAmount === "number" ||
           typeof order?.totalAmount === "string" && order.totalAmount.trim() ? Number(order.totalAmount) : NaN, raw: {} })) : null;
       if (!validOrders(rows)) throw Error("SNAPSHOT_INVALID");
+      // Keep already-read facts as unverified history if receipt reads fail below.
+      orders = rows;
       type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string; table_name: string | null; ref_date: string | null;
         final_amount: number | string | null; ref_no: string | null; status_changed_at: string | null };
       const evidence = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
@@ -69,7 +70,6 @@ export async function readTableOverview(now = new Date()) {
       receipts = evidence.data.map(row => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
         isCanceled: row.is_canceled, businessDate: row.business_date, tableName: row.table_name, paidAt: row.ref_date }));
       receiptVersions = Object.fromEntries(evidence.data.map(row => [row.id, JSON.stringify([row.final_amount, row.ref_no, row.status_changed_at])]));
-      orders = rows;
     } catch {
       // Retain the last successful timestamp for the operator, but never certify old rows as current.
       readFailed = true;
@@ -77,6 +77,5 @@ export async function readTableOverview(now = new Date()) {
     }
   }
   return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts, readFailed,
-    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot, receiptVersions,
-    collectionExpected: businessTime.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
+    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot, receiptVersions });
 }

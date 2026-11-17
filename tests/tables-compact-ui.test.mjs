@@ -116,7 +116,7 @@ for(const lang of ['ko','vi']){
 
  test(`${lang}: failures remain visible and missing counts are never replaced by zero`,()=>{
   const data=overview({catalog:babaTableCatalog(),enabled:false}),t=tablesText[lang],html=render(data,lang);
-  assert.ok(html.includes(t.unavailable));assert.ok(html.includes('<dd>\u2014</dd>'));
+  assert.ok(html.includes(t.collectionErrors.disabled));assert.ok(html.includes('<dd>\u2014</dd>'));
   assert.ok(html.match(/<p class="basis basisWarning">.*?<\/p>/s)[0].includes(t.basisWarning));
   const error=render(null,lang,{failed:true});assert.ok(error.includes(t.failed));
   // No snapshot: the basis shows a dash, never the browser's current time.
@@ -293,14 +293,14 @@ for(const lang of ['ko','vi']) {
    const html=render(view,lang,{selected:{kind:'table',id:table.id},detail});
    assert.equal(view.beforeOpening,before,clock);
    assert.equal(html.includes(t.beforeOpening),before,clock);
-   assert.equal(html.includes(t.paidCumulativeReview),!before,clock);
-   assert.equal(html.includes(t.waiting),!before && view.snapshotStatus==='waiting',clock);
-   assert.equal(html.includes(t.collectionCheck),!before,clock);
-   assert.ok(html.includes(before?t.beforeOpeningLabel:t.detailStates.unknown));
+   assert.equal(html.includes(t.paidCumulativeReview),!view.collection.normalWaiting,clock);
+   assert.equal(html.includes(t.waiting),false,clock);
+   assert.equal(html.includes('class="compactWarning"'),!view.collection.normalWaiting,clock);
+   assert.ok(html.includes(before?t.beforeOpeningLabel:view.collection.normalWaiting?t.beforeOrdersLabel:t.detailStates.unknown));
    if(before)assert.ok(html.includes('class="emptyOrder idleEmpty"'));
    assert.equal(view.summary.total,27);assert.equal(view.summary.occupied,null);assert.equal(view.summary.paidCumulative,null);
    const withoutMetadata=beforeOpeningScene(clock,{businessTime:undefined}).view;
-   assert.deepEqual({...view,beforeOpening:false},withoutMetadata);
+   assert.deepEqual(view,withoutMetadata);
    assert.equal(JSON.stringify(view),original);
    assert.equal(view.businessDate,clock<'03:00'?'2026-11-16':'2026-11-17');
   }
@@ -320,7 +320,7 @@ for(const lang of ['ko','vi']) {
    const {view,table,detail}=beforeOpeningScene('11:53',changes);
    const html=render(view,lang,{selected:{kind:'table',id:table.id},detail});
    assert.equal(html.includes(t.beforeOpening),!table.orders.length && !table.lastPaidAt);assert.ok(html.includes(t.paidCumulativeReview));
-   assert.ok(html.includes(t.collectionCheck)||html.includes(t.orderCheck));
+   assert.ok(html.includes(t.collectionErrors[view.collection.health])||html.includes(t.collectionCheck)||html.includes(t.orderCheck));
   }
   const {view,table,detail}=beforeOpeningScene();
   assert.ok(render(view,lang,{failed:true,selected:{kind:'table',id:table.id},detail}).includes(t.beforeOpening));
@@ -363,7 +363,7 @@ for(const lang of ['ko','vi']){
    assert.ok(html.includes(t.detailErrors.detail));assert.ok(!html.includes(t.historyUnavailableShort));
   }
   const active=beforeOpeningScene('17:30',{readFailed:true}),html=render(active.view,lang,{selected,detailFailed:true,failure:refreshDisplay.detailFailure('snapshot',503)});
-  assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes('class="compactWarning"'));assert.ok(html.includes(t.detailErrors.snapshot));assert.ok(html.includes(t.unavailable));
+  assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes('class="compactWarning"'));assert.ok(html.includes(t.detailErrors.snapshot));assert.ok(html.includes(t.collectionErrors.read_failed));
  });
 }
 
@@ -378,4 +378,17 @@ for(const lang of ['ko','vi'])test(`${lang}: detail header keeps close and paid 
   assert.equal(actions.includes(`aria-label="${t.cleanAction}"`),paid);
   assert.equal((html.match(/class="refresh"/g)??[]).length,1);
  }
+});
+
+for(const lang of ['ko','vi'])test(`${lang}: reception and first-collection grace have neutral modal labels; read failures never get grace`,()=>{
+ const t=tablesText[lang];
+ for(const [clock,message,label]of [['16:00',t.beforeOrders,t.beforeOrdersLabel],['16:59',t.beforeOrders,t.beforeOrdersLabel],['17:00',t.firstCollectionWaiting,t.collectionWaitingLabel],['17:02',t.firstCollectionRunning,t.collectionWaitingLabel],['17:06',t.firstCollectionRunning,t.collectionWaitingLabel]]){
+  const {view,table,detail}=beforeOpeningScene(clock),selected={kind:'table',id:table.id};
+  const html=render(view,lang,{selected,detail});assert.ok(html.includes(message));assert.ok(html.includes(label));assert.ok(!html.includes('class="compactWarning"'));
+  assert.ok(html.includes('data-state="unknown"'));assert.equal(view.summary.occupied,null);
+  const fail=render(view,lang,{selected,detail,detailFailed:true,failure:refreshDisplay.detailFailure('snapshot',503)});
+  assert.ok(fail.includes(t.detailErrors.snapshot));assert.ok(fail.includes('class="compactWarning"'));assert.ok(!fail.includes('<span>'+message+'</span></p>'));
+ }
+ const {view,table,detail}=beforeOpeningScene('17:07');const delayed=render(view,lang,{selected:{kind:'table',id:table.id},detail});
+ assert.ok(delayed.includes(t.collectionErrors.delayed));assert.ok(delayed.includes('class="compactWarning"'));
 });

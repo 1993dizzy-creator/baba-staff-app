@@ -15,9 +15,9 @@ import { evaluateOpenOrdersCronWindow } from '../lib/pos/cukcuk/open-orders-cron
 
 export const receipt = (id, changes={}) => ({id,order_id:'paid-'+id,ref_no:String(id),business_date:businessDate,
  table_name:'BAR4',ref_date:now.toISOString(),final_amount:'100000',payment_status:3,is_canceled:false,status_changed_at:null,...changes});
-export function fixture({rows=[],orders=[],name='BAR4',at=now,day=businessDate,sync,collectionExpected=true}={}) {
+export function fixture({rows=[],orders=[],name='BAR4',at=now,day=businessDate,sync}={}) {
  const catalog=babaTableCatalog();
- const view=overview({catalog,orders,now:at,businessDate:day,collectionExpected,...(sync===undefined?{}:{sync}),
+ const view=overview({catalog,orders,now:at,businessDate:day,...(sync===undefined?{}:{sync}),
   receipts:rows.map(r=>({orderId:r.order_id??'',receiptId:r.id,businessDate:r.business_date,tableName:r.table_name,
    paidAt:r.ref_date,paymentStatus:r.payment_status,isCanceled:r.is_canceled}))});
  return projectTableDetail({table:view.tables.find(t=>t.name===name),catalog:catalog.tables,overview:view,orders,receipts:rows,now:at,historyFrom:addStoreDays(day,-7)});
@@ -58,7 +58,7 @@ test('current order wins; no cleanup or timer at 29:59, 30:00 or 30:01 using unc
 test('03:00 boundary and previous history: old receipts never become current settlements',()=>{
  for(const stamp of ['2026-11-14T02:59:59+07:00','2026-11-14T03:00:00+07:00']){
   const at=new Date(stamp),day=calculateStoreBusinessDate(at),r=receipt(1);
-  const d=fixture({rows:[r],at,day,sync:null,collectionExpected:false});
+  const d=fixture({rows:[r],at,day,sync:null,});
   assert.equal(d.current.length,day===businessDate?1:0);assert.equal(d.previous.length,day===businessDate?0:1);
   assert.equal(d.cleaning.enabled,false);
  }

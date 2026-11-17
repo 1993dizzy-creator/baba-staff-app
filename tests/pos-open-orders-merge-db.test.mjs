@@ -409,7 +409,7 @@ test('/tables after the merge: merged tables are history (not occupied, not unkn
     const receipts = (await links(db)).map(r => ({ ...r, tableName: '2', paidAt: at(20) }));
     const nowAt = new Date(Date.parse(snapshot.sync.lastSuccessAt) + 30_000);
     const view = buildTableOverview({ businessDate: date, now: nowAt, enabled: true, catalog: babaTableCatalog(), cutoff: '03:00',
-      collectionExpected: true, sync: snapshot.sync, orders: snapshot.orders, receipts });
+      sync: snapshot.sync, orders: snapshot.orders, receipts });
     const state = name => view.tables.find(t => t.name === name).state;
     assert.equal(state('BAR9'), 'idle');
     assert.equal(state('BAR11'), 'idle');
