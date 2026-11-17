@@ -20,6 +20,7 @@ export type TableOrder = {
   lines: { id: string; name: string; quantity: number; price: number; amount: number; option: boolean; canceled: boolean }[] | null;
 };
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
+  detailEvidence?: string;
   paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
 export type TableOverview = {
   beforeOpening?: boolean;
@@ -67,6 +68,7 @@ export function buildTableOverview(input: {
   businessDate: string; now: Date; catalog: TableCatalog; sync: OpenOrderSyncState | null;
   orders: CollectedOrder[]; receipts: TableReceipt[]; enabled: boolean; readFailed?: boolean;
   cutoff?: string; collectionExpected?: boolean; businessTime?: BusinessTimeSnapshot;
+  receiptVersions?: Record<number, string>;
 }): TableOverview {
   const { businessDate, now, catalog, sync } = input;
   const canonicalReceipts = new Map<number, TableReceipt>();
@@ -195,6 +197,16 @@ export function buildTableOverview(input: {
     else if (unlocatedOrder || receiptIssue || matches.some(order => convertedIds.has(order.id) && !paidByOrder.has(order.id))) state = "unknown";
     else if (snapshotOk && last) state = "paid";
     return { ...table, area: table.displayArea ?? tableArea(table.areaName), state, orders: matches,
+      // Include receipt/closure changes that may leave the displayed state and paid time unchanged.
+      // Explicit fields only: never expose provider raw/customer data or collection timestamps.
+      detailEvidence: JSON.stringify([
+        orders.filter(order => matches.some(match => match.id === order.orderId)).map(order =>
+          [order.orderId, order.status, order.closureReceiptId, order.closureMergedIntoOrderId]).sort(),
+        receipts.filter(receipt => receipt.tableName && nameKey(receipt.tableName) === nameKey(table.name)
+          || matches.some(match => match.id === receipt.orderId)).map(receipt =>
+          [receipt.receiptId, receipt.orderId, receipt.paymentStatus, receipt.isCanceled, receipt.businessDate, receipt.tableName, receipt.paidAt,
+            input.receiptVersions?.[receipt.receiptId]]).sort(),
+      ]),
       lastPaidAt: last?.paidAt ?? null };
   });
   const unknown = tables.filter(table => table.state === "unknown").length;

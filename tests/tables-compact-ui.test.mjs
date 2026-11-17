@@ -17,8 +17,11 @@ import {beforeOpeningScene} from './helpers/tables-before-opening-fixture.mjs';
 import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 
 function render(data, lang, { failed=false, loading=false, selected=null, detail=null }={}) {
+  // These static presentation scenarios start from a coherent list/detail tile pair.
+  // Cross-response mismatches and races are tested in tables-detail-refresh/production-fixes.
+  if(detail)data={...data,tables:data.tables.map(tile=>tile.id===detail.table.id?detail.table:tile)};
   let hook=0;
-  const states=[data,loading,failed,selected,detail?{key:`${selected.id}:${data.serverNow}`,detail,failed:false}:null], mod={exports:{}};
+  const states=[data,loading,failed,selected,detail?{key:refreshDisplay.tableDetailEvidenceKey(data,selected.id),detail,failed:false}:null], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
@@ -316,14 +319,14 @@ for(const lang of ['ko','vi']) {
    {orders:[order('retained','BAR1',{businessDate:day,orderDate:at.toISOString(),providerObservedAt:at.toISOString()})]}]) {
    const {view,table,detail}=beforeOpeningScene('11:53',changes);
    const html=render(view,lang,{selected:{kind:'table',id:table.id},detail});
-   assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes(t.paidCumulativeReview));
+   assert.equal(html.includes(t.beforeOpening),!table.orders.length && !table.lastPaidAt);assert.ok(html.includes(t.paidCumulativeReview));
    assert.ok(html.includes(t.collectionCheck)||html.includes(t.orderCheck));
   }
   const {view,table,detail}=beforeOpeningScene();
-  assert.ok(!render(view,lang,{failed:true,selected:{kind:'table',id:table.id},detail}).includes(t.beforeOpening));
+  assert.ok(render(view,lang,{failed:true,selected:{kind:'table',id:table.id},detail}).includes(t.beforeOpening));
   const uncertain={...detail,current:[{id:91,validPaid:false,canceled:false,uncertain:true,lines:[]} ]};
   const warned=render(view,lang,{selected:{kind:'table',id:table.id},detail:uncertain});
-  assert.ok(!warned.includes(t.beforeOpening));assert.ok(warned.includes(t.collectionCheck));
+  assert.ok(warned.includes(t.beforeOpening));assert.ok(warned.includes(t.reviewPayment));
  });
  test(`${lang}: verified payment history remains visible with neutral before-opening message`,()=>{
   const {view,table,detail}=beforeOpeningScene(),t=tablesText[lang];

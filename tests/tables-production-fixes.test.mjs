@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {overview,order,now,businessDate} from './helpers/table-overview-fixture.mjs';
 import {babaTableCatalog} from '../lib/sales/baba-table-catalog.ts';
 import {applyPaymentObservations} from '../lib/sales/table-auto-normal.ts';
-import {selectTableDetail,unavailableTableOverview} from '../lib/sales/table-detail-refresh.ts';
+import {selectTableDetail,tableDetailEvidenceKey,unavailableTableOverview} from '../lib/sales/table-detail-refresh.ts';
 import {cleaningResponseFailure} from '../lib/sales/table-cleaning-feedback.ts';
 import {cleaningServiceFixture} from './helpers/tables-cleaning-service-fixture.mjs';
 import {addOrder} from './helpers/tables-cleaning-fixture.mjs';
@@ -44,11 +44,11 @@ test('automatic DB evidence review keeps the minimum separate from the exact cou
 function displayFixture(){
  const v=overview({catalog,orders:[]}),table=v.tables.find(t=>t.name==='BAR4');
  const detail={table,businessDate,snapshotAt:v.snapshotAt,snapshotStatus:'ok',current:[],previous:[],latest:null,merges:[],cleaning:{enabled:false,reason:'no_payment'}};
- return {v,table,detail,result:{key:`${table.id}:${v.serverNow}`,detail,failed:false}};
+ return {v,table,detail,result:{key:tableDetailEvidenceKey(v,table.id),detail,failed:false}};
 }
 test('refresh pending/failure retains same-day detail object but revokes action freshness',()=>{
  const {v,table,detail,result}=displayFixture(),next={...v,serverNow:'2026-11-13T13:31:00Z',snapshotAt:'2026-11-13T13:31:00Z'};
- for(const r of [result,{...result,failed:true},{...result,key:`${table.id}:${next.serverNow}`,pending:true}]){
+ for(const r of [result,{...result,failed:true},{...result,key:tableDetailEvidenceKey(next,table.id),pending:true}]){
   const selected=selectTableDetail(r,next,table.id);assert.equal(selected.detail,detail);assert.equal(selected.fresh,false);
  }
  assert.equal(selectTableDetail(result,v,table.id).fresh,true);
