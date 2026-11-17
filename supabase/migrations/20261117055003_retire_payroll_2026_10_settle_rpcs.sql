@@ -11,10 +11,16 @@
 -- 20261116163616 that other months keep using (ledger_project_payroll_payment_group_v1,
 -- payroll_cancel_employee_payment_v3, payroll_refresh_payment_tax_totals_v1).
 --
--- Guard: if a 2026-10 payroll batch exists it must be the completed 17/17
--- special settlement with exactly one request and one applied audit row;
--- otherwise abort and drop nothing. A database without a 2026-10 batch (fresh
--- replay) has nothing to protect and the drop proceeds.
+-- Guard (strict, no exemption): abort and drop nothing unless
+--   * exactly one 2026-10 payroll batch exists, status completed,
+--     target 17 / paid 17 on the batch and 17 paid payment rows,
+--   * exactly one 2026-10 special settlement request,
+--   * exactly one special_settlement_applied audit row, on that batch,
+--   * the two target functions and the three shared functions all exist.
+-- A database without the recorded settlement (including a fresh replay) is
+-- refused. Fresh full replay of this chain is already impossible: the applied
+-- 20261115085910 correction aborts on any database without its pinned
+-- production rows.
 --
 -- Recovery: re-run the two "create or replace function" blocks and their
 -- revoke/grant lines from 20261116163616_payroll_2026_10_special_settlement.sql
@@ -24,17 +30,44 @@ set local lock_timeout = '5s';
 
 do $$
 declare
+  v_batches integer;
   v_run public.payroll_payment_batches%rowtype;
+  v_paid_rows integer;
+  v_requests integer;
+  v_applied integer;
+  v_applied_on_run integer;
 begin
+  select count(*) into v_batches from public.payroll_payment_batches where payroll_month = date '2026-10-01';
+  if v_batches <> 1 then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:batch_count:%', v_batches using errcode = '55000';
+  end if;
   select * into v_run from public.payroll_payment_batches where payroll_month = date '2026-10-01';
-  if v_run.id is not null and (
-       v_run.status <> 'completed'
-       or v_run.paid_employee_count <> 17
-       or v_run.target_employee_count <> 17
-       or (select count(*) from public.payroll_special_settlement_requests where payroll_month = date '2026-10-01') <> 1
-       or (select count(*) from public.payroll_payment_audit_logs
-           where payroll_batch_id = v_run.id and action = 'special_settlement_applied') <> 1) then
-    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION' using errcode = '55000';
+  if v_run.status is distinct from 'completed' then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:status:%', v_run.status using errcode = '55000';
+  end if;
+  select count(*) into v_paid_rows from public.payroll_employee_payments
+  where payroll_batch_id = v_run.id and payment_status = 'paid';
+  if v_run.target_employee_count is distinct from 17 or v_run.paid_employee_count is distinct from 17 or v_paid_rows <> 17 then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:employees:%/%/%',
+      v_run.target_employee_count, v_run.paid_employee_count, v_paid_rows using errcode = '55000';
+  end if;
+  select count(*) into v_requests from public.payroll_special_settlement_requests where payroll_month = date '2026-10-01';
+  if v_requests <> 1 then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:requests:%', v_requests using errcode = '55000';
+  end if;
+  select count(*), count(*) filter (where payroll_batch_id = v_run.id) into v_applied, v_applied_on_run
+  from public.payroll_payment_audit_logs where action = 'special_settlement_applied';
+  if v_applied <> 1 or v_applied_on_run <> 1 then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:applied_audit:%/%', v_applied, v_applied_on_run using errcode = '55000';
+  end if;
+  if to_regprocedure('public.payroll_settle_2026_10_v1(date,jsonb,jsonb,jsonb,jsonb,text,text,text,bigint,text,jsonb,bigint)') is null
+     or to_regprocedure('public.payroll_settle_2026_10_final_state_v1(date,jsonb,bigint,bigint,bigint)') is null then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:target_functions' using errcode = '55000';
+  end if;
+  if to_regprocedure('public.ledger_project_payroll_payment_group_v1(date,date,bigint,bigint)') is null
+     or to_regprocedure('public.payroll_cancel_employee_payment_v3(bigint,bigint,text,bigint)') is null
+     or to_regprocedure('public.payroll_refresh_payment_tax_totals_v1(bigint)') is null then
+    raise exception 'PAYROLL_2026_10_SETTLEMENT_RETIRE_PRECONDITION:shared_functions' using errcode = '55000';
   end if;
 end;
 $$;
