@@ -16,12 +16,12 @@ import { overview, order } from './helpers/table-overview-fixture.mjs';
 import {beforeOpeningScene} from './helpers/tables-before-opening-fixture.mjs';
 import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 
-function render(data, lang, { failed=false, loading=false, selected=null, detail=null }={}) {
+function render(data, lang, { failed=false, loading=false, selected=null, detail=null, detailFailed=false, failure }={}) {
   // These static presentation scenarios start from a coherent list/detail tile pair.
   // Cross-response mismatches and races are tested in tables-detail-refresh/production-fixes.
   if(detail)data={...data,tables:data.tables.map(tile=>tile.id===detail.table.id?detail.table:tile)};
   let hook=0;
-  const states=[data,loading,failed,selected,detail?{key:refreshDisplay.tableDetailEvidenceKey(data,selected.id),detail,failed:false}:null], mod={exports:{}};
+  const states=[data,loading,failed,selected,detail||detailFailed?{key:refreshDisplay.tableDetailEvidenceKey(data,selected.id),detail,failed:detailFailed,failure}:null], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
@@ -334,5 +334,34 @@ for(const lang of ['ko','vi']) {
    canceled:false,validPaid:true,uncertain:false,reissued:false,link:'direct',lines:[]};
   const html=render(view,lang,{selected:{kind:'table',id:table.id},detail:{...detail,latest:receipt,current:[receipt]}});
   assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes('verified-92'));assert.ok(html.includes(t.validPayment));
+ });
+}
+
+for(const lang of ['ko','vi']){
+ test(`${lang}: pre-opening empty success has no error; failed unknown history uses neutral stage-specific help without claiming zero`,()=>{
+  const {view,table,detail}=beforeOpeningScene(),selected={kind:'table',id:table.id},t=tablesText[lang];
+  for(const d of [null,detail]){
+   const html=render(view,lang,{selected,detail:d});assert.ok(html.includes(t.beforeOpening));assert.ok(!html.includes('class="compactWarning"'));assert.ok(!html.includes('data-code="TABLE_DETAIL_'));
+  }
+  for(const stage of ['detail','context','snapshot','receipts','lines','timeout','response','stale']){
+   const failure=refreshDisplay.detailFailure(stage,stage==='timeout'?undefined:503);
+   const html=render(view,lang,{selected,detailFailed:true,failure});
+   assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes(t.beforeOpeningLabel));assert.ok(html.includes(t.detailErrors[stage]));
+   assert.equal(html.includes('class="compactWarning"'),stage==='lines');assert.ok(html.includes(`data-stage="${stage}"`));assert.ok(html.includes(`data-code="${failure.code}"`));
+   assert.ok(!html.includes(t.historyUnavailableShort));assert.ok(!html.includes(t.noPayment));
+  }
+ });
+ test(`${lang}: failed refresh preserves verified/canceled/reissued/merged history and warning; operating failures stay visible`,()=>{
+  const {view,table,detail}=beforeOpeningScene(),selected={kind:'table',id:table.id},t=tablesText[lang];
+  for(const flags of [{validPaid:true,canceled:false,reissued:false,uncertain:false},{validPaid:false,canceled:true,reissued:false,uncertain:false},
+   {validPaid:true,canceled:false,reissued:true,uncertain:false},{validPaid:false,canceled:false,reissued:false,uncertain:true}]){
+   const r={id:191,number:'retained-191',businessDate:view.businessDate,referenceAt:view.serverNow,amount:100000,link:'direct',lines:[],...flags};
+   const d={...detail,current:[r],latest:r,merges:flags.uncertain?[{receiptId:191,tables:['BAR1','BAR2'],receiptTable:'BAR1',verified:false}]:[]};
+   const html=render(view,lang,{selected,detail:d,detailFailed:true,failure:refreshDisplay.detailFailure('detail',503)});
+   assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes('class="compactWarning"'));assert.ok(html.includes('retained-191'));
+   assert.ok(html.includes(t.detailErrors.detail));assert.ok(!html.includes(t.historyUnavailableShort));
+  }
+  const active=beforeOpeningScene('17:30',{readFailed:true}),html=render(active.view,lang,{selected,detailFailed:true,failure:refreshDisplay.detailFailure('snapshot',503)});
+  assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes('class="compactWarning"'));assert.ok(html.includes(t.detailErrors.snapshot));assert.ok(html.includes(t.unavailable));
  });
 }

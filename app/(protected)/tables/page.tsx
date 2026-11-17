@@ -8,7 +8,7 @@ import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-ov
 import type { DetailReceipt } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, receiptOrderTimeRange, tablePaymentHistory, verifiedOrderStart, verifiedPaidReferenceTime, verifiedReceiptOrderUsage } from "@/lib/sales/table-detail-display";
 import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
-import { selectTableDetail, tableDetailEvidenceKey, unavailableTableOverview, type TableDetailResult } from "@/lib/sales/table-detail-refresh";
+import { detailFailure, selectTableDetail, tableDetailEvidenceKey, unavailableTableOverview, type DetailFailure, type TableDetailResult } from "@/lib/sales/table-detail-refresh";
 import { cleaningResponseFailure, type CleaningFailure } from "@/lib/sales/table-cleaning-feedback";
 import styles from "./tables.module.css";
 
@@ -92,24 +92,28 @@ export default function TablesPage() {
       detail: previous?.detail?.table.id === detailId && previous.detail.businessDate === detailDay ? previous.detail : null,
       failed: false, pending: true }));
     void (async () => {
+      let failure: DetailFailure | undefined;
       try {
         const response = await fetch(`/api/tables/${encodeURIComponent(detailId)}/detail`, {
           cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
         });
         if (controller.signal.aborted) return;
         if (response.status === 401 || response.status === 403) { setSelected(null); router.replace("/login"); return; }
-        const result = await response.json();
-        if (!response.ok || !result.ok || !result.detail || result.detail.table?.id !== detailId || result.detail.businessDate !== detailDay) throw Error("detail_unavailable");
+        const result = await response.json().catch(() => { failure = detailFailure("response", response.status); throw Error("detail_response"); });
+        if (!response.ok || !result.ok) { failure = detailFailure(result.stage, response.status); throw Error("detail_unavailable"); }
+        if (!result.detail || result.detail.table?.id !== detailId || result.detail.businessDate !== detailDay) {
+          failure = detailFailure("response", response.status); throw Error("detail_response");
+        }
         if (!controller.signal.aborted) setDetailResult(previous => {
           if (previous?.detail?.table.id === detailId && previous.detail.businessDate === detailDay
-            && Date.parse(result.detail.snapshotAt ?? "") < Date.parse(previous.detail.snapshotAt ?? "")) return { ...previous, pending: false, failed: true };
+            && Date.parse(result.detail.snapshotAt ?? "") < Date.parse(previous.detail.snapshotAt ?? "")) return { ...previous, pending: false, failed: true, failure: detailFailure("stale") };
           return { key, detail: result.detail, failed: false, pending: false };
         });
         if (!controller.signal.aborted && result.detail.snapshotStatus === "ok") setSaveState(previous => previous?.id === detailId && previous.error?.kind === "saved_refresh" ? { ...previous, error: null } : previous);
-      } catch {
+      } catch (error) {
         if (!controller.signal.aborted) setDetailResult(previous => ({ key: previous?.key ?? key,
           detail: previous?.detail?.table.id === detailId && previous.detail.businessDate === detailDay ? previous.detail : null,
-          failed: true, pending: false }));
+          failed: true, pending: false, failure: failure ?? detailFailure(error instanceof Error && error.name === "TimeoutError" ? "timeout" : "detail") }));
       }
     })();
     return () => controller.abort();
@@ -126,7 +130,7 @@ export default function TablesPage() {
   const retainedOrders = detailOrders.filter(order => !order.verifiedOpen);
   const cleaningReason = tile?.state === "occupied" || currentOrders.length ? t.cleaningReasons.active_orders
     : tile?.state === "unknown" ? t.cleaningReasons.snapshot_unhealthy
-    : !detailFresh ? detailFailed ? t.historyFailed : t.historyLoading
+    : !detailFresh ? detailFailed ? t.detailUnavailable : t.historyLoading
     : detail ? t.cleaningReasons[detail.cleaning.reason] : t.historyLoading;
   const snapshotStatus = presentation.snapshotStatus;
   const snapshotAt = presentation.snapshotAt;
@@ -149,8 +153,14 @@ export default function TablesPage() {
     && !tile.lastPaidAt && (!detail || !detail.table.orders.length);
   const detailPaymentReview = !!detail && (detail.current.some(receipt => receipt.uncertain || !receipt.validPaid && !receipt.canceled)
     || detail.merges.some(merge => !merge.verified));
+  const detailError = detailFailed ? detailFailure(detailResult?.failure?.stage, detailResult?.failure?.status) : null;
+  const detailErrorText = detailError ? t.detailErrors[detailError.stage] : null;
+  const hasPaymentHistory = !!detail && (!!detail.latest || detail.current.length > 0 || (detail.previous?.length ?? 0) > 0 || detail.merges.length > 0);
+  // Unknown history after a failed GET is not evidence of zero history.
+  const neutralDetailFailure = detailFailed && normalWaiting && detailBeforeOpening && !hasPaymentHistory && !detailPaymentReview
+    && detailError?.stage !== "lines"; // The menu query runs only after related receipts were read.
   const compactWarning = cleaningFailure && cleaningFailure.kind !== "saved_refresh" ? t.cleaningErrors[cleaningFailure.kind]
-    : detailFailed ? t.historyUnavailableShort
+    : detailFailed && !neutralDetailFailure ? detailErrorText
     : detail && !["ok", "waiting"].includes(detail.snapshotStatus) ? t.collectionCheck
     : detailBeforeOpening && detailPaymentReview ? t.reviewPayment
     : detailBeforeOpening && normalWaiting && (!detail || ["waiting", "ok"].includes(detail.snapshotStatus)) ? null
@@ -347,7 +357,8 @@ export default function TablesPage() {
         <button className={styles.closeButton} aria-label={t.close} title={t.close} onClick={() => setSelected(null)}>×</button>
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
-      {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code} data-status={cleaningFailure?.status}>{compactWarning}</p> : null}
+      {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code ?? detailError?.code} data-stage={detailError?.stage} data-status={cleaningFailure?.status ?? detailError?.status}>{compactWarning}</p> : null}
+      {neutralDetailFailure ? <p role="status" className={styles.muted} data-code={detailError?.code} data-stage={detailError?.stage} data-status={detailError?.status}>{detailErrorText}</p> : null}
       {detail && !detailFresh && !detailBeforeOpening ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
       {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
       {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}

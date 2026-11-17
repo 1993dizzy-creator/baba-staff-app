@@ -1,5 +1,16 @@
 export const tablesText = {
   ko: {
+    detailUnavailable: "상세 자료를 확인하지 못했습니다. 새로고침해 주세요. 청소완료는 사용할 수 없습니다.",
+    detailErrors: {
+      detail: "상세 정보를 확인하지 못했습니다. 새로고침해 주세요.",
+      context: "영업일 정보를 확인하지 못했습니다. 새로고침해 주세요.",
+      snapshot: "주문 상태를 확인하지 못했습니다. 새로고침해 주세요.",
+      receipts: "결제 자료를 확인하지 못했습니다. 새로고침해 주세요.",
+      lines: "결제 메뉴를 확인하지 못했습니다. 새로고침해 주세요.",
+      timeout: "상세 응답이 지연되고 있습니다. 새로고침해 주세요.",
+      response: "상세 응답을 확인하지 못했습니다. 새로고침해 주세요.",
+      stale: "이전 시점의 상세 응답입니다. 새로고침해 주세요.",
+    },
     beforeOpening: "현재 영업전입니다.", beforeOpeningLabel: "영업 전",
     confirmedOccupied: "확인된 사용 중 최소 수량 · 일부 테이블 또는 주문 연결 미확인",
     detailRefreshing: "상세 갱신 중 · 이전 확인 자료를 표시합니다.",
@@ -57,6 +68,17 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    detailUnavailable: "Chưa xác minh được dữ liệu chi tiết. Hãy làm mới. Chưa thể xác nhận dọn bàn.",
+    detailErrors: {
+      detail: "Chưa xác minh được thông tin chi tiết. Hãy làm mới.",
+      context: "Chưa xác minh được ngày kinh doanh. Hãy làm mới.",
+      snapshot: "Chưa xác minh được trạng thái đơn. Hãy làm mới.",
+      receipts: "Chưa xác minh được dữ liệu thanh toán. Hãy làm mới.",
+      lines: "Chưa xác minh được món trên hóa đơn. Hãy làm mới.",
+      timeout: "Phản hồi chi tiết đang chậm. Hãy làm mới.",
+      response: "Chưa xác minh được phản hồi chi tiết. Hãy làm mới.",
+      stale: "Phản hồi chi tiết từ thời điểm trước. Hãy làm mới.",
+    },
     beforeOpening: "Hiện tại cửa hàng chưa mở cửa.", beforeOpeningLabel: "Chưa mở cửa",
     confirmedOccupied: "Số bàn đang dùng đã xác minh tối thiểu · Một số bàn hoặc liên kết đơn chưa rõ",
     detailRefreshing: "Đang cập nhật chi tiết · Hiển thị dữ liệu đã xác minh trước đó.",

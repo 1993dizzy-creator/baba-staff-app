@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedActor } from "@/lib/auth/server-auth";
 import { readTableDetail } from "@/lib/sales/table-detail-server";
+import { detailFailure } from "@/lib/sales/table-detail-refresh";
 
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store", "Vary": "Cookie" };
@@ -13,7 +14,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (!/^[a-f0-9-]{36}$/i.test(id)) return NextResponse.json({ ok: false, code: "TABLE_NOT_FOUND" }, { status: 404, headers });
     const detail = await readTableDetail(id.toLowerCase());
     return NextResponse.json(detail ? { ok: true, detail } : { ok: false, code: "TABLE_NOT_FOUND" }, { status: detail ? 200 : 404, headers });
-  } catch {
-    return NextResponse.json({ ok: false, code: "TABLE_DETAIL_UNAVAILABLE" }, { status: 503, headers });
+  } catch (error) {
+    const failure = detailFailure(error instanceof Error ? (error as Error & { detailStage?: unknown }).detailStage : undefined);
+    return NextResponse.json({ ok: false, ...failure }, { status: 503, headers });
   }
 }
