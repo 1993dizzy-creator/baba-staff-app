@@ -1,7 +1,19 @@
 import type { TableDetail } from "./table-detail.ts";
 import type { TableOverview } from "./table-overview.ts";
 
-export type TableDetailResult = { key: string; detail: TableDetail | null; failed: boolean; pending?: boolean };
+const failureCodes = {
+  detail: "TABLE_DETAIL_UNAVAILABLE", context: "TABLE_DETAIL_CONTEXT_UNAVAILABLE",
+  snapshot: "TABLE_DETAIL_SNAPSHOT_UNAVAILABLE", receipts: "TABLE_DETAIL_RECEIPTS_UNAVAILABLE",
+  lines: "TABLE_DETAIL_LINES_UNAVAILABLE", timeout: "TABLE_DETAIL_TIMEOUT",
+  response: "TABLE_DETAIL_RESPONSE_INVALID", stale: "TABLE_DETAIL_RESPONSE_STALE",
+} as const;
+export type DetailFailure = { stage: keyof typeof failureCodes; code: string; status?: number };
+/** Only fixed diagnostics cross the API/DOM boundary; never forward an exception message. */
+export function detailFailure(stage: unknown = "detail", status?: number): DetailFailure {
+  const safe = typeof stage === "string" && Object.hasOwn(failureCodes, stage) ? stage as DetailFailure["stage"] : "detail";
+  return { stage: safe, code: failureCodes[safe], ...(status !== undefined ? { status } : {}) };
+}
+export type TableDetailResult = { key: string; detail: TableDetail | null; failed: boolean; pending?: boolean; failure?: DetailFailure };
 
 /** Collection timestamps are freshness evidence, not a reason to re-download menus/history. */
 export function tableDetailEvidenceKey(overview: TableOverview | null, id?: string) {

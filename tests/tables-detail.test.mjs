@@ -1,3 +1,4 @@
+import * as refresh from '../lib/sales/table-detail-refresh.ts';
 import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,7 +94,7 @@ test('detail API authenticates all five roles, rejects unknown ids and hides int
   const tableId=babaTableCatalog().tables[0].id;
   for(const role of [null,'master','owner','manager','leader','staff']){
    const h=authHarness();if(role){h.setActor({role});h.sign();}let reads=0;
-   const api=loadTs('app/api/tables/[id]/detail/route.ts',{'next/server':nextMock,'@/lib/auth/server-auth':h.auth,
+   const api=loadTs('app/api/tables/[id]/detail/route.ts',{'next/server':nextMock,'@/lib/auth/server-auth':h.auth,'@/lib/sales/table-detail-refresh':refresh,
     '@/lib/sales/table-detail-server':{readTableDetail:async()=>{reads++;return {synthetic:true};}}});
    const res=await api.GET(new Request('http://offline.test'),{params:Promise.resolve({id:tableId})});
    assert.equal(res.status,role?200:401);assert.equal(reads,role?1:0);assert.equal(res.headers.get('Cache-Control'),'private, no-store');
@@ -101,7 +102,7 @@ test('detail API authenticates all five roles, rejects unknown ids and hides int
    if(role){assert.equal((await api.GET(null,{params:Promise.resolve({id:'invalid'})})).status,404);}
   }
   const h=authHarness();h.setActor({role:'staff'});h.sign();
-  const api=loadTs('app/api/tables/[id]/detail/route.ts',{'next/server':nextMock,'@/lib/auth/server-auth':h.auth,
+  const api=loadTs('app/api/tables/[id]/detail/route.ts',{'next/server':nextMock,'@/lib/auth/server-auth':h.auth,'@/lib/sales/table-detail-refresh':refresh,
    '@/lib/sales/table-detail-server':{readTableDetail:async()=>{throw Error('secret-not-to-return');}}});
   const res=await api.GET(null,{params:Promise.resolve({id:tableId})});assert.equal(res.status,503);assert.doesNotMatch(JSON.stringify(await res.json()),/secret/);
  }finally{if(old===undefined)delete process.env.BABA_SESSION_SECRET;else process.env.BABA_SESSION_SECRET=old;}
@@ -135,4 +136,36 @@ test('detail server uses only local snapshot and narrow receipt/line projections
   assert.equal(d.cleaning.enabled,false);
  }finally{globalThis.fetch=originalFetch;if(old===undefined)delete process.env.POS_OPEN_ORDERS_READ_ENABLED;else process.env.POS_OPEN_ORDERS_READ_ENABLED=old;}
  assert.doesNotMatch(readFileSync('lib/sales/table-detail-server.ts','utf8'),/\.insert\(|\.update\(|\.delete\(|loginCukcuk|runCentral/);
+});
+
+test('detail service and HTTP distinguish context, snapshot, receipts, lines and unknown failures without leaking exception text',async()=>{
+ const names=['POS_OPEN_ORDERS_READ_ENABLED','BABA_TABLE_CLEANING_ENABLED','BABA_TABLE_AUTO_NORMAL_ENABLED'],saved=names.map(n=>process.env[n]);
+ process.env.POS_OPEN_ORDERS_READ_ENABLED='true';process.env.BABA_TABLE_CLEANING_ENABLED='false';process.env.BABA_TABLE_AUTO_NORMAL_ENABLED='false';
+ let stage='empty',lineReads=0;
+ const catalog=babaTableCatalog(),id=catalog.tables.find(t=>t.name==='BAR4').id,secret='secret-token-customer-internal-SQL';
+ const service=loadTs('lib/sales/table-detail-server.ts',{
+  'server-only':{},'./table-detail':detail,'./table-overview':projection,'./table-overview-server':{validOrders:o=>Array.isArray(o)},'./baba-table-catalog':{babaTableCatalog},
+  '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>{if(stage==='context')throw Error(secret);return {databaseBusinessDate:businessDate,snapshot:createFallbackBusinessTimeSnapshot(businessDate),context:{isOpen:true}};}},
+  '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-core':core,'@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},'@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=> 'offline'},
+  './daily-sales-summary':{fetchAllExactPages:async fn=>fn(0,999)},
+  '@/lib/supabase/server':{supabaseServer:{rpc(){return {abortSignal:async()=>{
+   if(stage==='snapshot-reject')throw Error(secret);
+   return {data:{sync:{businessDate,lastSuccessAt:now.toISOString(),lastAttemptAt:now.toISOString(),lastErrorCode:null},orders:[]},error:stage==='snapshot'?{message:secret}:null};
+  }};},from(table){const q={};for(const m of ['select','eq','gte','lte','in','order','abortSignal'])q[m]=()=>q;
+   q.range=async()=>{if(table==='pos_sales_receipt_lines')lineReads++;
+    if(stage==='receipts-reject'&&table==='pos_sales_receipts')throw Error(secret);
+    return {data:table==='pos_sales_receipts'?(stage==='empty'?[]:[receipt(1)]):[],error:stage===(table==='pos_sales_receipts'?'receipts':'lines')?{message:secret}:null};
+   };return q;}}},
+ });
+ const api=loadTs('app/api/tables/[id]/detail/route.ts',{'next/server':nextMock,'@/lib/auth/server-auth':{getAuthenticatedActor:async()=>({ok:true})},'@/lib/sales/table-detail-refresh':refresh,
+  '@/lib/sales/table-detail-server':{readTableDetail:async()=>{if(stage==='unknown')throw Object.assign(Error(secret),{detailStage:secret});return service.readTableDetail(id,now);}}});
+ try{
+  for(const [value,expected]of [['empty',null],['success',null],['context','context'],['snapshot','snapshot'],['snapshot-reject','snapshot'],['receipts','receipts'],['receipts-reject','receipts'],['lines','lines'],['unknown','detail']]){
+   stage=value;const res=await api.GET(null,{params:Promise.resolve({id})}),body=await res.json();
+   assert.equal(res.status,expected?503:200,value);assert.doesNotMatch(JSON.stringify(body),new RegExp(secret));
+   if(expected)assert.deepEqual(body,{ok:false,...refresh.detailFailure(expected)});
+   else {assert.equal(body.ok,true);if(value==='empty'){assert.deepEqual(body.detail.current,[]);assert.equal(lineReads,0);}}
+  }
+  for(const stage of ['__proto__','constructor',secret,{},null])assert.equal(refresh.detailFailure(stage).stage,'detail');
+ }finally{names.forEach((n,i)=>{if(saved[i]===undefined)delete process.env[n];else process.env[n]=saved[i];});}
 });
