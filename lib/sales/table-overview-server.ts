@@ -74,6 +74,6 @@ export async function readTableOverview(now = new Date()) {
     }
   }
   return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts, readFailed,
-    cutoff: businessTime.snapshot.cutoff,
+    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot,
     collectionExpected: businessTime.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
 }

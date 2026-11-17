@@ -1,3 +1,4 @@
+import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -115,7 +116,7 @@ test('detail server uses only local snapshot and narrow receipt/line projections
   const service=loadTs('lib/sales/table-detail-server.ts',{
    'server-only':{},'./table-detail':detail,'./table-overview':projection,
    './table-overview-server':{validOrders:orders=>Array.isArray(orders)},'./baba-table-catalog':{babaTableCatalog},
-   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:businessDate,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
+   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:businessDate,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}})},
    '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-core':core,
    '@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},'@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=> 'offline'},
    './daily-sales-summary':{fetchAllExactPages:async fn=>fn(0,999)},

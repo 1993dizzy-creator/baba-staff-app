@@ -130,7 +130,18 @@ export default function TablesPage() {
   const standaloneReceipt = tile?.state !== "occupied" && !presentation.paymentChanged ? detail?.latest ?? null : null;
   const paymentHistory = tablePaymentHistory(detail, standaloneReceipt?.id);
   const cleaningFailure = saveState && saveState.id === tile?.id ? saveState.error : null;
+  const beforeOpening = !!data?.beforeOpening && !failed && data.catalogStatus === "ok"
+    && ["waiting", "ok"].includes(data.snapshotStatus) && data.summary.unknown === 0
+    && !data.summary.occupiedPartial && data.unlinkedReceiptCount === 0 && data.unlinked.length === 0
+    && data.summary.paidCumulativeEvidence.status !== "review"
+    && data.tables.every(table => table.state === "idle" && table.orders.length === 0);
+  const detailBeforeOpening = beforeOpening && !!tile && !detailFailed && !cleaningFailure
+    && snapshotStatus !== "unavailable" && !presentation.paymentChanged
+    && (!detail || ["ok", "waiting"].includes(detail.snapshotStatus)
+      && !detail.current.some(receipt => receipt.uncertain || !receipt.validPaid && !receipt.canceled)
+      && !detail.merges.some(merge => !merge.verified));
   const compactWarning = cleaningFailure && cleaningFailure.kind !== "saved_refresh" ? t.cleaningErrors[cleaningFailure.kind]
+    : detailBeforeOpening ? null
     : detailFailed && tile?.state !== "idle" ? t.historyUnavailableShort
     : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
   const cleanTable = async () => {
@@ -168,7 +179,7 @@ export default function TablesPage() {
   const areaName = (key: string) => key === "bar" ? t.bar : key === "floor1" ? t.floor1 : key === "floor2" ? t.floor2 : key.replace(/^other:/, "");
   const areas = ["bar", "floor1", "floor2", ...new Set(data?.tables.filter(item => item.area.startsWith("other:")).map(item => item.area) ?? [])];
   const diagnostic = data ? data.catalogStatus !== "ok" ? t.unavailable
-    : data.snapshotStatus === "waiting" ? t.waiting
+    : data.snapshotStatus === "waiting" ? beforeOpening ? null : t.waiting
     : data.snapshotStatus !== "ok" ? t.unavailable
     : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 || data.summary.occupiedPartial ? t.partial : null : null;
   // The basis is the last successful order collection that decided the states, never the browser clock.
@@ -239,7 +250,7 @@ export default function TablesPage() {
     <header className={styles.overviewBar}>
       <dl className={styles.summary} aria-label={t.title}>{(["total", "occupied", "paidCumulative"] as const).map(key =>
         <div key={key} title={key === "paidCumulative" ? t.paidCumulativeHelp : key === "occupied" && data?.summary.occupiedPartial ? t.confirmedOccupied : undefined}><dt>{t.summaryLabels[key]}</dt><dd>{key === "occupied" && data?.summary.occupied == null && data?.summary.occupiedConfirmed != null && data.summary.occupiedPartial ? `${data.summary.occupiedConfirmed}+` : data?.summary[key] ?? "—"}
-          {key === "paidCumulative" && data?.summary.paidCumulative == null ? <span className={styles.srOnly}>{t.paidCumulativeReview}</span> : null}
+          {key === "paidCumulative" && data?.summary.paidCumulative == null && !beforeOpening ? <span className={styles.srOnly}>{t.paidCumulativeReview}</span> : null}
           {key === "occupied" && data?.summary.occupiedPartial && data.summary.occupiedConfirmed != null ? <span className={styles.srOnly}>{t.confirmedOccupied}</span> : null}
         </dd></div>)}</dl>
       <p className={cx(styles.basis, basisWarning && styles.basisWarning)}>
@@ -257,7 +268,7 @@ export default function TablesPage() {
       <span className={styles.spinner} aria-hidden="true" /><span>{t.loading}</span>
     </div> : null}
     {failed && !loading ? <p role="alert" className={styles.notice}>{t.failed}</p> : null}
-    {data && data.summary.paidCumulative == null ? <p className={styles.cumulativeReview}>{t.paidCumulativeReview}</p> : null}
+    {data && data.summary.paidCumulative == null && !beforeOpening ? <p className={styles.cumulativeReview}>{t.paidCumulativeReview}</p> : null}
     <div className={styles.statusRow}>
       <div className={styles.legend}>{(["occupied", "paid", "reserved"] as const).map(state => <span key={state}
         title={state === "paid" ? t.completionEvidence : t[state]}>
@@ -309,8 +320,8 @@ export default function TablesPage() {
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "paid" && elapsed !== null ? t.paidOrderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
-          <span className={styles.stateDot} data-state={snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
-          {t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
+          <span className={styles.stateDot} data-state={detailBeforeOpening ? "idle" : snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
+          {detailBeforeOpening ? t.beforeOpeningLabel : t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
       </div><div className={styles.sheetActions}>
@@ -321,10 +332,11 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code} data-status={cleaningFailure?.status}>{compactWarning}</p> : null}
-      {detail && !detailFresh ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
+      {detail && !detailFresh && !detailBeforeOpening ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
       {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
       {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}
-      {tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
+      {detailBeforeOpening ? <p role="status" className={cx(styles.emptyOrder, styles.idleEmpty)}>{t.beforeOpening}</p>
+        : tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}

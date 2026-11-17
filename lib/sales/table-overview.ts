@@ -5,6 +5,7 @@ import {
 
 import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
 import { evaluateOpenOrdersCronWindow } from "../pos/cukcuk/open-orders-cron-policy.ts";
+import { calculateBusinessTimeContext, type BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
 import { projectPaidCumulative, type PaidCumulativeEvidence } from "./table-paid-cumulative.ts";
 
 export type TableReceipt = ReceiptLink & { tableName?: string | null; paidAt?: string | null };
@@ -21,6 +22,7 @@ export type TableOrder = {
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
   paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
 export type TableOverview = {
+  beforeOpening?: boolean;
   businessDate: string; serverNow: string; snapshotAt: string | null; catalogAt: string | null;
   catalogStatus: TableCatalog["status"]; snapshotStatus: string; unlinkedReceiptCount: number;
   tables: TableTile[]; unlinked: TableOrder[];
@@ -64,7 +66,7 @@ export function tableArea(name: string) {
 export function buildTableOverview(input: {
   businessDate: string; now: Date; catalog: TableCatalog; sync: OpenOrderSyncState | null;
   orders: CollectedOrder[]; receipts: TableReceipt[]; enabled: boolean; readFailed?: boolean;
-  cutoff?: string; collectionExpected?: boolean;
+  cutoff?: string; collectionExpected?: boolean; businessTime?: BusinessTimeSnapshot;
 }): TableOverview {
   const { businessDate, now, catalog, sync } = input;
   const canonicalReceipts = new Map<number, TableReceipt>();
@@ -199,7 +201,11 @@ export function buildTableOverview(input: {
   const countable = catalogOk && snapshotOk && unknown === 0 && !unlocatedOrder;
   const paidCumulativeEvidence = projectPaidCumulative({ businessDate, now,
     healthy: snapshotOk && !conflict && !receiptConflict, receipts, cutoff: input.cutoff });
+  const operation = input.businessTime ? calculateBusinessTimeContext(now, input.businessTime) : null;
   return {
+    // Display metadata only. Collection windows, tile states and count contracts stay independent.
+    beforeOpening: !!operation && !operation.isOpen && !operation.isClosed && !operation.isAfterCloseBeforeCutoff
+      && operation.openAt !== null && now.getTime() < Date.parse(operation.openAt),
     businessDate, serverNow: now.toISOString(), snapshotAt: kpi.lastSuccessAt, catalogAt: catalog.collectedAt,
     catalogStatus: catalog.status, snapshotStatus: snapshotOk ? "ok" : waiting ? "waiting"
       : kpi.status === "ok" ? "unavailable" : kpi.status,

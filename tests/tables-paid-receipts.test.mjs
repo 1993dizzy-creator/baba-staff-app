@@ -1,3 +1,4 @@
+import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {projectPaidCumulative} from '../lib/sales/table-paid-cumulative.ts';
@@ -76,7 +77,7 @@ test('normal GET and cleaning/automatic paths share receipt counts across manual
  const snapshot=async()=>f.context();
  const normal=loadTs('lib/sales/table-overview-server.ts',{'server-only':{},'./table-overview':policy,
   './baba-table-catalog':{babaTableCatalog},'./daily-sales-summary':{fetchAllExactPages},
-  '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:f.day,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
+  '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:f.day,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}})},
   '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=>scope},
   '@/lib/pos/cukcuk/open-orders-core':core,'@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},
   '@/lib/supabase/server':{supabaseServer:{rpc(){return {abortSignal:async()=>({data:(await snapshot()).snapshot,error:null})};},from(){
