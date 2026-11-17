@@ -1,3 +1,4 @@
+import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -72,7 +73,7 @@ test('server reads only central RPC and receipt evidence, resolves configured 03
       const at = new Date(dateTime), day = calculateStoreBusinessDate(at), f = input(); const calls = [];
       const service = loadTs('lib/sales/table-overview-server.ts', {
         'server-only': {}, './table-overview': policy,
-        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async stamp => { assert.equal(stamp, at); return {databaseBusinessDate:day,snapshot:{cutoff:'03:00'},context:{isOpen:true}}; } },
+        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async stamp => { assert.equal(stamp, at); return {databaseBusinessDate:day,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}}; } },
         '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
         '@/lib/pos/cukcuk/open-orders-cron-policy': {evaluateOpenOrdersCronWindow},
         '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
@@ -83,6 +84,7 @@ test('server reads only central RPC and receipt evidence, resolves configured 03
         './daily-sales-summary': { fetchAllExactPages: async () => ({ data: [], error: null }) },
       });
       const result = await service.readTableOverview(at);
+      assert.equal(result.beforeOpening, dateTime.includes('T03:00'));
       assert.equal(result.businessDate, day); assert.equal(calls[0][0], 'pos_open_orders_read'); assert.equal(calls[0][1].p_business_date, day);
       assert.ok(!JSON.stringify(result).includes('CustomerTel')); assert.ok(!JSON.stringify(result).includes('not-returned'));
     }
@@ -103,7 +105,7 @@ test('actual static catalog reaches the server response with READ disabled, abse
       let snapshotReads = 0;
       const service = loadTs('lib/sales/table-overview-server.ts', {
         'server-only': {}, './table-overview': policy, './baba-table-catalog': { babaTableCatalog },
-        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async () => ({databaseBusinessDate:base.businessDate,snapshot:{cutoff:'03:00'},context:{isOpen:true}}) },
+        '@/lib/store-settings/business-time-adapter': { loadBusinessTimeAdapter: async () => ({databaseBusinessDate:base.businessDate,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}}) },
         '@/lib/store-settings/business-time-core': { addStoreDays }, '@/lib/pos/cukcuk/open-orders-core': core,
         '@/lib/pos/cukcuk/open-orders-cron-policy': {evaluateOpenOrdersCronWindow},
         '@/lib/pos/cukcuk/open-orders-scope': { openOrdersScope: () => 'offline-only' },
@@ -138,7 +140,7 @@ test('receipt read selects only projected evidence, uses exact pagination, and n
   const query={select(columns,options){calls.push(['select',columns,options]);return query;},eq(...args){calls.push(['eq',...args]);return query;},in(...args){calls.push(['in',...args]);return query;},order(){return query;},abortSignal(){return query;},range(from,to){calls.push(['range',from,to]);return Promise.resolve({data:rows,error:null,count:1});}};
   const service=loadTs('lib/sales/table-overview-server.ts',{
    'server-only':{},'./table-overview':policy,'./baba-table-catalog':{babaTableCatalog},
-   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:base.businessDate,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
+   '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:base.businessDate,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}})},
    '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-core':core,
    '@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},
    '@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=> 'offline'},

@@ -44,7 +44,8 @@ export async function readCleaningState(now = new Date(), timeoutMs = 15_000) {
   const base = buildTableOverview({ businessDate: day, now: effectiveNow, catalog: babaTableCatalog(), sync, orders,
     receipts: context.receipts.map(r => ({ receiptId: r.id, orderId: r.order_id ?? "", tableName: r.table_name,
       paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
-    enabled: true, cutoff: time.snapshot.cutoff, collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
+    enabled: true, cutoff: time.snapshot.cutoff, businessTime: time.snapshot,
+    collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
   const overview = structuredClone(base);
   for (const table of overview.tables) if (cleaningFeatureEnabled() && context.manualEnabled !== false
     && table.state === "paid" && context.cleanedTableIds.includes(table.id) && context.keys[table.id]) table.state = "idle";

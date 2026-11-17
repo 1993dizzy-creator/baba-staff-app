@@ -1,3 +1,4 @@
+import {createFallbackBusinessTimeSnapshot} from '../../lib/store-settings/business-time-adapter-core.ts';
 import {PGlite} from '@electric-sql/pglite';
 import {installCleaningFixture,context,tableId,scope} from './tables-cleaning-fixture.mjs';
 import {loadTs} from './sales-auth-harness.mjs';
@@ -29,7 +30,7 @@ export async function cleaningServiceFixture({auto=false}={}){
   catch(error){return {data:null,error:{code:error.code,message:error.message}};}
  }};}};
  const deps={'server-only':{},'@/lib/supabase/server':{supabaseServer:adapter},
-  '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:day,snapshot:{cutoff:'03:00'},context:{isOpen:true}})},
+  '@/lib/store-settings/business-time-adapter':{loadBusinessTimeAdapter:async()=>({databaseBusinessDate:day,snapshot:createFallbackBusinessTimeSnapshot('2026-11-13'),context:{isOpen:true}})},
   '@/lib/store-settings/business-time-core':{addStoreDays},'@/lib/pos/cukcuk/open-orders-scope':{openOrdersScope:()=>scope},
   '@/lib/pos/cukcuk/open-orders-core':core,'@/lib/pos/cukcuk/open-orders-cron-policy':{evaluateOpenOrdersCronWindow},
   './baba-table-catalog':{babaTableCatalog},'./table-overview':policy,'./table-detail':detail,'./table-paid-usage':paidUsage,'./table-auto-normal':autoNormal,

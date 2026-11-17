@@ -1,5 +1,6 @@
 export const tablesText = {
   ko: {
+    beforeOpening: "현재 영업전입니다.", beforeOpeningLabel: "영업 전",
     confirmedOccupied: "확인된 사용 중 최소 수량 · 일부 테이블 또는 주문 연결 미확인",
     detailRefreshing: "상세 갱신 중 · 이전 확인 자료를 표시합니다.",
     detailRefreshFailed: "상세 갱신 실패 · 이전 확인 자료입니다. 다시 확인해 주세요.",
@@ -56,6 +57,7 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    beforeOpening: "Hiện tại cửa hàng chưa mở cửa.", beforeOpeningLabel: "Chưa mở cửa",
     confirmedOccupied: "Số bàn đang dùng đã xác minh tối thiểu · Một số bàn hoặc liên kết đơn chưa rõ",
     detailRefreshing: "Đang cập nhật chi tiết · Hiển thị dữ liệu đã xác minh trước đó.",
     detailRefreshFailed: "Chưa cập nhật được chi tiết · Dữ liệu từ lần trước. Vui lòng kiểm tra lại.",

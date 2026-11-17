@@ -13,6 +13,8 @@ import * as cleaningFeedback from '../lib/sales/table-cleaning-feedback.ts';
 import {projectTableDetail} from '../lib/sales/table-detail.ts';
 import { babaTableCatalog } from '../lib/sales/baba-table-catalog.ts';
 import { overview, order } from './helpers/table-overview-fixture.mjs';
+import {beforeOpeningScene} from './helpers/tables-before-opening-fixture.mjs';
+import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 
 function render(data, lang, { failed=false, loading=false, selected=null, detail=null }={}) {
   let hook=0;
@@ -278,5 +280,56 @@ for(const lang of ['ko','vi']){
   r.businessDate='2026-11-15';r.referenceAt=null;
   const different=render(data,lang,{selected:{kind:'table',id:tile.id},detail:d});
   assert.ok(different.includes(`<p class="receiptBusinessDate">${t.businessDate}: 2026-11-15</p>`));assert.ok(!different.includes('dateTime="null"'));
+ });
+}
+
+for(const lang of ['ko','vi']) {
+ test(`${lang}: configured store hours distinguish before opening, open hours and after-close cutoff`,()=>{
+  for(const [clock,before] of [['11:53',true],['15:59',true],['16:00',false],['17:30',false],['00:59',false],['01:00',false],['02:59',false],['03:00',true]]) {
+   const {view,table,detail}=beforeOpeningScene(clock), original=JSON.stringify(view),t=tablesText[lang];
+   const html=render(view,lang,{selected:{kind:'table',id:table.id},detail});
+   assert.equal(view.beforeOpening,before,clock);
+   assert.equal(html.includes(t.beforeOpening),before,clock);
+   assert.equal(html.includes(t.paidCumulativeReview),!before,clock);
+   assert.equal(html.includes(t.waiting),!before && view.snapshotStatus==='waiting',clock);
+   assert.equal(html.includes(t.collectionCheck),!before,clock);
+   assert.ok(html.includes(before?t.beforeOpeningLabel:t.detailStates.unknown));
+   if(before)assert.ok(html.includes('class="emptyOrder idleEmpty"'));
+   assert.equal(view.summary.total,27);assert.equal(view.summary.occupied,null);assert.equal(view.summary.paidCumulative,null);
+   const withoutMetadata=beforeOpeningScene(clock,{businessTime:undefined}).view;
+   assert.deepEqual({...view,beforeOpening:false},withoutMetadata);
+   assert.equal(JSON.stringify(view),original);
+   assert.equal(view.businessDate,clock<'03:00'?'2026-11-16':'2026-11-17');
+  }
+  const snapshot=createFallbackBusinessTimeSnapshot('2026-11-17');
+  snapshot.hours=snapshot.hours.map(h=>({...h,openTime:'12:00',closeTime:'22:00'}));
+  assert.equal(beforeOpeningScene('11:53',{},snapshot).view.beforeOpening,true);
+  assert.equal(beforeOpeningScene('15:59',{},snapshot).view.beforeOpening,false);
+  snapshot.hours=snapshot.hours.map(h=>({...h,isClosed:true,openTime:null,closeTime:null}));
+  assert.equal(beforeOpeningScene('11:53',{},snapshot).view.beforeOpening,false);
+ });
+ test(`${lang}: actual failures, payment uncertainty, retained orders and disabled reads keep warnings before opening`,()=>{
+  const at=new Date('2026-11-17T11:53:00+07:00'),day='2026-11-17',t=tablesText[lang];
+  const receipt={receiptId:91,orderId:'pending',businessDate:day,tableName:'BAR1',paidAt:at.toISOString(),paymentStatus:1,isCanceled:false};
+  for(const changes of [{readFailed:true},{enabled:false},{sync:{businessDate:day,lastSuccessAt:null,lastAttemptAt:at.toISOString(),lastErrorCode:'failed'}},
+   {receipts:[receipt]},{receipts:[{...receipt,paymentStatus:3},{...receipt,paymentStatus:1}]},
+   {orders:[order('retained','BAR1',{businessDate:day,orderDate:at.toISOString(),providerObservedAt:at.toISOString()})]}]) {
+   const {view,table,detail}=beforeOpeningScene('11:53',changes);
+   const html=render(view,lang,{selected:{kind:'table',id:table.id},detail});
+   assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes(t.paidCumulativeReview));
+   assert.ok(html.includes(t.collectionCheck)||html.includes(t.orderCheck));
+  }
+  const {view,table,detail}=beforeOpeningScene();
+  assert.ok(!render(view,lang,{failed:true,selected:{kind:'table',id:table.id},detail}).includes(t.beforeOpening));
+  const uncertain={...detail,current:[{id:91,validPaid:false,canceled:false,uncertain:true,lines:[]} ]};
+  const warned=render(view,lang,{selected:{kind:'table',id:table.id},detail:uncertain});
+  assert.ok(!warned.includes(t.beforeOpening));assert.ok(warned.includes(t.collectionCheck));
+ });
+ test(`${lang}: verified payment history remains visible with neutral before-opening message`,()=>{
+  const {view,table,detail}=beforeOpeningScene(),t=tablesText[lang];
+  const receipt={id:92,number:'verified-92',businessDate:view.businessDate,referenceAt:'2026-11-17T04:00:00+07:00',amount:100000,
+   canceled:false,validPaid:true,uncertain:false,reissued:false,link:'direct',lines:[]};
+  const html=render(view,lang,{selected:{kind:'table',id:table.id},detail:{...detail,latest:receipt,current:[receipt]}});
+  assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes('verified-92'));assert.ok(html.includes(t.validPayment));
  });
 }
