@@ -45,6 +45,7 @@ export async function readCleaningState(now = new Date(), timeoutMs = 15_000) {
     receipts: context.receipts.map(r => ({ receiptId: r.id, orderId: r.order_id ?? "", tableName: r.table_name,
       paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
     enabled: true, cutoff: time.snapshot.cutoff, businessTime: time.snapshot,
+    receiptVersions: Object.fromEntries(context.receipts.map(r => [r.id, JSON.stringify([r.final_amount, r.ref_no, r.status_changed_at, r.version])])),
     collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
   const overview = structuredClone(base);
   for (const table of overview.tables) if (cleaningFeatureEnabled() && context.manualEnabled !== false

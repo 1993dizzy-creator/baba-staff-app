@@ -149,7 +149,7 @@ test('receipt read selects only projected evidence, uses exact pagination, and n
   });
   const result=await service.readTableOverview(now);
   const select=calls.find(c=>c[0]==='select')[1];
-  assert.equal(select,'id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date');
+  assert.equal(select,'id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date,final_amount,ref_no,status_changed_at');
   assert.ok(calls.some(c=>c[0]==='eq'&&c[1]==='source'&&c[2]==='cukcuk'));
   assert.deepEqual(calls.find(c=>c[0]==='in')[2],[base.businessDate,addStoreDays(base.businessDate,1)]);
   assert.equal(result.summary.paid,1);assert.equal(result.tables.find(t=>t.name==='BAR4').state,'paid');

@@ -35,7 +35,9 @@ export async function readTableDetail(tableId: string, now = new Date()) {
   const overview = buildTableOverview({ businessDate, now, catalog, sync: payload.sync, orders,
     receipts: evidence.data.map(r => ({ receiptId: r.id, orderId: r.order_id ?? "", tableName: r.table_name,
       paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
-    enabled: true, cutoff: time.snapshot.cutoff, collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
+    enabled: true, cutoff: time.snapshot.cutoff, businessTime: time.snapshot,
+    receiptVersions: Object.fromEntries(evidence.data.map(r => [r.id, JSON.stringify([r.final_amount, r.ref_no, r.status_changed_at])])),
+    collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
   const detail = projectTableDetail({ table: overview.tables.find(t => t.id === tableId)!, catalog: catalog.tables,
     overview, orders, receipts: evidence.data, now, historyFrom, cutoff: time.snapshot.cutoff });
   const relevant = detail.current;

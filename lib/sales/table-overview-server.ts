@@ -39,6 +39,7 @@ export async function readTableOverview(now = new Date()) {
   let sync: OpenOrderSyncState | null = null;
   let orders: CollectedOrder[] = [];
   let receipts: TableReceipt[] = [];
+  let receiptVersions: Record<number, string> = {};
   let readFailed = false;
   if (enabled) {
     try {
@@ -58,14 +59,16 @@ export async function readTableOverview(now = new Date()) {
         ? payload.orders.map(order => ({ ...order, totalAmount: typeof order?.totalAmount === "number" ||
           typeof order?.totalAmount === "string" && order.totalAmount.trim() ? Number(order.totalAmount) : NaN, raw: {} })) : null;
       if (!validOrders(rows)) throw Error("SNAPSHOT_INVALID");
-      type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string; table_name: string | null; ref_date: string | null };
+      type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string; table_name: string | null; ref_date: string | null;
+        final_amount: number | string | null; ref_no: string | null; status_changed_at: string | null };
       const evidence = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
-        .select("id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date", { count: "exact" })
+        .select("id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date,final_amount,ref_no,status_changed_at", { count: "exact" })
         .eq("source", "cukcuk").in("business_date", [businessDate, addStoreDays(businessDate, 1)])
         .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to));
       if (evidence.error || !evidence.data) throw Error("RECEIPTS_UNAVAILABLE");
       receipts = evidence.data.map(row => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
         isCanceled: row.is_canceled, businessDate: row.business_date, tableName: row.table_name, paidAt: row.ref_date }));
+      receiptVersions = Object.fromEntries(evidence.data.map(row => [row.id, JSON.stringify([row.final_amount, row.ref_no, row.status_changed_at])]));
       orders = rows;
     } catch {
       // Retain the last successful timestamp for the operator, but never certify old rows as current.
@@ -74,6 +77,6 @@ export async function readTableOverview(now = new Date()) {
     }
   }
   return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts, readFailed,
-    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot,
+    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot, receiptVersions,
     collectionExpected: businessTime.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
 }
