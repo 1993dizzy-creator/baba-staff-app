@@ -4,10 +4,13 @@
 
 /** Vietnam is UTC+7 all year (no DST). */
 const VN_OFFSET_MS = 7 * 3600_000;
-/** First start minute of the service window: 17:30 (Asia/Ho_Chi_Minh). */
-export const OPEN_ORDERS_CRON_FIRST_START_MINUTE = 17 * 60 + 30;
+/** First start minute of the service window: 17:00 (Asia/Ho_Chi_Minh). */
+export const OPEN_ORDERS_CRON_FIRST_START_MINUTE = 17 * 60;
+/** Existing Vercel schedule first fires at 17:02; first-success grace ends at 17:07. */
+export const OPEN_ORDERS_CRON_FIRST_RUN_MINUTE = OPEN_ORDERS_CRON_FIRST_START_MINUTE + 2;
+export const OPEN_ORDERS_CRON_FIRST_SUCCESS_DEADLINE_MINUTE = OPEN_ORDERS_CRON_FIRST_RUN_MINUTE + 5;
 /**
- * Last start minute: 02:54 (inclusive, i.e. up to 02:54:59); 02:55:00 until 17:30 skip.
+ * Last start minute: 02:54 (inclusive, i.e. up to 02:54:59); 02:55:00 until 17:00 skip.
  * Even if the DB claim lands up to ~2 minutes after the cron start (cold start, store
  * settings RPC), the 3-minute lease still ends before the 03:00 business-day cutoff.
  */

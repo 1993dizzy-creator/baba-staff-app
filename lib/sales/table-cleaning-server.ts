@@ -2,7 +2,6 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase/server";
 import { loadBusinessTimeAdapter } from "@/lib/store-settings/business-time-adapter";
 import { openOrdersScope } from "@/lib/pos/cukcuk/open-orders-scope";
-import { evaluateOpenOrdersCronWindow } from "@/lib/pos/cukcuk/open-orders-cron-policy";
 import type { CollectedOrder, OpenOrderSyncState } from "@/lib/pos/cukcuk/open-orders-core";
 import { babaTableCatalog } from "./baba-table-catalog";
 import { buildTableOverview } from "./table-overview";
@@ -45,8 +44,7 @@ export async function readCleaningState(now = new Date(), timeoutMs = 15_000) {
     receipts: context.receipts.map(r => ({ receiptId: r.id, orderId: r.order_id ?? "", tableName: r.table_name,
       paidAt: r.ref_date, businessDate: r.business_date, paymentStatus: r.payment_status, isCanceled: r.is_canceled })),
     enabled: true, cutoff: time.snapshot.cutoff, businessTime: time.snapshot,
-    receiptVersions: Object.fromEntries(context.receipts.map(r => [r.id, JSON.stringify([r.final_amount, r.ref_no, r.status_changed_at, r.version])])),
-    collectionExpected: time.context.isOpen && evaluateOpenOrdersCronWindow(now).allowed });
+    receiptVersions: Object.fromEntries(context.receipts.map(r => [r.id, JSON.stringify([r.final_amount, r.ref_no, r.status_changed_at, r.version])])) });
   const overview = structuredClone(base);
   for (const table of overview.tables) if (cleaningFeatureEnabled() && context.manualEnabled !== false
     && table.state === "paid" && context.cleanedTableIds.includes(table.id) && context.keys[table.id]) table.state = "idle";
@@ -70,6 +68,7 @@ export async function decorateCleaningDetail(detail: TableDetail) {
   const latest = detail.latest ? current.find(r => r.id === detail.latest!.id) ?? { ...detail.latest, orderUsage: null } : null;
   const usage = latest?.orderUsage;
   return { ...detail, table, snapshotAt: state.overview.snapshotAt, snapshotStatus: state.overview.snapshotStatus,
+    collection: state.overview.collection,
     current, latest,
     paidUsage: usage && table.state === "paid" && state.overview.snapshotStatus === "ok"
       && key?.receiptId === usage.receiptId && table.lastPaidAt === usage.referenceAt ? usage : null,

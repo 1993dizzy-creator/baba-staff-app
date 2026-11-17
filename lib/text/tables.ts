@@ -1,5 +1,10 @@
 export const tablesText = {
   ko: {
+    beforeOrders: "주문 접수 전입니다.", beforeOrdersLabel: "주문 접수 전", collectionWaitingLabel: "수집 대기",
+    firstCollectionWaiting: "첫 주문 수집을 기다리고 있습니다.", firstCollectionRunning: "주문 정보를 수집하고 있습니다.",
+    collectionErrors: { delayed: "첫 주문 수집 지연 · 현황을 다시 확인해 주세요.", collection_failed: "최근 주문 수집 실패 · 이전 자료는 현재 상태를 확정하지 못합니다.",
+      read_failed: "현황 자료 조회 실패 · 다시 확인해 주세요.", stale: "주문 자료가 10분 넘게 갱신되지 않았습니다.",
+      evidence_conflict: "주문·결제 자료 확인 필요 · 일부 상태를 확정할 수 없습니다.", unavailable: "주문 수집 상태를 확인할 수 없습니다.", disabled: "주문 수집 조회가 비활성화되어 있습니다." },
     detailUnavailable: "상세 자료를 확인하지 못했습니다. 새로고침해 주세요. 청소완료는 사용할 수 없습니다.",
     detailErrors: {
       detail: "상세 정보를 확인하지 못했습니다. 새로고침해 주세요.",
@@ -68,6 +73,11 @@ export const tablesText = {
     noOrders: "확인된 진행 주문 없음 · 빈자리 확정 아님", noLines: "메뉴 상세 미확인", historical: "마지막 수집 기준 · 현재 상태 확인 필요",
   },
   vi: {
+    beforeOrders: "Chưa đến giờ nhận đơn.", beforeOrdersLabel: "Chưa nhận đơn", collectionWaitingLabel: "Chờ thu thập",
+    firstCollectionWaiting: "Đang chờ lần thu thập đơn đầu tiên.", firstCollectionRunning: "Đang thu thập thông tin đơn.",
+    collectionErrors: { delayed: "Thu thập đơn đầu tiên chậm · Hãy kiểm tra lại.", collection_failed: "Lần thu thập đơn gần nhất thất bại · Dữ liệu trước chưa xác nhận hiện trạng.",
+      read_failed: "Chưa tải được dữ liệu hiện trạng · Hãy kiểm tra lại.", stale: "Dữ liệu đơn chưa cập nhật hơn 10 phút.",
+      evidence_conflict: "Cần kiểm tra dữ liệu đơn và thanh toán · Một số trạng thái chưa được xác nhận.", unavailable: "Chưa xác minh được trạng thái thu thập đơn.", disabled: "Chức năng đọc dữ liệu đơn đang tắt." },
     detailUnavailable: "Chưa xác minh được dữ liệu chi tiết. Hãy làm mới. Chưa thể xác nhận dọn bàn.",
     detailErrors: {
       detail: "Chưa xác minh được thông tin chi tiết. Hãy làm mới.",

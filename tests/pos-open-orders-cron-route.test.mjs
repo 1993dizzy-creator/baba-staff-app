@@ -160,19 +160,19 @@ test('switch must be exactly "true": anything else skips with zero CUKCUK/DB cal
   }
 });
 
-test('service window boundaries (Asia/Ho_Chi_Minh): start 17:30, last start 02:54:59, 02:55:00 until 17:30 skip', () => {
+test('service window boundaries (Asia/Ho_Chi_Minh): start 17:00, last start 02:54:59, 02:55:00 until 17:00 skip', () => {
   const cases = [
-    ['2026-11-09T16:00', false], ['2026-11-09T17:00', false], ['2026-11-09T17:29:59', false], ['2026-11-09T17:30', true],
-    ['2026-11-09T17:32', true], ['2026-11-09T23:59:59', true],
+    ['2026-11-09T16:00', false], ['2026-11-09T16:59', false], ['2026-11-09T16:59:59', false], ['2026-11-09T17:00', true],
+    ['2026-11-09T17:02', true], ['2026-11-09T23:59:59', true],
     ['2026-11-10T00:00', true], ['2026-11-10T02:54', true], ['2026-11-10T02:54:59', true],
     ['2026-11-10T02:55', false], ['2026-11-10T02:55:01', false], ['2026-11-10T02:56', false], ['2026-11-10T02:57', false],
     ['2026-11-10T02:58', false], ['2026-11-10T03:00', false], ['2026-11-10T12:00', false], ['2026-11-10T15:59:59', false],
   ];
   for (const [at, allowed] of cases) assert.equal(policy.evaluateOpenOrdersCronWindow(vn(at)).allowed, allowed, at);
-  assert.equal(policy.OPEN_ORDERS_CRON_FIRST_START_MINUTE, 17 * 60 + 30);
-  // Millisecond edges: 17:29:59.999 / 17:30:00.000 and 02:54:59.999 / 02:55:00.000.
-  assert.equal(policy.evaluateOpenOrdersCronWindow(new Date(vn('2026-11-09T17:30').getTime() - 1)).allowed, false);
-  assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-09T17:30')).allowed, true);
+  assert.equal(policy.OPEN_ORDERS_CRON_FIRST_START_MINUTE, 17 * 60);
+  // Millisecond edges: 16:59:59.999 / 17:00:00.000 and 02:54:59.999 / 02:55:00.000.
+  assert.equal(policy.evaluateOpenOrdersCronWindow(new Date(vn('2026-11-09T17:00').getTime() - 1)).allowed, false);
+  assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-09T17:00')).allowed, true);
   assert.equal(policy.evaluateOpenOrdersCronWindow(new Date(vn('2026-11-10T02:55').getTime() - 1)).allowed, true);
   assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-10T02:55')).allowed, false);
   assert.equal(policy.evaluateOpenOrdersCronWindow(vn('2026-11-10T02:54:30')).vietnamTime, '02:54');
@@ -183,15 +183,15 @@ test('service window boundaries (Asia/Ho_Chi_Minh): start 17:30, last start 02:5
   assert.ok(lastStartEnd + 120_000 + core.OPEN_ORDERS_LEASE_MS <= 3 * 3600_000, 'claim delay up to 2 min still releases before 03:00');
 });
 
-test('route at 17:30 / 00:00 / 02:54:59 runs with the store-settings business date (after 00:00 = previous day); outside skips without calls', async () => {
-  for (const [at, date] of [['2026-11-09T17:30', '2026-11-09'], ['2026-11-09T23:59', '2026-11-09'], ['2026-11-10T00:00', '2026-11-09'], ['2026-11-10T02:54', '2026-11-09'], ['2026-11-10T02:54:59', '2026-11-09']]) {
+test('route at 17:00 / 00:00 / 02:54:59 runs with the store-settings business date (after 00:00 = previous day); outside skips without calls', async () => {
+  for (const [at, date] of [['2026-11-09T17:00', '2026-11-09'], ['2026-11-09T23:59', '2026-11-09'], ['2026-11-10T00:00', '2026-11-09'], ['2026-11-10T02:54', '2026-11-09'], ['2026-11-10T02:54:59', '2026-11-09']]) {
     const h = harness({ at: vn(at) });
     const r = await h.run();
     assert.equal(r.body.outcome, 'committed', at);
     assert.equal(h.meta.claimArgs.p_business_date, date, at);
     assert.ok(h.calls.indexOf('business_date_rpc') < h.calls.indexOf('rpc:pos_open_orders_claim'));
   }
-  for (const at of ['2026-11-09T17:02', '2026-11-09T17:27', '2026-11-09T17:29:59', '2026-11-10T02:55', '2026-11-10T02:57', '2026-11-10T03:00', '2026-11-10T15:59']) {
+  for (const at of ['2026-11-09T16:02', '2026-11-09T16:27', '2026-11-09T16:59:59', '2026-11-10T02:55', '2026-11-10T02:57', '2026-11-10T03:00', '2026-11-10T15:59']) {
     const h = harness({ at: vn(at) });
     const r = await h.run();
     assert.deepEqual([r.status, r.body.outcome], [200, 'skipped_outside_hours'], at);
@@ -282,7 +282,7 @@ test('cron registration: the 11 existing entries are byte-for-byte preserved and
   assert.deepEqual({ ...after, crons: undefined }, { ...before, crons: undefined });
 });
 
-test('cron schedule x route window: Vercel fires 17:02–02:57 (+07) every 5 min; only 17:32–02:52 collect', () => {
+test('cron schedule x route window: Vercel fires 17:02–02:57 (+07) every 5 min; only 17:02–02:52 collect', () => {
   // "2-57/5 10-19 * * *" in UTC.
   const fires = [];
   for (let hour = 10; hour <= 19; hour++) for (let minute = 2; minute <= 57; minute += 5) fires.push(new Date(Date.UTC(2026, 10, 9, hour, minute)));
@@ -290,10 +290,10 @@ test('cron schedule x route window: Vercel fires 17:02–02:57 (+07) every 5 min
   assert.equal(vnLabel(fires[0]), '17:02');
   assert.equal(vnLabel(fires.at(-1)), '02:57');
   const allowed = fires.filter((d) => policy.evaluateOpenOrdersCronWindow(d).allowed).map(vnLabel);
-  assert.equal(allowed[0], '17:32');
+  assert.equal(allowed[0], '17:02');
   assert.equal(allowed.at(-1), '02:52');
-  assert.equal(allowed.length, 6 + 8 * 12 + 11);
-  assert.deepEqual(fires.map(vnLabel).filter((t) => !allowed.includes(t)), ['17:02', '17:07', '17:12', '17:17', '17:22', '17:27', '02:57']);
+  assert.equal(allowed.length, 9 * 12 + 11);
+  assert.deepEqual(fires.map(vnLabel).filter((t) => !allowed.includes(t)), ['02:57']);
 });
 
 test('static: current route config/reuse/lock guards and the original cron delivery scope', () => {
@@ -309,7 +309,7 @@ test('static: current route config/reuse/lock guards and the original cron deliv
   assert.ok(src.indexOf('openOrdersSyncEnabled()') < src.indexOf('evaluateOpenOrdersCronWindow(now)'));
   assert.ok(src.indexOf('evaluateOpenOrdersCronWindow(now)') < src.indexOf('runCentralOpenOrderSync(now)'));
   assert.equal(policy.OPEN_ORDERS_CRON_LAST_START_MINUTE, 2 * 60 + 54);
-  assert.match(src, /17:30–02:54:59/);
+  assert.match(src, /17:00–02:54:59/);
   assert.match(src, /"2-57\/5 10-19 \* \* \*"/);
   // Verify the historical Cron delivery, not a permanent freeze on later authorized
   // KPI/receipt fixes. Current Cron/collector behavior is exercised above with real modules.

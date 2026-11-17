@@ -143,27 +143,32 @@ export default function TablesPage() {
   const paymentHistory = tablePaymentHistory(detail, standaloneReceipt?.id);
   const cleaningFailure = saveState && saveState.id === tile?.id ? saveState.error : null;
   const beforeOpening = !!data?.beforeOpening;
-  const normalWaiting = beforeOpening && !failed && data?.catalogStatus === "ok"
-    && ["waiting", "ok"].includes(data.snapshotStatus) && data.summary.unknown === 0
-    && !data.summary.occupiedPartial && data.unlinkedReceiptCount === 0 && data.unlinked.length === 0
-    && data.summary.paidCumulativeEvidence.status !== "review"
-    && data.tables.every(table => table.state === "idle" && table.orders.length === 0);
-  const detailBeforeOpening = beforeOpening && !!tile && !tile.orders.length
+  const normalWaiting = !failed && !!data?.collection?.normalWaiting;
+  const waitingPhase = data?.collection?.phase;
+  const waitingMessage = beforeOpening ? t.beforeOpening : waitingPhase === "before_collection" ? t.beforeOrders
+    : waitingPhase === "first_start" ? t.firstCollectionWaiting : t.firstCollectionRunning;
+  const waitingLabel = beforeOpening ? t.beforeOpeningLabel : waitingPhase === "before_collection" ? t.beforeOrdersLabel : t.collectionWaitingLabel;
+  const detailWaiting = (beforeOpening || normalWaiting && !detailFailed
+    && (!detail?.collection || ["healthy", "waiting"].includes(detail.collection.health))) && !!tile && !tile.orders.length
     && tile.state !== "paid" && tile.state !== "occupied" && tile.state !== "reserved"
-    && !tile.lastPaidAt && (!detail || !detail.table.orders.length);
+    && !tile.lastPaidAt && (!detail || !detail.table.orders.length && !detail.table.lastPaidAt);
+  const health = data?.collection?.health, detailHealth = detail?.collection?.health;
+  const collectionWarning = health && health !== "healthy" && health !== "waiting" ? t.collectionErrors[health] : null;
+  const detailCollectionWarning = detailHealth && detailHealth !== "healthy" && detailHealth !== "waiting" ? t.collectionErrors[detailHealth] : null;
   const detailPaymentReview = !!detail && (detail.current.some(receipt => receipt.uncertain || !receipt.validPaid && !receipt.canceled)
     || detail.merges.some(merge => !merge.verified));
   const detailError = detailFailed ? detailFailure(detailResult?.failure?.stage, detailResult?.failure?.status) : null;
   const detailErrorText = detailError ? t.detailErrors[detailError.stage] : null;
   const hasPaymentHistory = !!detail && (!!detail.latest || detail.current.length > 0 || (detail.previous?.length ?? 0) > 0 || detail.merges.length > 0);
   // Unknown history after a failed GET is not evidence of zero history.
-  const neutralDetailFailure = detailFailed && normalWaiting && detailBeforeOpening && !hasPaymentHistory && !detailPaymentReview
+  const neutralDetailFailure = detailFailed && beforeOpening && normalWaiting && detailWaiting && !hasPaymentHistory && !detailPaymentReview
     && detailError?.stage !== "lines"; // The menu query runs only after related receipts were read.
   const compactWarning = cleaningFailure && cleaningFailure.kind !== "saved_refresh" ? t.cleaningErrors[cleaningFailure.kind]
     : detailFailed && !neutralDetailFailure ? detailErrorText
+    : (detailCollectionWarning ?? collectionWarning) ? detailCollectionWarning ?? collectionWarning
     : detail && !["ok", "waiting"].includes(detail.snapshotStatus) ? t.collectionCheck
-    : detailBeforeOpening && detailPaymentReview ? t.reviewPayment
-    : detailBeforeOpening && normalWaiting && (!detail || ["waiting", "ok"].includes(detail.snapshotStatus)) ? null
+    : detailWaiting && detailPaymentReview ? t.reviewPayment
+    : detailWaiting && normalWaiting && (!detail || ["waiting", "ok"].includes(detail.snapshotStatus)) ? null
     : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
   const cleanTable = async () => {
     if (saving.current || !detailFresh || !tile || tile.state !== "paid" || !detail?.cleaning.enabled || !detail.cleaning.token) return;
@@ -200,7 +205,8 @@ export default function TablesPage() {
   const areaName = (key: string) => key === "bar" ? t.bar : key === "floor1" ? t.floor1 : key === "floor2" ? t.floor2 : key.replace(/^other:/, "");
   const areas = ["bar", "floor1", "floor2", ...new Set(data?.tables.filter(item => item.area.startsWith("other:")).map(item => item.area) ?? [])];
   const diagnostic = data ? data.catalogStatus !== "ok" ? t.unavailable
-    : data.snapshotStatus === "waiting" ? normalWaiting ? null : t.waiting
+    : collectionWarning ? collectionWarning
+    : data.snapshotStatus === "waiting" ? normalWaiting ? beforeOpening ? null : waitingMessage : t.waiting
     : data.snapshotStatus !== "ok" ? t.unavailable
     : data.summary.unknown > 0 || data.unlinkedReceiptCount > 0 || data.summary.occupiedPartial ? t.partial : null : null;
   // The basis is the last successful order collection that decided the states, never the browser clock.
@@ -341,8 +347,8 @@ export default function TablesPage() {
       }}>
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "paid" && elapsed !== null ? t.paidOrderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
-          <span className={styles.stateDot} data-state={detailBeforeOpening ? "idle" : snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
-          {detailBeforeOpening ? t.beforeOpeningLabel : t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
+          <span className={styles.stateDot} data-state={detailWaiting ? beforeOpening ? "idle" : "unknown" : snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
+          {detailWaiting ? waitingLabel : t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
       </div><div className={styles.sheetActions}>
@@ -354,10 +360,10 @@ export default function TablesPage() {
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code ?? detailError?.code} data-stage={detailError?.stage} data-status={cleaningFailure?.status ?? detailError?.status}>{compactWarning}</p> : null}
       {neutralDetailFailure ? <span hidden data-code={detailError?.code} data-stage={detailError?.stage} data-status={detailError?.status} /> : null}
-      {detail && !detailFresh && !detailBeforeOpening ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
+      {detail && !detailFresh && !detailWaiting ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
       {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
       {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}
-      {detailBeforeOpening ? <p role="status" className={cx(styles.emptyOrder, styles.idleEmpty)}><span aria-hidden="true">🕒</span><span>{t.beforeOpening}</span></p>
+      {detailWaiting ? <p role="status" className={cx(styles.emptyOrder, styles.idleEmpty)}><span aria-hidden="true">🕒</span><span>{waitingMessage}</span></p>
         : tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>

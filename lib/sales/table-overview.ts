@@ -4,8 +4,8 @@ import {
 } from "../pos/cukcuk/open-orders-core.ts";
 
 import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
-import { evaluateOpenOrdersCronWindow } from "../pos/cukcuk/open-orders-cron-policy.ts";
-import { calculateBusinessTimeContext, type BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
+import type { BusinessTimeSnapshot } from "../store-settings/business-time-adapter-core.ts";
+import { tableCollectionTiming, type TableCollectionState, type TableCollectionHealth } from "./table-collection-policy.ts";
 import { projectPaidCumulative, type PaidCumulativeEvidence } from "./table-paid-cumulative.ts";
 
 export type TableReceipt = ReceiptLink & { tableName?: string | null; paidAt?: string | null };
@@ -24,6 +24,7 @@ export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]
   paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
 export type TableOverview = {
   beforeOpening?: boolean;
+  collection?: TableCollectionState;
   businessDate: string; serverNow: string; snapshotAt: string | null; catalogAt: string | null;
   catalogStatus: TableCatalog["status"]; snapshotStatus: string; unlinkedReceiptCount: number;
   tables: TableTile[]; unlinked: TableOrder[];
@@ -67,10 +68,11 @@ export function tableArea(name: string) {
 export function buildTableOverview(input: {
   businessDate: string; now: Date; catalog: TableCatalog; sync: OpenOrderSyncState | null;
   orders: CollectedOrder[]; receipts: TableReceipt[]; enabled: boolean; readFailed?: boolean;
-  cutoff?: string; collectionExpected?: boolean; businessTime?: BusinessTimeSnapshot;
+  cutoff?: string; businessTime?: BusinessTimeSnapshot;
   receiptVersions?: Record<number, string>;
 }): TableOverview {
   const { businessDate, now, catalog, sync } = input;
+  const sameBusinessDay = calculateStoreBusinessDate(now, input.cutoff ?? input.businessTime?.cutoff) === businessDate;
   const canonicalReceipts = new Map<number, TableReceipt>();
   let receiptConflict = false;
   for (const row of input.receipts) {
@@ -98,14 +100,18 @@ export function buildTableOverview(input: {
   const kpi = buildOpenOrderKpi({ enabled: input.enabled, businessDate, now, sync,
     classified: conflict ? null : classified, isLiveBusinessDay: true, isClosed: false, paid: { amount: 0, receiptCount: 0 } });
   // A failed latest attempt or a future timestamp cannot certify a current physical seat.
-  const age = sync?.lastSuccessAt ? now.getTime() - Date.parse(sync.lastSuccessAt) : NaN;
-  const snapshotOk = kpi.status === "ok" && !sync?.lastErrorCode && age >= 0 && !input.readFailed && !receiptConflict;
-  const collectionExpected = input.collectionExpected ?? evaluateOpenOrdersCronWindow(now).allowed;
-  const currentSync = sync?.businessDate === businessDate ? sync : null;
-  // Outside the collector's service window, absence of a first snapshot is normal.
-  // An explicit read/collection failure is never re-labelled as waiting.
-  const waiting = input.enabled && !collectionExpected && !input.readFailed && !currentSync?.lastErrorCode
-    && !conflict && !receiptConflict && !(age < 0);
+  const currentSync = sameBusinessDay && sync?.businessDate === businessDate ? sync : null;
+  const age = currentSync?.lastSuccessAt ? now.getTime() - Date.parse(currentSync.lastSuccessAt) : NaN;
+  const snapshotOk = sameBusinessDay && kpi.status === "ok" && !sync?.lastErrorCode && age >= 0 && !input.readFailed && !receiptConflict;
+  const timing = tableCollectionTiming(now, businessDate, input.businessTime);
+  const hasSuccess = !!currentSync?.lastSuccessAt;
+  let health: TableCollectionHealth = !input.enabled ? "disabled" : input.readFailed ? "read_failed"
+    : !sameBusinessDay ? "unavailable"
+    : currentSync?.lastErrorCode ? "collection_failed" : conflict || receiptConflict ? "evidence_conflict"
+    : !Number.isFinite(now.getTime()) || hasSuccess && (!Number.isFinite(age) || age < 0) ? "unavailable"
+    : snapshotOk ? "healthy" : hasSuccess && age > DEFAULT_STALE_AFTER_MS ? "stale"
+    : hasSuccess ? "unavailable" : timing.beforeFirstDeadline ? "waiting" : "delayed";
+  const waiting = health === "waiting";
   const globalFailure = !snapshotOk && !waiting;
   const catalogAge = catalog.collectedAt ? now.getTime() - Date.parse(catalog.collectedAt) : NaN;
   // Verified static identities do not expire like live availability. Order freshness still gates occupancy.
@@ -196,6 +202,8 @@ export function buildTableOverview(input: {
     else if (candidates.length) state = snapshotOk && candidates.every(order => order.verifiedOpen) ? "occupied" : "unknown";
     else if (unlocatedOrder || receiptIssue || matches.some(order => convertedIds.has(order.id) && !paidByOrder.has(order.id))) state = "unknown";
     else if (snapshotOk && last) state = "paid";
+    // Before the first collection, an open shop's unobserved seats are never certified idle.
+    if (waiting && !timing.beforeOpening && state === "idle") state = "unknown";
     return { ...table, area: table.displayArea ?? tableArea(table.areaName), state, orders: matches,
       // Include receipt/closure changes that may leave the displayed state and paid time unchanged.
       // Explicit fields only: never expose provider raw/customer data or collection timestamps.
@@ -213,11 +221,14 @@ export function buildTableOverview(input: {
   const countable = catalogOk && snapshotOk && unknown === 0 && !unlocatedOrder;
   const paidCumulativeEvidence = projectPaidCumulative({ businessDate, now,
     healthy: snapshotOk && !conflict && !receiptConflict, receipts, cutoff: input.cutoff });
-  const operation = input.businessTime ? calculateBusinessTimeContext(now, input.businessTime) : null;
+  const hasCurrentEvidence = projected.length > 0 || receipts.some(receipt => receipt.businessDate === businessDate
+    && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+  if (health === "healthy" && (unknown > 0 || unlocatedOrder || unlinkedReceiptCount > 0)
+    || health === "waiting" && (hasCurrentEvidence || [...nameCounts.values()].some(count => count !== 1))) health = "evidence_conflict";
   return {
     // Display metadata only. Collection windows, tile states and count contracts stay independent.
-    beforeOpening: !!operation && !operation.isOpen && !operation.isClosed && !operation.isAfterCloseBeforeCutoff
-      && operation.openAt !== null && now.getTime() < Date.parse(operation.openAt),
+    beforeOpening: timing.beforeOpening,
+    collection: { phase: timing.phase, health, normalWaiting: health === "waiting" && catalogOk && !hasCurrentEvidence, hasSuccess },
     businessDate, serverNow: now.toISOString(), snapshotAt: kpi.lastSuccessAt, catalogAt: catalog.collectedAt,
     catalogStatus: catalog.status, snapshotStatus: snapshotOk ? "ok" : waiting ? "waiting"
       : kpi.status === "ok" ? "unavailable" : kpi.status,
