@@ -338,7 +338,7 @@ for(const lang of ['ko','vi']) {
 }
 
 for(const lang of ['ko','vi']){
- test(`${lang}: pre-opening empty success has no error; failed unknown history uses neutral stage-specific help without claiming zero`,()=>{
+ test(`${lang}: pre-opening empty success has no error; failed unknown history retains hidden diagnostics without claiming zero`,()=>{
   const {view,table,detail}=beforeOpeningScene(),selected={kind:'table',id:table.id},t=tablesText[lang];
   for(const d of [null,detail]){
    const html=render(view,lang,{selected,detail:d});assert.ok(html.includes(t.beforeOpening));assert.ok(!html.includes('class="compactWarning"'));assert.ok(!html.includes('data-code="TABLE_DETAIL_'));
@@ -346,7 +346,8 @@ for(const lang of ['ko','vi']){
   for(const stage of ['detail','context','snapshot','receipts','lines','timeout','response','stale']){
    const failure=refreshDisplay.detailFailure(stage,stage==='timeout'?undefined:503);
    const html=render(view,lang,{selected,detailFailed:true,failure});
-   assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes(t.beforeOpeningLabel));assert.ok(html.includes(t.detailErrors[stage]));
+   assert.ok(html.includes(t.beforeOpening));assert.ok(html.includes(t.beforeOpeningLabel));assert.equal(html.includes(t.detailErrors[stage]),stage==='lines');
+   if(stage!=='lines')assert.ok(html.includes('<span hidden="" data-code='));
    assert.equal(html.includes('class="compactWarning"'),stage==='lines');assert.ok(html.includes(`data-stage="${stage}"`));assert.ok(html.includes(`data-code="${failure.code}"`));
    assert.ok(!html.includes(t.historyUnavailableShort));assert.ok(!html.includes(t.noPayment));
   }
@@ -365,3 +366,16 @@ for(const lang of ['ko','vi']){
   assert.ok(!html.includes(t.beforeOpening));assert.ok(html.includes('class="compactWarning"'));assert.ok(html.includes(t.detailErrors.snapshot));assert.ok(html.includes(t.unavailable));
  });
 }
+
+for(const lang of ['ko','vi'])test(`${lang}: detail header keeps close and paid cleaning controls; only overview has refresh`,()=>{
+ const {view,table,detail}=beforeOpeningScene(),selected={kind:'table',id:table.id},t=tablesText[lang];
+ for(const paid of [false,true]){
+  const d=paid?{...detail,snapshotStatus:'ok',snapshotAt:view.serverNow,table:{...table,state:'paid',lastPaidAt:view.serverNow}}:detail;
+  const v=paid?{...view,snapshotStatus:'ok',snapshotAt:view.serverNow}:view;
+  const html=render(v,lang,{selected,detail:d}),actions=html.match(/<div class="sheetActions">(.*?)<\/div>/s)[1];
+  assert.equal((actions.match(/<button /g)??[]).length,paid?2:1);
+  assert.ok(actions.includes(`aria-label="${t.close}"`));assert.ok(!actions.includes(`aria-label="${t.refresh}"`));
+  assert.equal(actions.includes(`aria-label="${t.cleanAction}"`),paid);
+  assert.equal((html.match(/class="refresh"/g)??[]).length,1);
+ }
+});

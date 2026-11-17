@@ -346,11 +346,6 @@ export default function TablesPage() {
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
       </div><div className={styles.sheetActions}>
-        <button className={styles.closeButton} disabled={loading} aria-label={t.refresh} title={t.refresh} onClick={() => void load(true)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9" />
-          </svg>
-        </button>
         {tile?.state === "paid" && snapshotStatus === "ok" ? <button disabled={!detailFresh || !detail?.cleaning.enabled || saveState?.busy} className={styles.cleanButton}
           aria-label={t.cleanAction} title={detailFresh && detail?.cleaning.enabled ? t.cleanAction : cleaningReason} aria-describedby="table-cleaning-reason"
           aria-busy={saveState?.id === tile.id && saveState.busy} onClick={() => void cleanTable()}>🧹</button> : null}
@@ -358,7 +353,7 @@ export default function TablesPage() {
       </div></header>
       {tile?.state === "paid" ? <span id="table-cleaning-reason" className={styles.srOnly}>{cleaningReason}</span> : null}
       {compactWarning ? <p role="alert" className={styles.compactWarning} data-code={cleaningFailure?.code ?? detailError?.code} data-stage={detailError?.stage} data-status={cleaningFailure?.status ?? detailError?.status}>{compactWarning}</p> : null}
-      {neutralDetailFailure ? <p role="status" className={styles.muted} data-code={detailError?.code} data-stage={detailError?.stage} data-status={detailError?.status}>{detailErrorText}</p> : null}
+      {neutralDetailFailure ? <span hidden data-code={detailError?.code} data-stage={detailError?.stage} data-status={detailError?.status} /> : null}
       {detail && !detailFresh && !detailBeforeOpening ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
       {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
       {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}
