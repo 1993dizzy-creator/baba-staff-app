@@ -54,7 +54,7 @@ DB 객체는 이번 단계에서 KEEP 또는 DEFER만 둔다(삭제는 전용 Mi
 ### DEFER (근거 부족·외부 의존 가능 — 삭제 금지, 후속 확인)
 | 후보 | 상태 | 필요한 확인 |
 |---|---|---|
-| `payroll_settle_2026_10_v1`, `payroll_settle_2026_10_final_state_v1` | 앱 호출 없음(이번 제거), service_role 전용, 배치 존재 시 `BATCH_EXISTS`로 거부 | 감사 보존 기간 결정 후 REVOKE/DROP 전용 Migration |
+| `payroll_settle_2026_10_v1`, `payroll_settle_2026_10_final_state_v1` | 앱 호출 없음(이번 제거), service_role 전용, 배치 존재 시 `BATCH_EXISTS`로 거부 | 감사 보존 기간 결정 후 REVOKE/DROP 전용 Migration — 2026-11-17 LEGACY-CLEANUP-P1: 정식 Migration `20261117055003_retire_payroll_2026_10_settle_rpcs.sql` 로컬 작성·격리 검증 완료, **운영 미적용**(Owner 별도 승인 필요). 데이터·감사 기록·공통 분할지급 함수는 유지 |
 | 앱·함수 미참조 구버전 RPC: `business_partner_create/update/review_supplier_alias_v1~v3`, `employee_create_with_proration_v1`, `payroll_correct_latest_unused_contract_v2/v3`, `payroll_create_contract_version_v4/v5`, `ledger_create_reserve_plan_v1`, `ledger_update_reserve_plan_v1`, `ledger_sync_inventory_candidates_v1`·`_core_v1`, `ledger_resolve_inventory_purchase_correction_v1` | 상위 버전으로 대체 | 배포 중인 구버전 클라이언트 없음 확인 + Supabase API 로그 기간 확인 후 일괄 DROP Migration |
 | `pos_shadow_*`, `pos_signed_*`, `inventory_writer_*`(attest/compare/inspect/shadow_drain) | 앱 코드 미호출, POS 수집·섀도 운영 도구용 | POS 에이전트/운영 스크립트 사용 여부 |
 | `reservation_*`(create/list/update/inbox_* 등), `/api/tables/reservations/inbox*` | 정적 문자열 참조 없음, `ReservationInbox`·`server-api`가 동적 경로 사용 가능 | 예약 기능 담당 확인 |
