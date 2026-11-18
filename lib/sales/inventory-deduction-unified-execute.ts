@@ -146,6 +146,55 @@ async function findBatchReceiptId(params: {
   return data?.id == null ? null : Number(data.id);
 }
 
+function getSqlState(error: { code?: string | null }) {
+  return typeof error.code === "string" && /^[A-Z0-9]{5}$/.test(error.code)
+    ? error.code
+    : null;
+}
+
+// The apply RPC is one transaction: on error it rolled back entirely, but the
+// preview batch and its candidates were committed earlier by the app. Close that
+// batch so its leftover `selected` candidates stay as evidence yet can never be
+// applied later. Conditional on `previewed`: if the RPC did commit (e.g. a
+// client-side failure after COMMIT) or is still holding the batch lock, this is a
+// no-op once that transaction finishes. Candidates and audit rows are untouched.
+async function closeFailedApplyBatch(params: { batchId: number; reason: string }) {
+  try {
+    const updatedAt = new Date().toISOString();
+    const { data, error } = await supabaseServer
+      .from("pos_inventory_deduction_batches")
+      .update({ status: "failed", error_message: params.reason, updated_at: updatedAt })
+      .eq("id", params.batchId)
+      .eq("status", "previewed")
+      .select("id");
+    if (error) throw new Error(error.message);
+    if (!data?.length) return;
+
+    const { error: receiptError } = await supabaseServer
+      .from("pos_inventory_deduction_receipts")
+      .update({
+        status: "failed",
+        selected_for_apply: false,
+        error_message: params.reason,
+        updated_at: updatedAt,
+      })
+      .eq("batch_id", params.batchId)
+      .eq("status", "ready");
+    if (receiptError) throw new Error(receiptError.message);
+  } catch (closeError) {
+    // Never mask the original apply failure. The batch then stays `previewed` as
+    // before this change; the RPC's applied-receipt guard still prevents a second
+    // deduction once a retry batch has applied the same receipt.
+    console.error(
+      "[SALES_INVENTORY_APPLY_BATCH_CLOSE_FAILED]",
+      JSON.stringify({
+        batchId: params.batchId,
+        error: closeError instanceof Error ? closeError.message.slice(0, 200) : "unknown",
+      })
+    );
+  }
+}
+
 function validateCurrentState(
   item: UnifiedExecuteItemInput,
   current: CurrentReceipt
@@ -209,11 +258,13 @@ async function applyInitialReceipt(params: {
     });
   }
 
+  const phaseStartedAt = Date.now();
   const preview = await buildInventoryDeductionPreview({
     businessDateFrom: "1970-01-01",
     businessDateTo: "2999-12-31",
     receiptIds: [params.item.receiptId],
   });
+  const previewMs = Date.now() - phaseStartedAt;
   const previewReceipt = preview.receipts.find(
     (receipt) => receipt.receiptId === params.item.receiptId
   );
@@ -243,6 +294,7 @@ async function applyInitialReceipt(params: {
     });
   }
 
+  const saveStartedAt = Date.now();
   const savedBatch = await saveInventoryDeductionPreviewBatch({
     preview,
     actorUsername: params.actorUsername,
@@ -253,7 +305,10 @@ async function applyInitialReceipt(params: {
     ]),
     executionId: params.executionId,
   });
+  const saveMs = Date.now() - saveStartedAt;
+  const validateStartedAt = Date.now();
   const validation = await validateInventoryDeductionBatch(savedBatch.batchId);
+  const validateMs = Date.now() - validateStartedAt;
 
   if (!validation.found || !validation.applyReady) {
     if (
@@ -290,6 +345,7 @@ async function applyInitialReceipt(params: {
     currentReceiptUpdatedAt: receipt.currentReceiptUpdatedAt,
     applyAllowed: receipt.applyAllowed,
   }));
+  const rpcStartedAt = Date.now();
   const { data, error } = await supabaseServer.rpc(
     "apply_sales_inventory_deduction_batch",
     {
@@ -298,8 +354,32 @@ async function applyInitialReceipt(params: {
       p_validation_receipts: validationReceipts,
     }
   );
+  const timing = {
+    previewMs,
+    saveMs,
+    validateMs,
+    rpcMs: Date.now() - rpcStartedAt,
+  };
 
   if (error) {
+    const sqlState = getSqlState(error);
+    // Diagnostic only: SQLSTATE, phase timings and the bounded message. PostgreSQL
+    // DETAIL can carry row data, so it is never logged.
+    console.error(
+      "[SALES_INVENTORY_APPLY_RPC_FAILED]",
+      JSON.stringify({
+        executionId: params.executionId,
+        receiptId: params.item.receiptId,
+        batchId: savedBatch.batchId,
+        sqlState,
+        message: String(error.message || "").slice(0, 200),
+        ...timing,
+      })
+    );
+    await closeFailedApplyBatch({
+      batchId: savedBatch.batchId,
+      reason: sqlState ? `apply_rpc_failed:${sqlState}` : "apply_rpc_failed",
+    });
     const deductionReceiptId = await findBatchReceiptId({
       batchId: savedBatch.batchId,
       receiptId: params.item.receiptId,
@@ -330,7 +410,9 @@ async function applyInitialReceipt(params: {
       batchId: savedBatch.batchId,
       deductionReceiptId,
       appliedDeductionCount: isInventoryDeductionBusy(error) ? 0 : deductionCount,
-      failureReason: isInventoryDeductionBusy(error) ? "inventory_busy_refresh_required" : error.message || "apply_failed",
+      failureReason: isInventoryDeductionBusy(error)
+        ? "inventory_busy_refresh_required"
+        : `${sqlState ? `sqlstate_${sqlState}:` : ""}${error.message || "apply_failed"}`,
       startedAt: params.startedAt,
     });
   }
@@ -352,6 +434,15 @@ async function applyInitialReceipt(params: {
     batchId: savedBatch.batchId,
     receiptId: params.item.receiptId,
   });
+  console.info(
+    "[SALES_INVENTORY_APPLY_TIMING]",
+    JSON.stringify({
+      executionId: params.executionId,
+      receiptId: params.item.receiptId,
+      batchId: savedBatch.batchId,
+      ...timing,
+    })
+  );
 
   return makeResult({
     item: params.item,
