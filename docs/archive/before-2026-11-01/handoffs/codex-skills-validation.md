@@ -150,7 +150,7 @@ OpenAI Docs와 skill-creator 지침을 적용했다. 공식 [Skills 평가 방�
 
 따라서 **실제 Codex 발견은 성공, 새 세션에서의 Skill 실행은 미완료**다. CLI 대화 종료 코드 0은 명령 실행 성공을 뜻하지 않는다. 정책 거부를 권한 우회로 해결하지 않았다. 이전 PowerShell .ps1 실행 제한과 이번 Codex 명령 실행 정책 거부를 같은 원인으로 단정하지 않는다.
 
-증거: [Preflight 세션 JSONL](../../.tmp-baba/validation/codex-preflight.jsonl), [Verify/Handoff 세션 JSONL](../../.tmp-baba/validation/codex-verify-handoff.jsonl), [읽기 전용 지문](../../.tmp-baba/validation/preflight-readonly-proof.json), [직접 Preflight 결과](../../.tmp-baba/validation/preflight-actual.json).
+증거: [Preflight 세션 JSONL](../../../../.tmp-baba/validation/codex-preflight.jsonl), [Verify/Handoff 세션 JSONL](../../../../.tmp-baba/validation/codex-verify-handoff.jsonl), [읽기 전용 지문](../../../../.tmp-baba/validation/preflight-readonly-proof.json), [직접 Preflight 결과](../../../../.tmp-baba/validation/preflight-actual.json).
 
 정적 정합성 검사도 3개 모두 통과했다. skill-creator의 Python quick_validate는 Python 실행 파일 부재로 실행하지 못했다. 이를 통과로 표시하지 않는다.
 
@@ -180,7 +180,7 @@ node scripts/agent/baba-verify.mjs --tests tests/agent-workflow-safety.test.mjs,
 
 빌드는 같은 Verify 명령에 --build를 추가해 실제 실행했다. Next 컴파일은 성공했으나 페이지 데이터 수집에서 **Missing NEXT_PUBLIC_SUPABASE_URL**, `/api/admin/ledger/meal-candidates/sync`로 종료 코드 1이었다. 운영 키·DB·POS를 제공하지 않았으며 빌드 통과로 보지 않는다. 빌드 포함 실행의 종합 판정은 FAIL(blocked-env)였다. 최종 일반 Verify에서는 --build를 재실행하지 않았으며 이 실패 기록을 유지한다.
 
-증거: [최종 커밋 상태 Verify](../../.tmp-baba/verify/2026-10-24T10-11-19-524Z-29c57724.json), [빌드 포함 Verify](../../.tmp-baba/verify/2026-10-24T10-06-40-156Z-4357434f.json). 후자는 수정 중간 상태에서의 실행이며 앱 소스·의존성·Next 설정은 검증 브랜치 전체에서 변경하지 않았다.
+증거: [최종 커밋 상태 Verify](../../../../.tmp-baba/verify/2026-10-24T10-11-19-524Z-29c57724.json), [빌드 포함 Verify](../../../../.tmp-baba/verify/2026-10-24T10-06-40-156Z-4357434f.json). 후자는 수정 중간 상태에서의 실행이며 앱 소스·의존성·Next 설정은 검증 브랜치 전체에서 변경하지 않았다.
 
 ## 14. 한계·보존·병합 판단·후속 통합
 

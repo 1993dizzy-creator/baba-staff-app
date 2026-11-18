@@ -49,7 +49,7 @@
 
 ### 신규 V2
 
-신규 Migration: [20261018105936_add_payable_payment_idempotency_v2.sql](../../supabase/migrations/20261018105936_add_payable_payment_idempotency_v2.sql)
+신규 Migration: [20261018105936_add_payable_payment_idempotency_v2.sql](../../../../supabase/migrations/20261018105936_add_payable_payment_idempotency_v2.sql)
 
 - ledger_payable_payment_requests: UUID 요청 PK, actor, 정규화 요청 JSONB, 반환 결과, 지급 전표 FK/UNIQUE, 생성·완료 시각. 과거 전표 backfill/UPDATE/DELETE는 없다.
 - ledger_pay_payables_v2: 기존 7개 인자에 p_request_id를 추가한 별도 이름의 함수. V1 정의·인자·권한·기존 트리거는 수정하지 않는다.
@@ -164,10 +164,10 @@
 
 | 언어·화면 | 일반 부분지급 | 결제 미확인 지급 |
 | --- | --- | --- |
-| KO PC | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-partial.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-verification.png) |
-| KO 모바일 | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-partial.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-verification.png) |
-| VI PC | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-partial.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-verification.png) |
-| VI 모바일 | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-partial.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-verification.png) |
+| KO PC | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-partial.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-verification.png) |
+| KO 모바일 | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-partial.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-verification.png) |
+| VI PC | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-partial.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-verification.png) |
+| VI 모바일 | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-partial.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-verification.png) |
 
 ## G. 운영 적용 순서와 위험
 

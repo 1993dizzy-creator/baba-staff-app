@@ -50,7 +50,7 @@ v3 SQL의 `payable_fingerprint()`는 allocation **ID·payable ID·payment ID·�
 
 `node --test tests/phuong-carlsberg-review.test.mjs`: **7/7 PASS**. 기존 PGlite 의존성으로 합성 302건·69,215,076 fixture를 메모리 안에서만 검증했다. 원본 Migration의 payable/배분/요청 테이블과 월 경계 트리거 본문을 사용했다. 기본 차단, stale baseline, 성공 검토 후 롤백, 재구축 적용 후 차단, write 후 자금이동 오염 감지/전체 롤백, 정확한 12건 해제와 감사·#388/다른 지급 보존, 재실행 차단을 확인했다. 테스트용 COMMIT 치환은 합성 메모리 DB에만 적용한다.
 
-`tests/august-rebuild-atomic-sql-contract.test.mjs`: **10/10 PASS**. 최초 검사 후 해당 SQL/테스트를 변경하지 않았으므로 결과를 재사용했다. 이는 정적 계약 검사이며 네이티브 PostgreSQL 재구축 실행 PASS가 아니다. 발견한 과거 `artifacts/purchase-economic-validation/regression.log`에는 fail 1이 있으므로 전체 PASS로 재사용하지 않았다. 관련 없는 앱 전체 테스트·TypeScript·Build는 수행하지 않았다.
+`tests/august-rebuild-atomic-sql-contract.test.mjs`: **10/10 PASS**. 최초 검사 후 해당 SQL/테스트를 변경하지 않았으므로 결과를 재사용했다. 이는 정적 계약 검사이며 네이티브 PostgreSQL 재구축 실행 PASS가 아니다. 발견한 과거 `docs/archive/before-2026-11-01/artifacts/purchase-economic-validation/regression.log`에는 fail 1이 있으므로 전체 PASS로 재사용하지 않았다. 관련 없는 앱 전체 테스트·TypeScript·Build는 수행하지 않았다.
 
 인계용 READONLY SQL 전체도 같은 격리 fixture에서 실행해 구문·컬럼 호환을 확인했다. 새 테스트 파일 scoped ESLint 및 `git diff --check` PASS. PowerShell의 npx.ps1 실행정책 제한은 기존 Node/ESLint 진입점으로 실행해 해결했으며 정책은 변경하지 않았다.
 

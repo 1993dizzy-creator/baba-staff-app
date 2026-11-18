@@ -146,7 +146,7 @@ API는 이를 HTTP409 / IDEMPOTENCY_STATE_INVALID로 전달한다. UI는 기술 
 운영 반영은 별도 승인 후 진행한다.
 
 1. 현재 루트의 검토된 소스를 배포 원본으로 확정한다. 과거 .tmp 복사본은 배포에서 제외한다. 지급 진행 요청·과거 V1 응답 불확실 건을 먼저 확인하고, 전환 중 새 지급 요청이 들어오지 않게 운영상 통제한다.
-2. [읽기 전용 사전 조회](../ledger-payable-v2-preflight.sql)로 Migration 이력·함수/소유자·권한·서버 함수 호출자·pg_cron을 확인한다. 외부 서비스·수동 스크립트·과거 배포 API의 V1 호출도 조사한다. 이번 세션에서 이 운영 확인은 완료되지 않았다.
+2. [읽기 전용 사전 조회](../../../ledger-payable-v2-preflight.sql)로 Migration 이력·함수/소유자·권한·서버 함수 호출자·pg_cron을 확인한다. 외부 서비스·수동 스크립트·과거 배포 API의 V1 호출도 조사한다. 이번 세션에서 이 운영 확인은 완료되지 않았다.
 3. 승인된 신규 V2 Migration을 먼저 적용한다. V1 권한은 아직 유지해 이전 API를 즉시 깨뜨리지 않는다. backfill/기존 지급·조정 데이터 변경은0행이다.
 4. V2 API와 지급 UI를 함께 전환하고, 키 없는 구버전 요청은428로 차단한다. 이전 화면을 새로고침하고, 불확실한 이전 V1 요청을 새 키로 무작정 보내지 않는다.
 5. APP 외부 호출자를 V2+고유 키로 전환하고 기존 V1 진행 요청 종료/재시도 잔존 여부를 확인한다. 원격 Cron·외부 호출자 확인이 빠졌다면 권한 회수는 보류한다.
@@ -183,9 +183,9 @@ revoke execute on function public.ledger_pay_payables_v1(
 
 | 환경 | 일반 부분지급 | 결제 미확인 |
 | --- | --- | --- |
-| KO PC | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-partial-428.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-verification-428.png) |
-| KO 모바일 | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-partial-428.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-verification-428.png) |
-| VI PC | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-partial-428.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-verification-428.png) |
-| VI 모바일 | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-partial-428.png) | [보기](../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-verification-428.png) |
+| KO PC | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-partial-428.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-desktop-verification-428.png) |
+| KO 모바일 | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-partial-428.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/ko-mobile-verification-428.png) |
+| VI PC | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-partial-428.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-desktop-verification-428.png) |
+| VI 모바일 | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-partial-428.png) | [보기](../../../../.qa-review/october-settlement/idempotency-screenshots/vi-mobile-verification-428.png) |
 
 운영 메타데이터 조회 제한: Supabase MCP execute_sql의 SELECT 요청이 “requires approval, but approval policy is never”로 차단됐다. 데이터 테이블은 기존 연결의 REST SELECT로 대조했지만, 공개되지 않은 pg_catalog/pg_cron/Migration 이력을 우회 조회하기 위한 DB 함수나 구조를 만들지 않았다.

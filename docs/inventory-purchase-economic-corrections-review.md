@@ -17,7 +17,7 @@
 - `tests/inventory-purchase-repair-api.test.mjs`
 - `tests/inventory-ledger-projection-api.test.mjs`
 - `tests/ledger-inventory-supplier-display.test.mjs`
-- 이 보고서 및 `docs/archive/before-2026-11-01/artifacts/purchase-economic-ui/`, `artifacts/purchase-economic-validation/`의 검증 증거.
+- 이 보고서 및 `docs/archive/before-2026-11-01/artifacts/purchase-economic-ui/`, `docs/archive/before-2026-11-01/artifacts/purchase-economic-validation/`의 검증 증거.
 
 ## 2. 정확한 원인
 

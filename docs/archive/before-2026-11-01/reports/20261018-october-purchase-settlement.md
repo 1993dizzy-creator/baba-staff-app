@@ -85,7 +85,7 @@
 - 조정 9건 추가 차감/추가 현금 이동/정산 완료 취소 없음
 - 10월 5일 #2266 잔액 **76,300₫**, 10월 7일 #2327 잔액 **40,000₫** 보존
 
-원입고 422건의 원상태와 포함 여부까지 기록한 CSV: [.qa-review/october-settlement/per-receipt.csv](../../.qa-review/october-settlement/per-receipt.csv). 취소/비유효 20건은 excluded로 명시했다. 상세 비교 JSON: [.qa-review/october-settlement/comparison.json](../../.qa-review/october-settlement/comparison.json).
+원입고 422건의 원상태와 포함 여부까지 기록한 CSV: [.qa-review/october-settlement/per-receipt.csv](../../../../.qa-review/october-settlement/per-receipt.csv). 취소/비유효 20건은 excluded로 명시했다. 상세 비교 JSON: [.qa-review/october-settlement/comparison.json](../../../../.qa-review/october-settlement/comparison.json).
 
 ### 계정 원장 잔액 (₫)
 
@@ -211,9 +211,9 @@
 
 | 환경 | 원입고 정산 | 결제 미확인 |
 | --- | --- | --- |
-| KO PC | [보기](../../.qa-review/october-settlement/screenshots/ko-desktop-root.png) | [보기](../../.qa-review/october-settlement/screenshots/ko-desktop-queue.png) |
-| KO 모바일 | [보기](../../.qa-review/october-settlement/screenshots/ko-mobile-root.png) | [보기](../../.qa-review/october-settlement/screenshots/ko-mobile-queue.png) |
-| VI PC | [보기](../../.qa-review/october-settlement/screenshots/vi-desktop-root.png) | [보기](../../.qa-review/october-settlement/screenshots/vi-desktop-queue.png) |
-| VI 모바일 | [보기](../../.qa-review/october-settlement/screenshots/vi-mobile-root.png) | [보기](../../.qa-review/october-settlement/screenshots/vi-mobile-queue.png) |
+| KO PC | [보기](../../../../.qa-review/october-settlement/screenshots/ko-desktop-root.png) | [보기](../../../../.qa-review/october-settlement/screenshots/ko-desktop-queue.png) |
+| KO 모바일 | [보기](../../../../.qa-review/october-settlement/screenshots/ko-mobile-root.png) | [보기](../../../../.qa-review/october-settlement/screenshots/ko-mobile-queue.png) |
+| VI PC | [보기](../../../../.qa-review/october-settlement/screenshots/vi-desktop-root.png) | [보기](../../../../.qa-review/october-settlement/screenshots/vi-desktop-queue.png) |
+| VI 모바일 | [보기](../../../../.qa-review/october-settlement/screenshots/vi-mobile-root.png) | [보기](../../../../.qa-review/october-settlement/screenshots/vi-mobile-queue.png) |
 
 감사 스냅샷과 테스트 런타임은 Git 제외된 .qa-review 아래에 보관했다. 자격 증명·DB 비밀번호·서비스 키는 저장하지 않았다.

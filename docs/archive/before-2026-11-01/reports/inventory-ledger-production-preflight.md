@@ -119,7 +119,7 @@ Production Preflight: PASS
 별도 운영 승인 후 적용할 migration은 정확히 다음 1개다.
 
 1. `supabase/migrations/20260906114438_project_inventory_purchase_logs.sql` 전체를 단일 transaction으로 적용한다.
-2. [inventory-ledger-production-preflight.sql](inventory-ledger-production-preflight.sql)의 read-only postflight로 migration history, 함수 정의/인자/owner/security/search_path/ACL, 테이블·인덱스·RLS, 데이터 행 수와 예상하지 않은 변경, 감사 로그를 확인한다.
+2. [inventory-ledger-production-preflight.sql](../../../inventory-ledger-production-preflight.sql)의 read-only postflight로 migration history, 함수 정의/인자/owner/security/search_path/ACL, 테이블·인덱스·RLS, 데이터 행 수와 예상하지 않은 변경, 감사 로그를 확인한다.
 3. Supabase Security/Performance Advisor를 확인한 뒤 호환 애플리케이션 배포를 별도 승인 절차로 진행한다.
 4. 위 실제 인증 수동 smoke test를 수행한다.
 
