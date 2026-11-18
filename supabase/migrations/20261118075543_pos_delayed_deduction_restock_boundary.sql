@@ -80,8 +80,14 @@ begin
       and coalesce(restock.change_quantity,
             restock.new_quantity - restock.prev_quantity) > 0
       and (restock.created_at is null or restock.created_at >= v_sale_at)
-      and (restock.business_date is null
-        or restock.business_date > v_sale_business_date);
+      -- Legacy rows (2026-04..05) lack business_date; derive it from created_at
+      -- with the BABA rule (Asia/Ho_Chi_Minh, 03:00 cutoff; equal to the
+      -- store_business_date_v1 defaults). Only a row with neither value stays
+      -- conservatively counted as a later restock.
+      and coalesce(restock.business_date,
+            ((restock.created_at at time zone 'Asia/Ho_Chi_Minh')
+              - interval '3 hours')::date,
+            'infinity'::date) > v_sale_business_date;
 
     if v_later_restock > 0 and new.new_quantity < v_later_restock then
       raise exception using errcode = 'P0S01',

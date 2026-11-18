@@ -130,6 +130,57 @@ test('POS delayed deduction: later-business-date restock boundary (P0-B)',{timeo
   const retry=await candidate(db);assert.equal((await apply(db,retry)).ok,true);assert.equal(await stock(db),9);
   await assert.rejects(apply(db,failed),e=>e.code==='P0001');assert.equal(await stock(db),9);
  });
+ // BABA business day: Asia/Ho_Chi_Minh (UTC+7) with a 03:00 cutoff, as written by
+ // the POS sync (receipt.business_date) and inventory writers (log.business_date).
+ const ict=s=>new Date(s+'+07:00').toISOString();
+ const bdOf=iso=>new Date(Date.parse(iso)+4*3600e3).toISOString().slice(0,10);
+ async function scenario({sale,restockAt,restockBd=bdOf(ict(restockAt)),prior=0}){
+  const db=await setup({stock:prior}),saleIso=ict(sale);
+  await db.query('update pos_sales_receipts set ref_date=$1,business_date=$2 where id=10',[saleIso,bdOf(saleIso)]);
+  await db.query('update pos_sales_receipt_lines set business_date=$1 where receipt_id=10',[bdOf(saleIso)]).catch(()=>{});
+  await db.query("update inventory set quantity=quantity+1 where id=1");
+  await db.query("insert into inventory_logs(item_id,reason,source,business_date,prev_quantity,new_quantity,change_quantity,created_at) values(1,'purchase','quick_save',$1,$2,$3,1,$4)",[restockBd,prior,prior+1,ict(restockAt)]);
+  const c=await candidate(db);await db.query('update pos_inventory_deduction_receipts set business_date=$1 where id=$2',[bdOf(saleIso),c.br]);
+  const before=await snapshot(db),result=await apply(db,c);
+  return {db,result,before};
+ }
+ await t.test('03:00 business-day boundary scenarios (short prior stock: only the restock could pay)',async()=>{
+  for(const [name,sale,restockAt,held] of [
+   ['02:58 sale, 03:02 restock -> next business day',      '2026-11-17T02:58:00','2026-11-17T03:02:00',true],
+   ['02:50 sale, 03:10 restock -> next business day',      '2026-11-17T02:50:00','2026-11-17T03:10:00',true],
+   ['23:50 sale, 00:10 restock -> same business day',      '2026-11-16T23:50:00','2026-11-17T00:10:00',false],
+   ['02:10 sale, 02:55 restock -> same business day',      '2026-11-17T02:10:00','2026-11-17T02:55:00',false],
+   ['20:00 sale, next-day 18:00 restock -> later day',     '2026-11-16T20:00:00','2026-11-17T18:00:00',true],
+  ]){
+   const {db,result,before}=await scenario({sale,restockAt});
+   if(held){assert.equal(result.result,'needs_check',name);assert.deepEqual(await snapshot(db),before,name);}
+   else{assert.equal(result.ok,true,name);assert.equal(await stock(db),0,name);}
+  }
+ });
+ await t.test('03:00 boundary never holds a deduction that existing stock already covers',async()=>{
+  for(const [sale,restockAt] of [['2026-11-17T02:58:00','2026-11-17T03:02:00'],['2026-11-16T20:00:00','2026-11-17T18:00:00']]){
+   const {db,result}=await scenario({sale,restockAt,prior:1});
+   assert.equal(result.ok,true);assert.equal(await stock(db),1);
+  }
+ });
+ await t.test('backdated restock: business date on/before sale allows, later business date holds',async()=>{
+  for(const [restockBd,held] of [['2026-11-15',false],['2026-11-16',false],['2026-11-17',true]]){
+   const {db,result}=await scenario({sale:'2026-11-16T20:00:00',restockAt:'2026-11-18T15:00:00',restockBd});
+   assert.equal(result.result==='needs_check',held,restockBd);
+   if(!held)assert.equal(await stock(db),0);
+  }
+ });
+ await t.test('legacy NULL business_date restock is dated from created_at with the 03:00 rule',async()=>{
+  for(const [restockAt,held] of [['2026-11-17T01:00:00',false],['2026-11-17T02:59:59',false],['2026-11-17T03:00:00',true],['2026-11-17T05:00:00',true]]){
+   const {db,result}=await scenario({sale:'2026-11-16T20:00:00',restockAt,restockBd:null});
+   assert.equal(result.result==='needs_check',held,restockAt);
+  }
+  // Neither business_date nor created_at: fail toward review, never toward deduction.
+  const db=await setup({stock:0});
+  await db.query("update inventory set quantity=1 where id=1");
+  await db.query("insert into inventory_logs(item_id,reason,source,business_date,prev_quantity,new_quantity,change_quantity,created_at) values(1,'purchase','quick_save',null,0,1,1,null)");
+  assert.equal((await apply(db,await candidate(db))).result,'needs_check');
+ });
  await t.test('migration aborts when the P0 trigger is missing',async()=>{
   const db=await setup({installP0B:false});
   await db.exec('drop trigger inventory_logs_pos_stock_check_boundary on inventory_logs');
