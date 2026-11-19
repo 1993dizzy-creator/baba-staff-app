@@ -15,7 +15,7 @@ const amountValue=(units:bigint)=>Number(units)/1000;
 export const sumPayableAmounts=(values:readonly (number|string)[])=>amountValue(values.reduce<bigint>((sum,value)=>sum+amountUnits(value),BigInt(0)));
 export type PayableBalanceSource={id:number;party_id:number;original_amount:number|string;status:string;expense:{id?:number|string;business_date:string;status:string}|null};
 export type PayablePayment={id?:number|string;type?:string;source_type?:string;source_key?:string|null;source_snapshot?:Record<string,unknown>|null;amount?:number|string;economic_effect_sign?:number|string;memo?:string|null;business_date:string;status:string;movements?:readonly {amount?:number|string;fund_account?:{id?:number|string;code?:string|null;display_name?:string|null}|null}[]};
-export type DatedPayableAllocation={payable_id:number;allocated_amount:number|string;payment?:PayablePayment|null};
+export type DatedPayableAllocation={payable_id:number;allocated_amount:number|string;created_at?:string;payment?:PayablePayment|null};
 export type SettlementContext={payableId?:number|string;transactionId?:number|string};
 export type PurchaseSettlement={originalAmount:number;adjustmentAmount:number;effectiveAmount:number;cashPaidAmount:number;remainingAmount:number;status:"unpaid"|"partial"|"paid";adjustments:{transactionId:number;businessDate:string;amount:number;reason:string;sourceKey:string;sourceSnapshot:Record<string,unknown>}[];payments:{transactionId:number|null;businessDate:string;amount:number}[]};
 type SettlementAllocation={payable_id?:number|string;allocated_amount:number|string;payment?:PayablePayment|null};
@@ -75,14 +75,37 @@ export function payableDisplayAsOf(originalAmount:number|string,allocations:read
 // periodPayments = cash payments in the month. periodPrepaymentApplied = earlier-paid supplier
 // prepayments (선결제) applied to this month's purchases: no new outflow. Identity:
 // opening + purchases - payments - prepaymentApplied = closing.
-export type PayablePeriodSummary={openingOutstanding:number;periodPurchases:number;periodPayments:number;periodPrepaymentApplied?:number;closingOutstanding:number};
+export type PayablePeriodSummary={openingOutstanding:number;periodPurchases:number;periodPayments:number;periodPrepaymentApplied?:number;periodBalanceAdjustment?:number;closingOutstanding:number};
+// A reconciliation basis, never a payable, expense, payment or cash movement.
+export type PayableBalanceAnchor={id:number;party_id:number;business_date:string;owner_balance:number|string;app_balance:number|string;adjustment_amount:number|string;evidence_kind:string;source_unverified:boolean;evidence_reference:string;created_at:string};
 // A supplier prepayment counts toward a payable on its application date = greatest(prepayment
 // date, receipt date). Every other allocation keeps its payment business_date.
 function allocationPeriodDate(allocation:Pick<DatedPayableAllocation,"payment">,receiptDate:string){
   const paymentDate=allocation.payment!.business_date;
   return allocation.payment?.source_snapshot?.prepayment===true&&receiptDate>paymentDate?receiptDate:paymentDate;
 }
-export function calculatePayableBalances<T extends PayableBalanceSource>(sources:readonly T[],allocations:readonly DatedPayableAllocation[],month?:string){
+export function payableAllocationsForBalanceAnchors<A extends DatedPayableAllocation>(sources:readonly PayableBalanceSource[],allocations:readonly A[],anchors:readonly PayableBalanceAnchor[]):readonly A[]{
+  if(!anchors.length)return allocations;
+  const sourceById=new Map(sources.map(s=>[Number(s.id),s]));
+  // A pre-anchor prepayment applied to an OLD payable after registration is a
+  // new application, not part of the frozen baseline. Keep its original payment
+  // row untouched and date only this balance event by the 03:00 Vietnam cutoff.
+  return allocations.map(a=>{
+    const source=sourceById.get(Number(a.payable_id)),payment=a.payment;
+    const anchor=anchors.find(x=>x.party_id===Number(source?.party_id));
+    if(!anchor||!payment||payment.source_snapshot?.prepayment!==true||!source?.expense||
+      payment.business_date>anchor.business_date||source.expense.business_date>anchor.business_date||
+      !a.created_at||Date.parse(a.created_at)<=Date.parse(anchor.created_at))return a;
+    const appliedOn=new Date(Date.parse(a.created_at)+4*60*60*1000).toISOString().slice(0,10);
+    return {...a,payment:{...payment,business_date:appliedOn}};
+  });
+}
+export function calculatePayableBalances<T extends PayableBalanceSource>(sources:readonly T[],allocations:readonly DatedPayableAllocation[],month?:string,anchors:readonly PayableBalanceAnchor[]=[],asOfDate?:string):{payables:Array<T & {allocatedAmount:number;outstandingAmount:number}>;totalOutstanding:number;balanceAnchors?:PayableBalanceAnchor[];summary?:PayablePeriodSummary;partySummaries?:Array<PayablePeriodSummary & {partyId:number}>}{
+  allocations=payableAllocationsForBalanceAnchors(sources,allocations,anchors);
+  if(asOfDate){
+    sources=sources.filter(s=>s.expense&&s.expense.business_date<=asOfDate);
+    allocations=allocations.filter(a=>a.payment&&a.payment.business_date<=asOfDate);
+  }
   const bounds=month===undefined?null:payableMonthBounds(month);
   const byPayable=new Map<number,DatedPayableAllocation[]>();
   for(const allocation of confirmedAllocationsThroughMonth(allocations,month)){
@@ -120,10 +143,32 @@ export function calculatePayableBalances<T extends PayableBalanceSource>(sources
     }
     if(outstanding>BigInt(0))payables.push({...source,allocatedAmount:amountValue(through),outstandingAmount:amountValue(outstanding)});
   }
-  // periodPrepaymentApplied is only present when nonzero, so existing summaries are unchanged.
+  const balanceAnchors:PayableBalanceAnchor[]=[];
+  let periodBalanceAdjustment=BigInt(0);
+  for(const anchor of anchors){
+    if((bounds&&anchor.business_date>=bounds.nextMonthStart)||(asOfDate&&anchor.business_date>asOfDate))continue;
+    if(anchor.party_id!==5||anchor.business_date!=="2026-11-17"||Number(anchor.owner_balance)!==4982000||Number(anchor.app_balance)!==4647952||Number(anchor.adjustment_amount)!==334048||anchor.evidence_kind!=="owner_confirmation"||anchor.source_unverified!==true||balanceAnchors.length)throw new Error("PAYABLE_BALANCE_ANCHOR_INVALID");
+    const baselineSources=sources.filter(s=>Number(s.party_id)===anchor.party_id&&s.expense&&s.expense.business_date<=anchor.business_date);
+    const baselineAllocations=allocations.filter(a=>a.payment&&a.payment.business_date<=anchor.business_date);
+    // Later payments against OLD payables stay in the live result, but not in the
+    // baseline. Backdated changes must be investigated instead of silently rebasing.
+    const baseline=calculatePayableBalances(baselineSources,baselineAllocations).totalOutstanding;
+    if(baseline!==Number(anchor.app_balance))throw new Error("PAYABLE_BALANCE_ANCHOR_BASELINE_DRIFT");
+    const delta=amountUnits(anchor.adjustment_amount);
+    closing+=delta;balanceAnchors.push(anchor);
+    if(bounds){
+      const party=partyTotals.get(anchor.party_id)??{opening:BigInt(0),purchases:BigInt(0),payments:BigInt(0),prepaymentApplied:BigInt(0),closing:BigInt(0)};
+      party.closing+=delta;
+      if(anchor.business_date<bounds.monthStart){opening+=delta;party.opening+=delta}
+      else periodBalanceAdjustment+=delta;
+      partyTotals.set(anchor.party_id,party);
+    }
+  }
+  // Keep the old response/snapshot byte shape when no anchor is active.
   const prepaymentField=(value:bigint)=>value>BigInt(0)?{periodPrepaymentApplied:amountValue(value)}:{};
-  const partySummaries=[...partyTotals].filter(([,row])=>row.opening>BigInt(0)||row.purchases>BigInt(0)||row.payments>BigInt(0)||row.prepaymentApplied>BigInt(0)||row.closing>BigInt(0)).map(([partyId,row])=>({partyId,openingOutstanding:amountValue(row.opening),periodPurchases:amountValue(row.purchases),periodPayments:amountValue(row.payments),...prepaymentField(row.prepaymentApplied),closingOutstanding:amountValue(row.closing)}));
-  return {payables,totalOutstanding:amountValue(closing),...(bounds?{summary:{openingOutstanding:amountValue(opening),periodPurchases:amountValue(purchases),periodPayments:amountValue(payments),...prepaymentField(prepaymentApplied),closingOutstanding:amountValue(closing)},partySummaries}:{})};
+  const adjustmentField=(value:bigint)=>value!==BigInt(0)?{periodBalanceAdjustment:amountValue(value)}:{};
+  const partySummaries=[...partyTotals].filter(([,row])=>row.opening>BigInt(0)||row.purchases>BigInt(0)||row.payments>BigInt(0)||row.prepaymentApplied>BigInt(0)||row.closing>BigInt(0)).map(([partyId,row])=>({partyId,openingOutstanding:amountValue(row.opening),periodPurchases:amountValue(row.purchases),periodPayments:amountValue(row.payments),...prepaymentField(row.prepaymentApplied),...adjustmentField(balanceAnchors.some(a=>a.party_id===partyId)?periodBalanceAdjustment:BigInt(0)),closingOutstanding:amountValue(row.closing)}));
+  return {payables,totalOutstanding:amountValue(closing),...(balanceAnchors.length?{balanceAnchors}:{}),...(bounds?{summary:{openingOutstanding:amountValue(opening),periodPurchases:amountValue(purchases),periodPayments:amountValue(payments),...prepaymentField(prepaymentApplied),...adjustmentField(periodBalanceAdjustment),closingOutstanding:amountValue(closing)},partySummaries}:{})};
 }
 export type PayableAllocation={payableId:number;allocatedAmount:number};
 export function buildOldestFirstAllocations(payables:OutstandingPayable[],amount:number){let remaining=amount;const allocations:PayableAllocation[]=[];for(const payable of [...payables].sort((a,b)=>a.businessDate.localeCompare(b.businessDate)||a.id-b.id)){if(remaining<=0)break;const allocatedAmount=Math.min(remaining,payable.outstandingAmount);if(allocatedAmount>0)allocations.push({payableId:payable.id,allocatedAmount});remaining=Math.round((remaining-allocatedAmount)*1000)/1000}return{allocations,unallocatedAmount:remaining}}

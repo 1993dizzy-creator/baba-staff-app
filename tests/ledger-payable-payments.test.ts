@@ -83,7 +83,7 @@ test("no month calculates current allocations and preserves partial-payment olde
 
 // Execute the actual GET handler with an in-memory Supabase query double.
 // No environment files, credentials, network or production DB are used.
-function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof allocation>[],denied=false,partnerTables:{business_partner_ledger_parties?:unknown[];business_partners?:unknown[]}={}){
+function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof allocation>[],denied=false,partnerTables:{business_partner_ledger_parties?:unknown[];business_partners?:unknown[]}={},anchors:payableFunctions.PayableBalanceAnchor[]=[]){
   const tables:Record<string,unknown[]>={ledger_payables:rows.map(row=>({...row,party:{name:`Party ${row.party_id}`},due_date:null})),ledger_payable_allocations:payments,ledger_transactions:payments.filter(row=>row.payment.status==="confirmed").map(row=>({party_id:10,business_date:row.payment.business_date,status:"confirmed"})),business_partner_ledger_parties:partnerTables.business_partner_ledger_parties??[],business_partners:partnerTables.business_partners??[]};
   const calls:string[]=[];
   const supabase={from(table:string){calls.push(table);let from=0,to=999;const filters:Array<(row:Record<string,unknown>)=>boolean>=[];
@@ -91,6 +91,7 @@ function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof 
     const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
   const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/settlement-periods":settlementPeriodFunctions,"@/lib/common/business-time":businessTimeFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
+  dependencies["@/lib/ledger/payable-balance-anchor-data"]={loadPayableBalanceAnchors:async()=>({data:anchors,error:null})};
   const testModule={exports:{} as {GET:(request:Request)=>Promise<Response>}};
   const code=ts.transpileModule(dashboard,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   new Function("require","module","exports",code)((name:string)=>{assert.ok(name in dependencies);return dependencies[name]},testModule,testModule.exports);
@@ -180,7 +181,7 @@ test("payables route reads allocations once without a month cutoff and splits th
   assert.doesNotMatch(compact,/lt\("payment\.business_date"/);
   assert.match(compact,/constverification=buildPaymentVerificationItems\(sources,allConfirmedAllocations\);/);
   assert.match(compact,/constasOfAllocations=month===null\?allConfirmedAllocations:confirmedAllocationsThroughMonth\(allConfirmedAllocations,month\);/);
-  assert.match(compact,/calculatePayableBalances\(ordinarySources,asOfAllocations,month\?\?undefined\)/);
+  assert.match(compact,/calculatePayableBalances\(ordinarySources,allConfirmedAllocations,month\?\?undefined,anchorResult.data,asOfDate\)/);
   assert.match(compact,/for\(constallocationofasOfAllocations\)\{constlist=historyAllocations/);
   assert.match(compact,/allocations:asOfAllocations\.filter\(/);
 });

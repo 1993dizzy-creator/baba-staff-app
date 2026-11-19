@@ -1,0 +1,52 @@
+{
+  "status": "PASS: local implementation and isolated validation; no operational application",
+  "baseCommit": "edf0aeb2465544e3ac3c9a77ab675e6238058619",
+  "migration": "supabase/migrations/20261119071107_coca_cola_owner_payable_balance_anchor.sql",
+  "migrationSha256": "22f9a873ad1164f5158760a0348d3e081440af6b2bb064d85ba91f29bd0e82c6",
+  "migrationCreatedWith": "Supabase CLI 3.1.0 migration new coca_cola_owner_payable_balance_anchor",
+  "partyId": 5,
+  "businessDate": "2026-11-17",
+  "appBalance": 4647952,
+  "ownerBalance": 4982000,
+  "nonCashNonPayableAdjustment": 334048,
+  "sourceUnverified": true,
+  "supplierStatementAvailable": false,
+  "existingPayment": {
+    "id": 5097,
+    "amountUnchanged": 6215888,
+    "allocationsUnchanged": 9,
+    "movementIdUnchanged": 2854,
+    "corporateMovementUnchanged": -6215888
+  },
+  "validation": {
+    "uniquePassedTests": 107,
+    "initialSuitePassed": 106,
+    "finalDatabasePassed": 6,
+    "finalApiPassed": 5,
+    "typescript": "PASS",
+    "applicationEslint": "PASS",
+    "testEslint": "PASS",
+    "gitDiffCheck": "PASS",
+    "oldDatabaseCompatibility": "PASS",
+    "registrationAtomicity": "PASS",
+    "preflightAndAppAgreement": "PASS",
+    "previousClosuresAndOtherParties": "PASS"
+  },
+  "executionBoundaries": {
+    "productionReadsThisTask": false,
+    "productionWrites": false,
+    "migrationApplied": false,
+    "anchorRegistered": false,
+    "mainModified": false,
+    "merge": false,
+    "push": false,
+    "deployment": false
+  },
+  "limitations": [
+    "Isolated PGlite and actual API/function rendering with mocked read queries; no Production or browser validation.",
+    "Activation requires a separately approved registration after compatible application deployment and migration installation.",
+    "Historical baseline drift stops calculation; it is not auto-rebased.",
+    "Existing payment remains 6215888; 6582000 is Owner evidence only."
+  ],
+  "logsDirectory": "C:/workspace/baba-wt-codex/.local/coca-cola-anchor-20261119"
+}

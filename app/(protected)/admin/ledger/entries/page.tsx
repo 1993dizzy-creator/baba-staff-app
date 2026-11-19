@@ -19,7 +19,7 @@ import Container from "@/components/Container";
 import InventoryLoadingCard from "@/components/inventory/InventoryLoadingCard";
 import InventoryProjectionResolution, { type InventoryProjectionIssue } from "@/components/ledger/InventoryProjectionResolution";
 import Link from "next/link";
-import type { PayablePeriodSummary } from "@/lib/ledger/payables";
+import type { PayablePeriodSummary, PayableBalanceAnchor } from "@/lib/ledger/payables";
 import { formatCardSettlementRate } from "@/lib/ledger/card-settlements";
 import { useLanguage } from "@/lib/language-context";
 import { ui } from "@/lib/styles/ui";
@@ -202,12 +202,12 @@ type DateGroup = {
   // Prepaid allocations listed that day: monthly P&L only, never in 지출.
   allocation: number;
 };
-type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null; settlementAsOf?:string };
+type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null; settlementAsOf?:string; balanceAnchors?:PayableBalanceAnchor[] };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; verification?:Verification };
 type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
 type PayablePaymentHistory = { id:number; business_date:string; amount:number|string; memo:string|null; movements?:Array<{fund_account:{display_name:string}|null}>; allocations?:Array<{payable_id:number;allocated_amount:number|string}> };
-type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; payments?:PayablePaymentHistory[]; totalOutstanding:number };
+type PayableDetail = { party:{id:number;name:string}; payables:PayableRow[]; payments?:PayablePaymentHistory[]; totalOutstanding:number; balanceAnchors?:PayableBalanceAnchor[] };
 type CardSettlementSummary = { monthlyCardGross:number; monthlySettledGross:number; monthlyUnreconciledGross:number; monthlySettlementDifference:number; totalUnreconciledGross:number; cardPendingBalance:number };
 type InvestmentEntryType = "opening" | "contribution" | "adjustment";
 type InvestmentEvent = { investmentId:number; participantId:number; participantName:string; entryType:InvestmentEntryType; amount:number; businessDate:string; occurredAt:string; fundAccountId:number|null; fundAccountName:string|null; reason:string|null };
@@ -2096,7 +2096,16 @@ function PayableMonthTotals({summary,vi}:{summary?:PayablePeriodSummary;vi:boole
   // 선결제 충당: earlier-paid prepayments applied this month — not a new outflow, so never
   // folded into 💸 당월 지급. Shown only when present; the four cards stay as before.
   const prepaymentApplied = summary?.periodPrepaymentApplied ?? 0;
-  return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}{prepaymentApplied>0?<div key="periodPrepaymentApplied"><dt>{vi?"🔁 Bù từ trả trước":"🔁 선결제 충당"}</dt><dd>{money(prepaymentApplied)}</dd></div>:null}</dl>;
+  return <dl className={styles.payableMonthTotals}>{fields.map(([key,label])=><div key={key}><dt>{label}</dt><dd>{summary?money(summary[key]):"-"}</dd></div>)}{prepaymentApplied>0?<div key="periodPrepaymentApplied"><dt>{vi?"🔁 Bù từ trả trước":"🔁 선결제 충당"}</dt><dd>{money(prepaymentApplied)}</dd></div>:null}{summary?.periodBalanceAdjustment?<div><dt>{vi?"Điều chỉnh số dư do Owner xác nhận":"Owner 확인 기준잔액 조정"}</dt><dd>+{money(summary.periodBalanceAdjustment)}</dd></div>:null}</dl>;
+}
+
+function PayableBalanceAnchorNote({anchors,vi}:{anchors?:PayableBalanceAnchor[];vi:boolean}) {
+  if(!anchors?.length)return null;
+  return <div className={styles.payableReadOnlyHint} role="note">{anchors.map(anchor=><p key={anchor.id}>
+    <strong>{vi?"Điều chỉnh số dư do Owner xác nhận":"Owner 확인 기준잔액 조정"} +{money(Number(anchor.adjustment_amount))}</strong><br/>
+    {anchor.business_date} · {vi?"Số dư xác nhận":"확인 잔액"} {money(Number(anchor.owner_balance))}<br/>
+    {vi?"Chưa xác định nguồn chênh lệch; chưa có bảng công nợ độc lập của nhà cung cấp. Không phải khoản mua hàng hoặc chi phí mới. Phần điều chỉnh không nằm trong các khoản công nợ có thể chọn thanh toán.":"차이 원천 미확인 · 공급처 독립 잔액명세서 미확보. 신규 매입·비용이 아니며, 조정분은 결제 가능한 개별 채무에 포함되지 않습니다."}
+  </p>)}</div>;
 }
 
 // Optional settlement grouping (정기정산 only): the same date rows sit under period headers in
@@ -2181,6 +2190,7 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
+    {party.balanceAnchors?.length?<PayableBalanceAnchorNote anchors={party.balanceAnchors} vi={vi}/>:null}
     <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={(party.settlementAsOf??"").slice(0,7)}/>
     {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
       :rows===null?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải…":"불러오는 중…"} />
@@ -2221,6 +2231,7 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
   return <BarSheet kind="full" compact topAligned comfortableTop fillAvailable containedBody title={vi?"Chi tiết công nợ":"미납금 상세"} closeLabel={vi?"Đóng":"닫기"} saving={saving} onClose={onClose} footer={<div className={styles.detailFooter}>{mode==="history"?null:<button type="button" disabled={saving||!accountId||!canPay} onClick={()=>void (mode==="dates"?pay():payPartial())} style={{...primaryButtonStyle,width:"100%"}}>{saving?(vi?"Đang thanh toán…":"결제 중…"):mode==="dates"?(vi?`Thanh toán ${selectedDates.size} ngày đã chọn`:`선택 일자 ${selectedDates.size}건 결제`):(vi?`Thanh toán một phần ${money(partialPlan.error===null?partialPlan.amount:0)}`:`부분 지급 ${money(partialPlan.error===null?partialPlan.amount:0)}`)}</button>}<button type="button" disabled={saving} onClick={onClose} style={{...secondaryButtonStyle,width:"100%"}}>{vi?"Đóng":"닫기"}</button></div>}>
     <div className={styles.payableSheetBody}>
     <PayablePaymentRecovery partyId={party.partyId} vi={vi} accounts={accounts} onConfirmed={onPaid}/>
+    {(detail?.balanceAnchors??party.balanceAnchors)?.length?<PayableBalanceAnchorNote anchors={detail?.balanceAnchors??party.balanceAnchors} vi={vi}/>:null}
     <div className={styles.payableDetailHeader}><strong><span role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{partyEmoji}</span> {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
     <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={viewMonth} onSelectPeriod={focusPeriod}/>

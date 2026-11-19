@@ -9,6 +9,8 @@ import { fundMovementInScope } from "@/lib/ledger/fund-account-view";
 import { loadCardRows } from "@/lib/ledger/card-settlement-data";
 import { cardFeeRowsAsAllocationLines, cardMoney, type CardFeeAllocationRow } from "@/lib/ledger/card-settlements";
 import { supabaseServer } from "@/lib/supabase/server";
+import { calculatePayableBalances, type PayableBalanceSource, type DatedPayableAllocation } from "@/lib/ledger/payables";
+import { loadPayableBalanceAnchors } from "@/lib/ledger/payable-balance-anchor-data";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const validCloseMonth = (value: unknown): value is string => typeof value === "string" && MONTH.test(value);
@@ -31,11 +33,11 @@ async function loadSnapshotRows<T>(query: (from: number, to: number) => PromiseL
 
 export async function buildMonthCloseSnapshot(month: string) {
   const monthStart = `${month}-01`, { businessDateExclusive: endExclusive, cutoffAt: endAt } = getBusinessMonthEndBoundary(month);
-  const [transactionsResult, accountsResult, payableResult, allocationResult, cardResult, cardLineResult, cardFeeLineResult, reserveResult, reserveEntryResult, payrollResult, recurringResult, candidateResult,ownerCapacityResult,ownerInvestmentResult,ownerAllocationResult] = await Promise.all([
+  const [transactionsResult, accountsResult, payableResult, allocationResult, cardResult, cardLineResult, cardFeeLineResult, reserveResult, reserveEntryResult, payrollResult, recurringResult, candidateResult,ownerCapacityResult,ownerInvestmentResult,ownerAllocationResult,anchorResult] = await Promise.all([
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_transactions").select("id,type,business_date,recognition_month,amount,economic_effect_sign,source_type,source_key,category:ledger_categories(name),movements:ledger_movements(fund_account_id,amount)").eq("status","confirmed").or(`recognition_month.eq.${monthStart},business_date.lt.${endExclusive}`).order("id").range(from,to)),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_fund_accounts").select("id,code,type,display_name,is_active").order("sort_order").order("id").range(from,to)),
-    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_payables").select("id,party_id,original_amount,status,expense:ledger_transactions!inner(business_date,source_snapshot),party:ledger_parties(name)").neq("status","cancelled").lt("expense.business_date",endExclusive).order("id").range(from,to)),
-    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,payment:ledger_transactions!inner(business_date)").lt("payment.business_date",endExclusive).order("id").range(from,to)),
+    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_payables").select("id,party_id,original_amount,status,expense:ledger_transactions!inner(business_date,status,source_snapshot),party:ledger_parties(name)").neq("status","cancelled").eq("expense.status","confirmed").lt("expense.business_date",endExclusive).order("id").range(from,to)),
+    loadSnapshotRows((from,to)=>supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,created_at,payment:ledger_transactions!inner(business_date,status,source_snapshot)").eq("payment.status","confirmed").lt("payment.business_date",endExclusive).order("id").range(from,to)),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_card_reconciliations").select("id,status,deposit_date,deposit_amount,matched_gross_amount,difference_amount").lt("deposit_date",endExclusive).order("id").range(from,to)),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_card_reconciliation_lines").select("id,reconciliation_id,pos_card_transaction_id,allocated_gross_amount,reconciliation:ledger_card_reconciliations!inner(deposit_date,status)").in("reconciliation.status",["matched","auto_allocated"]).lt("reconciliation.deposit_date",endExclusive).order("id").range(from,to)),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_card_reconciliation_lines").select("id,reconciliation_id,allocated_gross_amount,sale:ledger_transactions!inner(business_date),reconciliation:ledger_card_reconciliations!inner(status,matched_gross_amount,difference_amount)").eq("reconciliation.status","matched").order("id").range(from,to)),
@@ -47,9 +49,11 @@ export async function buildMonthCloseSnapshot(month: string) {
     supabaseServer.rpc("ledger_owner_financial_capacity_v1",{p_through_month:monthStart}),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_owner_investments").select("id,participant_id,signed_amount").order("id").range(from,to)),
     loadSnapshotRows((from,to)=>supabaseServer.from("ledger_owner_settlement_allocations").select("id,participant_id,recovery_amount,recovery_paid_amount,assigned_amount,paid_amount").order("id").range(from,to)),
+    loadPayableBalanceAnchors(),
   ]);
   const errors=[transactionsResult,accountsResult,payableResult,allocationResult,cardResult,cardLineResult,cardFeeLineResult,reserveResult,reserveEntryResult,payrollResult,recurringResult,candidateResult,ownerCapacityResult,ownerInvestmentResult,ownerAllocationResult].map(result=>result.error).filter(Boolean);
   if(errors.length) throw errors[0];
+  if(anchorResult.error)throw new Error("PAYABLE_BALANCE_ANCHOR_LOAD_FAILED");
   // Legacy fees retain their month-end date; automatic fees consume clearing on
   // the actual finalization day, preserving the previous close's asset balances.
   const [monthEndFeeLineResult, feeClosureResult] = await Promise.all([
@@ -85,6 +89,11 @@ export async function buildMonthCloseSnapshot(month: string) {
   const verificationOutstanding=verificationPayables.map(row=>Math.max(0,Number(row.original_amount)-(allocationByPayable.get(Number(row.id))??0)));
   const payables=(payableResult.data??[]).filter(row=>!verificationPayableIds.has(Number(row.id))).map(row=>({partyId:row.party_id,partyName:(row.party as {name?:string}|null)?.name??"미지정",outstanding:Math.max(0,Number(row.original_amount)-(allocationByPayable.get(Number(row.id))??0))}));
   const payableParties=Object.values(payables.reduce<Record<string,{partyId:number|null;partyName:string;outstanding:number}>>((map,row)=>{const key=String(row.partyId);map[key]??={partyId:row.partyId,partyName:row.partyName,outstanding:0};map[key].outstanding+=row.outstanding;return map},{}));
+  const payableBalances=calculatePayableBalances(
+    (payableResult.data??[]).filter(row=>!verificationPayableIds.has(Number(row.id))) as unknown as PayableBalanceSource[],
+    (allocationResult.data??[]) as unknown as DatedPayableAllocation[],month,anchorResult.data);
+  // Share the dashboard/detail balance, preserving historical snapshot shape.
+  for(const party of payableParties)party.outstanding=payableBalances.partySummaries?.find(p=>p.partyId===Number(party.partyId))?.closingOutstanding??0;
   const reserveAmounts=new Map<number,number>();for(const entry of reserveEntryResult.data??[]){const sign=entry.entry_type==="allocate"?1:entry.entry_type==="release"||entry.entry_type==="consume"?-1:1;reserveAmounts.set(Number(entry.reserve_plan_id),(reserveAmounts.get(Number(entry.reserve_plan_id))??0)+sign*Number(entry.amount))}
   const reserves=(reserveResult.data??[]).map(plan=>({...plan,currentAmount:reserveAmounts.get(Number(plan.id))??0}));
   const protectedReserve=reserves.reduce((sum,row)=>sum+row.currentAmount,0),liquidFunds=accounts.filter(account=>["cash","bank","personal_custody"].includes(account.type)&&account.code!=="card_clearing").reduce((sum,row)=>sum+row.balance,0);
@@ -98,5 +107,5 @@ export async function buildMonthCloseSnapshot(month: string) {
     feeClosure:feeClosure?{id:Number(feeClosure.id),feeAmount:monthEndFee,...(feeClosure.finalization_business_date?{autoConfirmed:true}:{}),confirmedAt:feeClosure.confirmed_at,confirmedBy:Number(feeClosure.confirmed_by),expenseTransactionId:feeClosure.expense_transaction_id===null?null:Number(feeClosure.expense_transaction_id)}:null,
     historicalConfirmedFee:expense.attributedCardDifference,
     finalConfirmedFee:cardMoney(expense.attributedCardDifference+monthEndFee)};
-  return {month,revenue,expense,operatingResult,funds:{accounts,liquidFunds,cardClearing:accounts.find(account=>account.code==="card_clearing")?.balance??0},payables:{byParty:payableParties,totalOutstanding:payableParties.reduce((sum,row)=>sum+row.outstanding,0)},...(verificationPayables.length ? {paymentVerification:{count:verificationOutstanding.filter(amount=>amount>0).length,totalOutstanding:verificationOutstanding.reduce((sum,amount)=>sum+amount,0)}} : {}),card,reserve:{plans:reserves,totalProtectedReserve:protectedReserve,freeCash:liquidFunds-protectedReserve},payroll:payrollResult.data,recurring:(recurringResult.data??[]).map(plan=>({...plan,recognizedAmount:recognized.filter(tx=>tx.source_key===`recurring:${plan.id}:${month}`).reduce((sum,tx)=>sum+signed(tx),0)})),candidate:{counts:candidateCounts},owners:{capacity:ownerCapacityResult.data,investmentBasis:(ownerInvestmentResult.data??[]).reduce((sum,row)=>sum+Number(row.signed_amount),0),recoveryAllocated:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.recovery_amount),0),recoveryPaid:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.assigned_amount)-Number(row.paid_amount),0)}};
+  return {month,revenue,expense,operatingResult,funds:{accounts,liquidFunds,cardClearing:accounts.find(account=>account.code==="card_clearing")?.balance??0},payables:{byParty:payableParties,totalOutstanding:payableBalances.totalOutstanding,...(payableBalances.balanceAnchors?.length?{balanceAnchors:payableBalances.balanceAnchors}:{})},...(verificationPayables.length ? {paymentVerification:{count:verificationOutstanding.filter(amount=>amount>0).length,totalOutstanding:verificationOutstanding.reduce((sum,amount)=>sum+amount,0)}} : {}),card,reserve:{plans:reserves,totalProtectedReserve:protectedReserve,freeCash:liquidFunds-protectedReserve},payroll:payrollResult.data,recurring:(recurringResult.data??[]).map(plan=>({...plan,recognizedAmount:recognized.filter(tx=>tx.source_key===`recurring:${plan.id}:${month}`).reduce((sum,tx)=>sum+signed(tx),0)})),candidate:{counts:candidateCounts},owners:{capacity:ownerCapacityResult.data,investmentBasis:(ownerInvestmentResult.data??[]).reduce((sum,row)=>sum+Number(row.signed_amount),0),recoveryAllocated:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.recovery_amount),0),recoveryPaid:(ownerAllocationResult.data??[]).reduce((sum,row)=>sum+Number(row.assigned_amount)-Number(row.paid_amount),0)}};
 }
