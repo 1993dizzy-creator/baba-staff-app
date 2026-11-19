@@ -36,7 +36,7 @@ Browser: actual page TSX + real CSS isolated React render in local Chrome, KO/VI
 
 The owner-confirmed source remains unverified and no independent supplier statement is implied. Payment difference 366112 and historical difference 700160 remain unresolved. The 8/24 unapplied 2545032 is not offset or altered.
 
-New migration SHA256: a1e5b8996e5a01ba32e6db8d86ccf134917931f176995fcb492277a1d1dd198e.
+New migration SHA256 (supersedes the initial preflight-defective revision): cc7915e7f1d47be0d969e334286574c046954491c49811fc9cba9b62e5bc2647.
 Protected prior migration SHA256: 22f9a873ad1164f5158760a0348d3e081440af6b2bb064d85ba91f29bd0e82c6.
 
 ## Changed files (absolute Windows paths)
@@ -54,3 +54,19 @@ Protected prior migration SHA256: 22f9a873ad1164f5158760a0348d3e081440af6b2bb064
 - C:\workspace\baba-staff-app\docs\reports\20261119-coca-owner-payable-settlement.md
 
 Cleanup limitation: automatic approval review rejected the recursive temporary-browser/HTML cleanup command as blocked by policy; no specific reason was supplied. No bypass attempted. Temporary browser profile and fixtures remain under this task's ignored .local folder; evidence is preserved.
+
+## Production source metadata correction (2026-11-19)
+
+Owner reported that the unapplied conversion INSERT omitted source_fingerprint/source_synced_at. The preceding 7 isolated DB cases did not reproduce ledger_transaction_source_sync_metadata; they were insufficient evidence of this Production contract. With the exact CHECK extracted from 202608210002_add_ledger_pos_sales_sync.sql, the original conversion was reproduced failing with that constraint before the fix.
+
+Only the conversion transaction INSERT in the existing unapplied 20261119085058 migration changed: source_fingerprint = md5('owner-payable-anchor:1:settlement:' || to_jsonb(v_anchor)::text), source_synced_at = now(). This identifies the original Owner evidence and its registration time; it does not assert supplier verification. Existing source_snapshot, sourceUnverified=true, supplierStatementAvailable=false and unresolvedPaymentDifference=366112 are unchanged. No new migration file. The applied 20261119071107 migration remains byte-identical.
+
+Impact validation: all 7 settlement DB cases rerun with the exact CHECK plus 1 new metadata/default/manual-row/retry preservation case: 8 PASS. New case rejects NULL fingerprint, NULL registration time, and metadata on manual payment 5097. Duplicate conversion leaves both stored fields unchanged. The existing original-row protection, 334048 conversion, aggregate/selectable 4982000, full-payment zero, partial payment, one outflow, no cost/inventory effect, historical months and other-party checks all PASS under the CHECK. The unaffected 83 prior regression results and UI/TypeScript evidence are reused, not rerun. ESLint of the two changed test files and diff whitespace check PASS. Evidence: .local/coca-source-metadata-20261119/{before-fix.log,after-fix.log}.
+
+Changed absolute paths for this correction:
+- C:\workspace\baba-staff-app\supabase\migrations\20261119085058_coca_owner_balance_payable_settlement.sql
+- C:\workspace\baba-staff-app\tests\helpers\coca-owner-balance-fixture.mjs
+- C:\workspace\baba-staff-app\tests\coca-owner-payable-settlement-db.test.mjs
+- C:\workspace\baba-staff-app\docs\reports\20261119-coca-owner-payable-settlement.md
+
+No UI, payment API, existing payment RPC or other-party app logic was changed. Production migration, repair and conversion were NOT executed. The separate approved activation and Postflight sequence above still applies; use the corrected commit and hash, never the initial file revision.

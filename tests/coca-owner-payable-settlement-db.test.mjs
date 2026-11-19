@@ -54,6 +54,8 @@ test('conversion creates one noncash payable, preserves anchor/originals, and ke
   assert.equal(await warning(db,'2026-11-01'),v.totalOutstanding);
   assert.deepEqual(await Promise.all(['2026-08','2026-09','2026-10'].map(m=>warning(db,m+'-01'))),past);
   const tx=(await one(db,'select to_jsonb(t) r from ledger_transactions t where id=$1',[converted.transactionId])).r;
+  assert.equal(tx.source_fingerprint,(await one(db,"select md5('owner-payable-anchor:1:settlement:'||to_jsonb(a)::text) fingerprint from ledger_payable_balance_anchors a where id=1")).fingerprint);
+  assert.ok(tx.source_synced_at);assert.equal(tx.source_snapshot.supplierStatementAvailable,false);
   assert.equal(tx.type,'owner_payable_settlement');assert.equal(tx.recognition_month,null);assert.equal(tx.category_id,null);
   assert.equal(tx.source_snapshot.sourceUnverified,true);assert.equal(tx.source_snapshot.item_name,'기준잔액 정산분');
   assert.equal(buildLedgerEntries([{...tx,movements:[]}],[],new Map(),[],'2026-11').length,0,'no new journal purchase/cash card');
@@ -135,8 +137,24 @@ test('old prepayment applied to the new settlement reduces payable once on appli
 
 test('settlement transaction type cannot be used for another party or nullable scope',async()=>{
  const db=await setup();try{
-  for(const party of [10,null])await assert.rejects(db.query(`insert into ledger_transactions(operation_id,type,occurred_at,business_date,amount,party_id,source_type,source_key,source_snapshot,created_by,confirmed_by)
-   values(gen_random_uuid(),'owner_payable_settlement','2026-11-17T12:00:00+07','2026-11-17',334048,$1,'owner_payable_balance_settlement','owner-payable-anchor:1:settlement','{"ownerBalanceAnchorId":1,"nonCash":true,"sourceUnverified":true}',2,2)`,[party]),/owner_payable_settlement_scope/);
+  for(const party of [10,null])await assert.rejects(db.query(`insert into ledger_transactions(operation_id,type,occurred_at,business_date,amount,party_id,source_type,source_key,source_snapshot,source_fingerprint,source_synced_at,created_by,confirmed_by)
+   values(gen_random_uuid(),'owner_payable_settlement','2026-11-17T12:00:00+07','2026-11-17',334048,$1,'owner_payable_balance_settlement','owner-payable-anchor:1:settlement','{"ownerBalanceAnchorId":1,"nonCash":true,"sourceUnverified":true}',md5('scope-test'),now(),2,2)`,[party]),/owner_payable_settlement_scope/);
   assert.equal((await convert(db)).status,'converted');
+ }finally{await db.close()}
+});
+
+test('Production metadata CHECK rejects each missing field and manual metadata; conversion fills both without changing audit meaning',async()=>{
+ const db=await setup();try{
+  const defaults=(await db.query("select column_name,column_default from information_schema.columns where table_name='ledger_transactions' and column_name in('source_fingerprint','source_synced_at') order by column_name")).rows;
+  assert.equal(defaults.length,2);assert.ok(defaults.every(c=>c.column_default===null));
+  const converted=await convert(db);
+  const tx=(await one(db,'select to_jsonb(t) r from ledger_transactions t where id=$1',[converted.transactionId])).r;
+  for(const field of ['source_fingerprint','source_synced_at']){
+   await assert.rejects(db.query('update ledger_transactions set '+field+'=null where id=$1',[converted.transactionId]),/ledger_transaction_source_sync_metadata/);
+  }
+  await assert.rejects(db.exec("update ledger_transactions set source_fingerprint='invalid-manual-metadata' where id=5097"),/ledger_transaction_source_sync_metadata/);
+  assert.deepEqual((await one(db,'select to_jsonb(t) r from ledger_transactions t where id=$1',[converted.transactionId])).r,tx);
+  assert.equal((await convert(db)).status,'already_converted');
+  assert.deepEqual((await one(db,'select to_jsonb(t) r from ledger_transactions t where id=$1',[converted.transactionId])).r,tx,'retry preserves fingerprint and registration time');
  }finally{await db.close()}
 });

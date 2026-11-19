@@ -10,12 +10,16 @@ const paid=[[389,811,533952,'2026-08-31'],[390,812,576000,'2026-08-31'],[506,102
 const open=[[1526,3131,533952,'2026-10-24'],[1527,3132,576000,'2026-10-24'],[1528,3133,750000,'2026-10-24'],[2122,4907,558000,'2026-11-14'],[2123,4908,750000,'2026-11-14'],[2213,5024,768000,'2026-11-17'],[2214,5025,712000,'2026-11-17']];
 
 async function receipt(db,id,tx,amount,date,party=5){
- await db.query(`insert into ledger_transactions(id,operation_id,type,occurred_at,business_date,recognition_month,amount,category_id,party_id,source_type,created_by,confirmed_by)
- values($1,gen_random_uuid(),'expense',$2::date+time '12:00',$2,date_trunc('month',$2::date)::date,$3,4,$4,'inventory_purchase_candidate',2,2)`,[tx,date,amount,party]);
+ await db.query(`insert into ledger_transactions(id,operation_id,type,occurred_at,business_date,recognition_month,amount,category_id,party_id,source_type,source_fingerprint,source_synced_at,created_by,confirmed_by)
+ values($1,gen_random_uuid(),'expense',$2::date+time '12:00',$2,date_trunc('month',$2::date)::date,$3,4,$4,'inventory_purchase_candidate',md5('fixture-receipt:'||$1::bigint::text),now(),2,2)`,[tx,date,amount,party]);
  await db.query("insert into ledger_payables(id,expense_transaction_id,party_id,original_amount) values($1,$2,$3,$4)",[id,tx,party,amount]);
 }
 async function setup(){
  const db=await database();
+ // Reproduce the exact Production CHECK from its original migration, including manual rows.
+ const sourceContract=read('202608210002_add_ledger_pos_sales_sync.sql').match(/add constraint ledger_transaction_source_sync_metadata check \([\s\S]*?\n  \);/);
+ if(!sourceContract)throw new Error('Production source metadata CHECK not found');
+ await db.exec('alter table public.ledger_transactions '+sourceContract[0]);
  await db.exec(read('202608210004_add_ledger_payable_payments.sql'));
  await db.exec(read('20261018105936_add_payable_payment_idempotency_v2.sql'));
  const guards=read('202608210008_add_ledger_month_close_corrections.sql');

@@ -122,11 +122,12 @@ begin
    or (select count(*) from public.ledger_movements where transaction_id=5097)<>1
    or not exists(select 1 from public.ledger_movements where id=2854 and transaction_id=5097 and fund_account_id=2 and amount=-6215888) then
    raise exception 'COCA_OWNER_SETTLEMENT_PAYMENT_DRIFT';end if;
- insert into public.ledger_transactions(operation_id,type,occurred_at,business_date,amount,party_id,status,source_type,source_key,source_snapshot,memo,created_by,confirmed_by)
+ insert into public.ledger_transactions(operation_id,type,occurred_at,business_date,amount,party_id,status,source_type,source_key,source_snapshot,source_fingerprint,source_synced_at,memo,created_by,confirmed_by)
  values(gen_random_uuid(),'owner_payable_settlement','2026-11-17T12:00:00+07',date '2026-11-17',334048,5,'confirmed',
    'owner_payable_balance_settlement','owner-payable-anchor:1:settlement',
    jsonb_build_object('ownerBalanceAnchorId',1,'nonCash',true,'sourceUnverified',true,'supplierStatementAvailable',false,
      'item_name','기준잔액 정산분','item_name_vi','Điều chỉnh số dư công nợ','unresolvedPaymentDifference',366112),
+   md5('owner-payable-anchor:1:settlement:'||to_jsonb(v_anchor)::text),now(),
    btrim(p_reason),p_actor_user_id,p_actor_user_id) returning id into v_tx;
  insert into public.ledger_payables(expense_transaction_id,party_id,original_amount,status) values(v_tx,5,334048,'unpaid') returning id into v_payable;
  insert into public.ledger_payable_anchor_settlements(anchor_id,transaction_id,payable_id,created_by,reason)
