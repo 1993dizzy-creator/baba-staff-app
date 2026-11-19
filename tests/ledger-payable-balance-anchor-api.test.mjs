@@ -19,13 +19,15 @@ function load(path,deps){
 }
 const anchor={id:1,party_id:5,business_date:'2026-11-17',owner_balance:4982000,app_balance:4647952,adjustment_amount:334048,evidence_kind:'owner_confirmation',source_unverified:true,evidence_reference:'Owner instruction; supplier statement unavailable',created_at:'2026-11-19T07:00:00Z'};
 
-function app({missing=false,anchorError=null,later=false,backdated=false,denied=false}={}){
+function app({missing=false,anchorError=null,later=false,backdated=false,denied=false,converted=false,settlementMissing=false,periodic=false}={}){
  const source=(id,party,amount,date)=>({id,party_id:party,original_amount:amount,status:'unpaid',created_at:date+'T12:00:00Z',due_date:null,party:{name:party===5?'Coca-Cola':'Other'},expense:{id:id+100,type:'expense',source_type:'inventory_purchase_candidate',business_date:date,status:'confirmed',source_snapshot:{},recognition_month:date.slice(0,7)+'-01',amount},allocations:[]});
  const rows=[source(1,5,backdated?4647953:4647952,'2026-11-14'),source(2,10,500000,'2026-11-10')];
  const payment={id:6000,type:'payable_payment',party_id:5,business_date:'2026-11-18',status:'confirmed',source_type:'manual',source_snapshot:{},amount:300000,allocations:[{payable_id:1,allocated_amount:300000}]};
  const allocations=later?[{id:1,payable_id:1,allocated_amount:300000,created_at:'2026-11-18T07:00:00Z',payment}]:[];
  if(later){rows.push(source(3,5,1000000,'2026-11-18'));rows[0].allocations=allocations;}
- const tables={ledger_payables:rows,ledger_parties:[{id:5,name:'Coca-Cola'},{id:10,name:'Other'}],ledger_payable_allocations:allocations,ledger_payable_balance_anchors:[anchor],ledger_transactions:[...rows.map(x=>x.expense),...(later?[payment]:[])]};
+ if(converted){const row=source(4,5,334048,'2026-11-17');row.expense={...row.expense,type:'owner_payable_settlement',source_type:'owner_payable_balance_settlement',source_key:'owner-payable-anchor:1:settlement',source_snapshot:{ownerBalanceAnchorId:1,nonCash:true,sourceUnverified:true,item_name:'기준잔액 정산분',item_name_vi:'Điều chỉnh số dư công nợ'}};rows.push(row);}
+ const tables={ledger_payables:rows,ledger_parties:[{id:5,name:'Coca-Cola'},{id:10,name:'Other'}],ledger_payable_allocations:allocations,ledger_payable_balance_anchors:[anchor],ledger_payable_anchor_settlements:converted?[{anchor_id:1,payable_id:4,transaction_id:104}]:[],ledger_transactions:[...rows.map(x=>x.expense),...(later?[payment]:[])]};
+ if(periodic){tables.business_partner_ledger_parties=[{business_partner_id:5,ledger_party_id:5}];tables.business_partners=[{id:5,partner_type:'goods_supplier',payment_mode:'postpaid',settlement_mode:'scheduled',settlement_rule:'monthly_once',settlement_days:[0],default_payment_term_days:null}];}
  const client={from(table){
   const filters=[];let from=0,to=999,single=false;
   const field=(row,key)=>key.split('.').reduce((v,k)=>v?.[k],row);
@@ -34,7 +36,7 @@ function app({missing=false,anchorError=null,later=false,backdated=false,denied=
    lt(k,v){filters.push(r=>field(r,k)<v);return q},lte(k,v){filters.push(r=>field(r,k)<=v);return q},
    in(k,v){filters.push(r=>v.includes(field(r,k)));return q},or(){return q},
    then(resolve,reject){
-    const error=table==='ledger_payable_balance_anchors'?(anchorError??(missing?{code:'PGRST205',message:"Could not find the table 'public.ledger_payable_balance_anchors' in schema cache"}:null)):null;
+    const error=table==='ledger_payable_anchor_settlements'&&settlementMissing?{code:'PGRST205',message:"Could not find the table 'public.ledger_payable_anchor_settlements' in schema cache"}:table==='ledger_payable_balance_anchors'?(anchorError??(missing?{code:'PGRST205',message:"Could not find the table 'public.ledger_payable_balance_anchors' in schema cache"}:null)):null;
     const data=(tables[table]??[]).filter(r=>filters.every(f=>f(r))).slice(from,to+1);
     return Promise.resolve({data:error?null:single?data[0]??null:data,error}).then(resolve,reject);
    }};return q;
@@ -94,6 +96,35 @@ test('backdated drift is an explicit HOLD, never a misleading raw total',async()
   assert.equal(response.status,500);assert.equal((await response.json()).code,'PAYABLE_BALANCE_ANCHOR_BASELINE_DRIFT');
  }
  await assert.rejects(a.snapshot('2026-11'),/BASELINE_DRIFT/);
+});
+
+for(const later of [false,true])test(`converted anchor: total equals selectable invoices in actual list/detail/close handlers (later=${later})`,async()=>{
+ const a=app({converted:true,later,periodic:true}),before=app({later,periodic:true});
+ const list=await (await a.list('?month=2026-11')).json(),detail=await (await a.detail(5)).json(),close=await a.snapshot('2026-11');
+ const expected=later?5682000:4982000;
+ assert.equal(detail.totalOutstanding,expected);assert.equal(detail.payables.reduce((sum,p)=>sum+p.outstandingAmount,0),expected);
+ assert.equal(list.parties.find(p=>p.partyId===5).closingOutstanding,expected);
+ assert.equal(close.payables.byParty.find(p=>p.partyId===5).outstanding,expected);
+ assert.equal(list.totalOutstanding,close.payables.totalOutstanding);
+ const actualParty=list.parties.find(p=>p.partyId===5),beforeParty=(await (await before.list('?month=2026-11')).json()).parties.find(p=>p.partyId===5);
+ assert.equal(actualParty.periodPurchases,beforeParty.periodPurchases);
+ assert.equal(actualParty.settlementPeriods.reduce((sum,p)=>sum+p.remainingAmount,0),expected);
+ assert.equal(actualParty.settlementPeriods.reduce((sum,p)=>sum+p.purchaseAmount,0),beforeParty.settlementPeriods.reduce((sum,p)=>sum+p.purchaseAmount,0));
+ assert.equal(detail.payables.find(p=>p.id===4).expense.source_snapshot.item_name,'기준잔액 정산분');
+ assert.equal((await (await a.list('?asOf=2026-11-17')).json()).parties.find(p=>p.partyId===5).outstandingAmount,4982000);
+ const history=await (await a.list('?month=2026-11&historyPartyId=5')).json();assert.equal(history.totalOutstanding,expected);
+ assert.equal(history.historyPayables.reduce((sum,p)=>sum+p.outstandingAmount,0),expected);
+});
+
+test('new app remains compatible before conversion migration; missing mapping after conversion is HOLD',async()=>{
+ const old=app({settlementMissing:true});
+ assert.equal((await old.list('?month=2026-11')).status,200);
+ assert.equal((await (await old.detail(5)).json()).totalOutstanding,4982000);
+ assert.equal((await old.snapshot('2026-11')).payables.totalOutstanding,5482000);
+ const unsafe=app({converted:true,settlementMissing:true});
+ assert.equal((await unsafe.list('?month=2026-11')).status,500);
+ assert.equal((await unsafe.detail(5)).status,500);
+ await assert.rejects(unsafe.snapshot('2026-11'),/OWNER_PAYABLE_SETTLEMENT_INVALID/);
 });
 
 test('the existing four totals hide internal Owner adjustment UI and keep conditional prepayment display',()=>{

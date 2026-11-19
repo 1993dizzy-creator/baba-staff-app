@@ -747,6 +747,9 @@ export function buildLedgerEntries(
 
   for (const row of transactions) {
     if (row.type === "opening") continue;
+    // Noncash payable basis: shown in the existing payable date list, never as
+    // an inventory purchase, expense, cash transfer or extra journal card.
+    if (row.type === "owner_payable_settlement") continue;
     if (reversedPayrollGroupIds.has(value(row.id))) continue;
     if (row.type === "expense_recognition" && row.source_type === "payroll_completed_batch") continue;
     if (fullyReversedManualIds.has(value(row.id)) || hiddenManualCorrectionIds.has(value(row.id)) ||
