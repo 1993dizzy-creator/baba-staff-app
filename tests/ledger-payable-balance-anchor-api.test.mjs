@@ -96,15 +96,20 @@ test('backdated drift is an explicit HOLD, never a misleading raw total',async()
  await assert.rejects(a.snapshot('2026-11'),/BASELINE_DRIFT/);
 });
 
-test('the actual note/totals render Owner basis separately from purchases and payment controls',()=>{
+test('the existing four totals hide internal Owner adjustment UI and keep conditional prepayment display',()=>{
  const source=readFileSync('app/(protected)/admin/ledger/entries/page.tsx','utf8');
  const ast=ts.createSourceFile('page.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
- const nodes=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&['PayableBalanceAnchorNote','PayableMonthTotals'].includes(n.name?.text));
- const code=ts.transpileModule(nodes.map(n=>n.getText(ast)).join('\n')+'\nexport {PayableBalanceAnchorNote,PayableMonthTotals}',{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
+ const nodes=ast.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='PayableMonthTotals');
+ const code=ts.transpileModule(nodes.map(n=>n.getText(ast)).join('\n')+'\nexport {PayableMonthTotals}',{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
  const testModule={exports:{}};new Function('require','module','exports','styles','money',code)(()=>runtime,testModule,testModule.exports,{},String);
- const note=renderToStaticMarkup(React.createElement(testModule.exports.PayableBalanceAnchorNote,{anchors:[anchor],vi:false}));
- assert.match(note,/Owner 확인 기준잔액 조정/);assert.match(note,/334048/);assert.match(note,/4982000/);assert.match(note,/차이 원천 미확인/);
- assert.match(note,/결제 가능한 개별 채무에 포함되지 않습니다/);assert.doesNotMatch(note,/<input|<button|<select/);
- const totals=renderToStaticMarkup(React.createElement(testModule.exports.PayableMonthTotals,{summary:{openingOutstanding:4647952,periodPurchases:0,periodPayments:0,periodBalanceAdjustment:334048,closingOutstanding:4982000},vi:false}));
- assert.match(totals,/당월 외상 발생/);assert.match(totals,/Owner 확인 기준잔액 조정/);
+ assert.doesNotMatch(source,/PayableBalanceAnchorNote|Owner 확인 기준잔액 조정|차이 원천 미확인/);
+ for(const vi of [false,true])for(const closingOutstanding of [4982000,101667900]){
+  const summary={openingOutstanding:4647952,periodPurchases:0,periodPayments:0,periodBalanceAdjustment:334048,closingOutstanding};
+  const render=summary=>renderToStaticMarkup(React.createElement(testModule.exports.PayableMonthTotals,{summary,vi}));
+  const totals=render(summary);
+  assert.equal((totals.match(/<dt>/g)??[]).length,4);assert.match(totals,new RegExp(String(closingOutstanding)));
+  assert.doesNotMatch(totals,/Owner|334048|<input|<button|<select/);
+  assert.equal((render({...summary,periodPrepaymentApplied:100000}).match(/<dt>/g)??[]).length,5);
+  assert.equal(summary.periodBalanceAdjustment,334048,'UI never changes the accounting response');
+ }
 });
