@@ -60,7 +60,7 @@ test('after the receipt flips to paid the table becomes paid and totals recover'
   assert.equal(view.summary.unknown, 0);
 });
 
-test('a Status 4 order with no receipt at all still blocks store-wide (location unknown)', () => {
+test('a Status 4 order with no receipt and no last verified table still blocks store-wide (location unknown)', () => {
   const view = build({ orders: [paidOrder('t11', '19:11')], receipts: [] });
   assert.equal(view.unlinked.some(o => o.id === 't11'), true);
   for (const table of ['7', '17', '5']) assert.equal(state(view, table), 'unknown');

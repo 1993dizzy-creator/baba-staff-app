@@ -373,6 +373,12 @@ export type CollectedOrder = OrderSummary & {
   quarantinedAt?: string | null;
   /** Collector -> commit only ("vanished_unconfirmed"); the DB stores its own preserved row. */
   quarantineReason?: string | null;
+  /**
+   * DB read only (never sent to commit): for a Status 4 row without a TableName, the table the
+   * provider last listed for this same order and date, and when. Past evidence, never current.
+   */
+  lastTableName?: string | null;
+  lastTableObservedAt?: string | null;
 };
 
 /** Applies GET orders/{id}: the detail must be the same order and carry OrderDetails. */

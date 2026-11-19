@@ -25,6 +25,8 @@ export type TableOrder = {
 };
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
   detailEvidence?: string;
+  /** Unknown only because an order of this table waits for its paid receipt (display label). */
+  paymentPending?: boolean;
   paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
 export type TableOverview = {
   beforeOpening?: boolean;
@@ -148,13 +150,27 @@ export function buildTableOverview(input: {
   // still hold that order's receipt as pending for up to one run. Its single active receipt
   // still names the table: place the order there (that table stays unknown) rather than
   // leaving it unlocated, which would mark every other table unknown until the next run.
+  // With no receipt at all yet, the DB's last provider-listed table for this same order and
+  // date places it (that table only is unknown, shown as payment confirmation). It is never a
+  // current location: a receipt naming another table makes both tables unknown.
   const pendingTableByOrder = new Map<string, string>();
+  const locationConflicts = new Set<string>();
   for (const order of orders) {
     if (order.businessDate !== businessDate || order.tableName?.trim() || paidByOrder.has(order.orderId)
       || classifyOrderStatus(order.status) !== "paid_candidate") continue;
     const active = receipts.filter(receipt => receipt.orderId === order.orderId
       && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
-    if (active.length === 1 && active[0].tableName) pendingTableByOrder.set(order.orderId, active[0].tableName);
+    const seenAt = order.lastTableObservedAt ? Date.parse(order.lastTableObservedAt) : NaN;
+    const lastTable = order.lastTableName?.trim() && Number.isFinite(seenAt) && Date.parse(order.orderDate) <= seenAt
+      && seenAt <= now.getTime() && (!order.providerObservedAt || seenAt <= Date.parse(order.providerObservedAt))
+      && calculateStoreBusinessDate(new Date(seenAt), input.cutoff) === businessDate ? order.lastTableName.trim() : null;
+    if (active.length === 1 && active[0].tableName) {
+      pendingTableByOrder.set(order.orderId, active[0].tableName);
+      if (lastTable && nameKey(lastTable) !== nameKey(active[0].tableName)) {
+        locationConflicts.add(nameKey(lastTable));
+        locationConflicts.add(nameKey(active[0].tableName));
+      }
+    } else if (active.length === 0 && lastTable) pendingTableByOrder.set(order.orderId, lastTable);
   }
   const reviewIds = new Set(kpi.detailWarnings?.map(review => review.orderId) ?? []);
   const projected = orders.filter(order => order.businessDate === businessDate && classifyOrderStatus(order.status) !== "canceled").map((order): TableOrder => {
@@ -195,9 +211,10 @@ export function buildTableOverview(input: {
     const candidates = matches.filter(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id));
     const settlements = [...paidByOrder.values()].filter(receipt => unique && nameKey(receipt.tableName!) === nameKey(table.name));
     const last = settlements.sort((a, b) => Date.parse(b.paidAt!) - Date.parse(a.paidAt!))[0];
-    const receiptIssue = receipts.some(receipt => receipt.businessDate === businessDate && receipt.tableName
+    const issues = receipts.filter(receipt => receipt.businessDate === businessDate && receipt.tableName
       && nameKey(receipt.tableName) === nameKey(table.name) && !paidByOrder.has(receipt.orderId)
       && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
+    const receiptIssue = issues.length > 0;
     const mismatchedReceipt = matches.some(order => {
       const receipt = paidByOrder.get(order.id);
       return receipt && nameKey(receipt.tableName!) !== nameKey(table.name);
@@ -216,14 +233,23 @@ export function buildTableOverview(input: {
       && live.every(order => order.verifiedOpen && newer(order))
       && (live.length > 0 || !!lastSuccessor && !lastSuccessor.quarantined && newer(lastSuccessor));
     const current = superseded ? live : candidates;
-    let state: TableState = "idle";
-    if (!catalogOk || globalFailure || !unique || conflict || receiptConflict || mismatchedReceipt || contradictoryNames.has(nameKey(table.name))) state = "unknown";
-    else if (current.length) state = snapshotOk && current.every(order => order.verifiedOpen) ? "occupied" : "unknown";
+    let state: TableState = "idle", paymentPending = false;
+    if (!catalogOk || globalFailure || !unique || conflict || receiptConflict || mismatchedReceipt || contradictoryNames.has(nameKey(table.name))
+      || locationConflicts.has(nameKey(table.name))) state = "unknown";
+    else if (current.length) {
+      state = snapshotOk && current.every(order => order.verifiedOpen) ? "occupied" : "unknown";
+      // Display only: still unknown (no paid, idle, cleaning or auto-normal), but the sole
+      // reason is an order of this table waiting for its paid receipt.
+      paymentPending = state === "unknown" && snapshotOk
+        && issues.every(receipt => current.some(order => order.id === receipt.orderId && pendingTableByOrder.has(order.id)))
+        && current.every(order => order.verifiedOpen || pendingTableByOrder.has(order.id) && !order.quarantined);
+    }
     else if (unlocatedOrder || receiptIssue || matches.some(order => convertedIds.has(order.id) && !paidByOrder.has(order.id))) state = "unknown";
     else if (snapshotOk && last) state = "paid";
     // Before the first collection, an open shop's unobserved seats are never certified idle.
     if (waiting && !timing.beforeOpening && state === "idle") state = "unknown";
     return { ...table, area: table.displayArea ?? tableArea(table.areaName), state, orders: matches,
+      ...(paymentPending ? { paymentPending: true } : {}),
       // Include receipt/closure changes that may leave the displayed state and paid time unchanged.
       // Explicit fields only: never expose provider raw/customer data or collection timestamps.
       detailEvidence: JSON.stringify([

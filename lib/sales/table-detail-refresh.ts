@@ -55,7 +55,7 @@ export function selectTableDetail(result: TableDetailResult | null, overview: Ta
 export function unavailableTableOverview(overview: TableOverview): TableOverview {
   return { ...overview, snapshotStatus: "unavailable",
     collection: overview.collection ? { ...overview.collection, health: "read_failed", normalWaiting: false } : undefined,
-    tables: overview.tables.map(table => ({ ...table, state: "unknown", orders: table.orders.map(order => ({ ...order, verifiedOpen: false })) })),
+    tables: overview.tables.map(table => ({ ...table, state: "unknown", paymentPending: false, orders: table.orders.map(order => ({ ...order, verifiedOpen: false })) })),
     unlinked: overview.unlinked.map(order => ({ ...order, verifiedOpen: false })),
     summary: { ...overview.summary, occupied: null, occupiedConfirmed: null, occupiedPartial: false, paid: null, paidCumulative: null,
       unknown: overview.tables.length, paidCumulativeEvidence: { ...overview.summary.paidCumulativeEvidence, count: null, status: "unavailable", reason: "snapshot_unhealthy" } } };

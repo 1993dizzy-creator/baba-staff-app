@@ -153,7 +153,9 @@ export default function TablesPage() {
     && (!detail?.collection || ["healthy", "waiting"].includes(detail.collection.health))) && !!tile && !tile.orders.length
     && tile.state !== "paid" && tile.state !== "occupied" && tile.state !== "reserved"
     && !tile.lastPaidAt && (!detail || !detail.table.orders.length && !detail.table.lastPaidAt);
-  const health = data?.collection?.health, detailHealth = detail?.collection?.health;
+  // Still unknown (no cleaning/paid/idle); only the label says which payment it waits for.
+  const detailConfirming = !detailWaiting && snapshotStatus === "ok" && tile?.state === "unknown" && !!tile.paymentPending;
+  const health =data?.collection?.health, detailHealth = detail?.collection?.health;
   const collectionWarning = health && health !== "healthy" && health !== "waiting" ? t.collectionErrors[health] : null;
   const detailCollectionWarning = detailHealth && detailHealth !== "healthy" && detailHealth !== "waiting" ? t.collectionErrors[detailHealth] : null;
   const detailPaymentReview = !!detail && (detail.current.some(receipt => receipt.uncertain || !receipt.validPaid && !receipt.canceled)
@@ -170,7 +172,7 @@ export default function TablesPage() {
     : detail && !["ok", "waiting"].includes(detail.snapshotStatus) ? t.collectionCheck
     : detailWaiting && detailPaymentReview ? t.reviewPayment
     : detailWaiting && normalWaiting && (!detail || ["waiting", "ok"].includes(detail.snapshotStatus)) ? null
-    : snapshotStatus !== "ok" ? t.collectionCheck : tile?.state === "unknown" ? t.orderCheck : null;
+    : snapshotStatus !== "ok" ? t.collectionCheck : detailConfirming ? null : tile?.state === "unknown" ? t.orderCheck : null;
   const cleanTable = async () => {
     if (saving.current || !detailFresh || !tile || tile.state !== "paid" || !detail?.cleaning.enabled || !detail.cleaning.token) return;
     const id = tile.id, token = detail.cleaning.token, key = `${token.businessDate}:${id}:${token.receiptId}:${token.evidenceKey}`;
@@ -313,11 +315,13 @@ export default function TablesPage() {
       <div className={cx(styles.tiles, area === "bar" && styles.barTiles)}>{areaTables.map(item => {
         const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         const paidAt = data ? verifiedPaidReferenceTime(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
+        const confirming = item.state === "unknown" && !!item.paymentPending && data?.snapshotStatus === "ok";
         return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${paidAt ? ` · ${t.receiptBasis} ${clock(paidAt)}` : ""}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${confirming ? t.paymentPending : t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${paidAt ? ` · ${t.receiptBasis} ${clock(paidAt)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
+        {confirming ? <span className={styles.tileStart}>{t.paymentPending}</span> : null}
         {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}><span aria-hidden="true">🕒</span> {clock(start)}</time> : null}
         {paidAt ? <time className={cx(styles.tileStart, styles.tilePaidTime)} dateTime={paidAt} title={t.receiptBasis}><span aria-hidden="true">🕒</span> {clock(paidAt)}</time> : null}
       </button>; })}</div>
@@ -349,7 +353,7 @@ export default function TablesPage() {
       <header className={`${styles.header} ${styles.sheetHeader}`}><div className={styles.sheetTitle}><h2 id="table-detail-title">{tile ? detailTableName(tile, lang) : unlinked?.tableName ?? t.details}</h2>
         {tile ? <div className={styles.sheetMeta}><span className={styles.detailState} title={tile.state === "occupied" ? t.orderElapsedHint : tile.state === "paid" && elapsed !== null ? t.paidOrderElapsedHint : tile.state === "idle" && snapshotStatus === "ok" ? t.noOrders : undefined}>
           <span className={styles.stateDot} data-state={detailWaiting ? beforeOpening ? "idle" : "unknown" : snapshotStatus === "ok" ? tile.state : "unknown"} aria-hidden="true" />
-          {detailWaiting ? waitingLabel : t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
+          {detailWaiting ? waitingLabel : detailConfirming ? t.paymentPending : t.detailStates[snapshotStatus === "ok" ? tile.state : "unknown"]}{elapsed !== null ? ` · ${elapsed}${t.minuteShort}` : ""}
         </span>{snapshotStatus === "ok" && tile.state !== "unknown" && snapshotAt && Date.parse(snapshotAt) <= Date.parse(data?.serverNow ?? "")
           ? <time className={styles.detailClock} dateTime={snapshotAt} title={`${t.collectedLabel}: ${timestamp(snapshotAt, lang)}`}>🕒 {clock(snapshotAt)}</time> : null}</div> : null}
       </div><div className={styles.sheetActions}>
@@ -368,7 +372,7 @@ export default function TablesPage() {
         : tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
-        : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}
+        : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{detailConfirming ? t.paymentPending : t.orderCheck}</p> : null}
           {retainedOrders.length ? <details className={styles.detailSection}><summary>{retainedOrders.some(order => order.quarantined) ? t.quarantinedOrders : t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
       {/* Superseded quarantine records: separate and collapsed, never current, paid or summed. */}
       {quarantinedOrders.length && !detailWaiting && snapshotStatus === "ok" && (currentOrders.length || tile?.state === "paid")

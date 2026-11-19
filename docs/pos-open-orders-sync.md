@@ -639,3 +639,10 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 4. **환경변수**: `POS_OPEN_ORDERS_SYNC_ENABLED=true`(수집), `POS_OPEN_ORDERS_READ_ENABLED=true`(화면 표시).
    - `CUKCUK_BRANCH_ID`는 선택이다. 기본값은 기존 지점 ID다.
    - 수집을 먼저 켜고 데이터를 확인한 뒤 표시를 켠다.
+
+## 결제 확인 중 테이블 위치 (2026-11-19)
+
+- POS는 주문이 Status 4가 되면 TableName을 비운다. 영수증 수집 전까지 위치가 없어 비점유 테이블 전체가 미확인이 되던 문제를 해결한다.
+- `20261119144531_pos_open_orders_last_verified_table.sql`(운영 미적용): 같은 scope·영업일·OrderId·주문시각의 직전 행에서 공급자가 마지막으로 표시한 테이블명과 관측시각을 `last_table_name`·`last_table_observed_at`에 보존한다. Status 4·TableName 없음 행에만 저장하며 `table_name`은 공급자 값 그대로 둔다. 청소·자동 일반 전환 트리거의 6개 주문 사실은 변하지 않는다.
+- 화면: 영수증 0건 + 유효한 마지막 위치 → 그 테이블만 `unknown` + "결제 확인 중"(`paymentPending`). 단건 pending 영수증은 기존 판정을 재사용하고, 마지막 위치와 영수증 위치가 다르면 두 테이블 모두 일반 미확인으로 둔다. 영수증 2건 이상·위치 증거 없음·다른 영업일·주문 시작 전 관측·수집 실패는 기존 보수 규칙을 유지한다.
+- 결제 확인 중 테이블은 `paid`가 아니므로 청소완료·30분 자동 일반 전환이 열리지 않는다. Migration 미적용 DB는 `lastTableName`을 보내지 않아 기존 동작이 그대로 유지된다.
