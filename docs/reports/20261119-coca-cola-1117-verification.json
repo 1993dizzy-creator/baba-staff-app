@@ -1,0 +1,98 @@
+{
+  "status": "PASS: investigation arithmetic and read-only SQL on isolated PGlite only; operational correction NOT implemented or verified",
+  "capturedAt": "2026-11-19T06:51:18.114Z",
+  "snapshotSha256": "d9d98f291f32358c221645e636a0a36c5fbd5e57725c481b30c624280bfc8832",
+  "sqlSha256": "09df62987573b4ea2001667cfd7d5d924c31bd278de38ce82ed3c5fcb94b3be0",
+  "arithmetic": {
+    "app_closing": 4647952,
+    "recorded_payment": 6215888,
+    "overallocated_count": 0,
+    "app_before_this_payment": 10863840,
+    "payment_record_shortfall": 366112,
+    "unexplained_debt_difference": 700160,
+    "owner_implied_before_payment": 11564000,
+    "closing_if_only_payment_corrected": 4281840
+  },
+  "paymentAllocations": [
+    {
+      "id": 2191,
+      "payable_id": 389,
+      "allocated_amount": 533952,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2192,
+      "payable_id": 390,
+      "allocated_amount": 576000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2193,
+      "payable_id": 506,
+      "allocated_amount": 700000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2194,
+      "payable_id": 507,
+      "allocated_amount": 711936,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2195,
+      "payable_id": 508,
+      "allocated_amount": 732000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2196,
+      "payable_id": 509,
+      "allocated_amount": 768000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2197,
+      "payable_id": 594,
+      "allocated_amount": 700000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2198,
+      "payable_id": 1088,
+      "allocated_amount": 750000,
+      "payment_transaction_id": 5097
+    },
+    {
+      "id": 2199,
+      "payable_id": 1101,
+      "allocated_amount": 744000,
+      "payment_transaction_id": 5097
+    }
+  ],
+  "paymentMovements": [
+    {
+      "id": 2854,
+      "amount": -6215888,
+      "transaction_id": 5097,
+      "fund_account_id": 2
+    }
+  ],
+  "paymentAuditIds": [
+    9061
+  ],
+  "protectedLegacyUnallocated": 2545032,
+  "checks": [
+    "SQL syntax/execution on isolated fixture",
+    "APP payable calculator agrees with SQL",
+    "nine allocations reconcile to payment and single corporate movement",
+    "three closed months and legacy unallocated amount present",
+    "future allocation excluded",
+    "cancelled allocation excluded"
+  ],
+  "limitations": [
+    "Production reads used multiple HTTP GET requests, not an atomic DB snapshot.",
+    "SQL was not executed against production.",
+    "Bank statement and supplier balance confirmation not independently inspected.",
+    "No migration, application mutation, or operational target PASS."
+  ]
+}
