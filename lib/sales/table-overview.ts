@@ -17,8 +17,10 @@ export type TableCatalog = { status: "ok" | "not_enabled" | "unavailable"; colle
 export type TableOrder = {
   id: string; number: string | null; tableName: string | null; startedAt: string; collectedAt: string | null;
   amount: number; verifiedOpen: boolean; detailsNeedReview: boolean;
-  /** Vanished from the POS without a provable ending; last facts only. Its table stays unknown. */
+  /** Vanished from the POS without a provable ending; last facts only, never current or paid.
+   * Its table stays unknown unless a clearly newer, independently verified order supersedes it. */
   quarantined?: boolean;
+  quarantinedAt?: string;
   lines: { id: string; name: string; quantity: number; price: number; amount: number; option: boolean; canceled: boolean }[] | null;
 };
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
@@ -166,7 +168,7 @@ export function buildTableOverview(input: {
         && Date.parse(order.orderDate) <= now.getTime()
         && calculateStoreBusinessDate(order.orderDate, input.cutoff) === businessDate,
       detailsNeedReview: reviewIds.has(order.orderId) || !order.lines,
-      ...(order.quarantinedAt ? { quarantined: true } : {}),
+      ...(order.quarantinedAt ? { quarantined: true, quarantinedAt: order.quarantinedAt } : {}),
       lines: order.lines?.map(line => ({ id: line.detailId, name: line.itemName, quantity: line.quantity, price: line.price,
         amount: line.amount, option: line.isOption, canceled: line.isCanceled })) ?? null };
   });
@@ -200,9 +202,23 @@ export function buildTableOverview(input: {
       const receipt = paidByOrder.get(order.id);
       return receipt && nameKey(receipt.tableName!) !== nameKey(table.name);
     });
+    // A quarantined order is superseded only by a later generation: every remaining order at
+    // this table started strictly after the latest quarantine commit (so none of them can be the
+    // merge target A vanished into) and is either verified open or settled by its own single
+    // paid receipt. A itself is never closed or paid; anything weaker keeps the table unknown.
+    const quarantined = candidates.filter(order => order.quarantined);
+    const live = candidates.filter(order => !order.quarantined);
+    const cutoff = quarantined.length ? Math.max(...quarantined.map(order => Date.parse(order.quarantinedAt ?? ""))) : NaN;
+    const newer = (order: TableOrder) => Number.isFinite(cutoff) && Date.parse(order.startedAt) > cutoff;
+    const lastSuccessor = last ? matches.find(order => order.id === last.orderId) : undefined;
+    const superseded = quarantined.length > 0 && Number.isFinite(cutoff) && snapshotOk && !receiptIssue
+      && quarantined.every(order => Date.parse(order.collectedAt ?? "") <= Date.parse(order.quarantinedAt!))
+      && live.every(order => order.verifiedOpen && newer(order))
+      && (live.length > 0 || !!lastSuccessor && !lastSuccessor.quarantined && newer(lastSuccessor));
+    const current = superseded ? live : candidates;
     let state: TableState = "idle";
     if (!catalogOk || globalFailure || !unique || conflict || receiptConflict || mismatchedReceipt || contradictoryNames.has(nameKey(table.name))) state = "unknown";
-    else if (candidates.length) state = snapshotOk && candidates.every(order => order.verifiedOpen) ? "occupied" : "unknown";
+    else if (current.length) state = snapshotOk && current.every(order => order.verifiedOpen) ? "occupied" : "unknown";
     else if (unlocatedOrder || receiptIssue || matches.some(order => convertedIds.has(order.id) && !paidByOrder.has(order.id))) state = "unknown";
     else if (snapshotOk && last) state = "paid";
     // Before the first collection, an open shop's unobserved seats are never certified idle.
@@ -212,7 +228,8 @@ export function buildTableOverview(input: {
       // Explicit fields only: never expose provider raw/customer data or collection timestamps.
       detailEvidence: JSON.stringify([
         orders.filter(order => matches.some(match => match.id === order.orderId)).map(order =>
-          [order.orderId, order.status, order.closureReceiptId, order.closureMergedIntoOrderId]).sort(),
+          [order.orderId, order.status, order.closureReceiptId, order.closureMergedIntoOrderId,
+            ...(order.quarantinedAt ? [order.quarantinedAt] : [])]).sort(),
         receipts.filter(receipt => receipt.tableName && nameKey(receipt.tableName) === nameKey(table.name)
           || matches.some(match => match.id === receipt.orderId)).map(receipt =>
           [receipt.receiptId, receipt.orderId, receipt.paymentStatus, receipt.isCanceled, receipt.businessDate, receipt.tableName, receipt.paidAt,

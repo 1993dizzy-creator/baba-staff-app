@@ -128,6 +128,7 @@ export default function TablesPage() {
   const detailOrders = tile?.orders ?? (unlinked ? [unlinked] : []);
   const currentOrders = detailOrders.filter(order => order.verifiedOpen);
   const retainedOrders = detailOrders.filter(order => !order.verifiedOpen);
+  const quarantinedOrders = retainedOrders.filter(order => order.quarantined);
   const cleaningReason = tile?.state === "occupied" || currentOrders.length ? t.cleaningReasons.active_orders
     : tile?.state === "unknown" ? t.cleaningReasons.snapshot_unhealthy
     : !detailFresh ? detailFailed ? t.detailUnavailable : t.historyLoading
@@ -369,6 +370,9 @@ export default function TablesPage() {
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}
           {retainedOrders.length ? <details className={styles.detailSection}><summary>{retainedOrders.some(order => order.quarantined) ? t.quarantinedOrders : t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
+      {/* Superseded quarantine records: separate and collapsed, never current, paid or summed. */}
+      {quarantinedOrders.length && !detailWaiting && snapshotStatus === "ok" && (currentOrders.length || tile?.state === "paid")
+        ? <details className={styles.detailSection}><summary>{t.quarantinedHistory}</summary>{quarantinedOrders.map((order, index) => orderView(order, index))}</details> : null}
       {tile ? <>
         {tile.state === "paid" && !detail && !detailFailed ? <p role="status" className={styles.muted}>{t.historyLoading}</p> : null}
         {standaloneReceipt ? <section className={styles.detailSection}><h3>🧾 {t.latestPayment}

@@ -23,7 +23,7 @@ export function tableDetailEvidenceKey(overview: TableOverview | null, id?: stri
     table.id, table.state, table.lastPaidAt, table.paymentObservation, table.detailEvidence,
     table.orders.map(order => ({ id: order.id, number: order.number, tableName: order.tableName,
       startedAt: order.startedAt, amount: order.amount, verifiedOpen: order.verifiedOpen,
-      detailsNeedReview: order.detailsNeedReview, lines: order.lines })).sort((a, b) => a.id.localeCompare(b.id))]);
+      detailsNeedReview: order.detailsNeedReview, quarantinedAt: order.quarantinedAt ?? null, lines: order.lines })).sort((a, b) => a.id.localeCompare(b.id))]);
 }
 
 /** Keep same-day history mounted while refreshing. Current orders/status use the
