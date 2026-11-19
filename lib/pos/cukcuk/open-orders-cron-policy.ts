@@ -33,7 +33,7 @@ export type OpenOrdersCronOutcome =
 
 export type OpenOrdersCronResponse = {
   status: number;
-  body: { ok: boolean; outcome: OpenOrdersCronOutcome; code?: string; orders?: number; lines?: number; vietnamTime?: string };
+  body: { ok: boolean; outcome: OpenOrdersCronOutcome; code?: string; orders?: number; lines?: number; quarantined?: number; vietnamTime?: string };
 };
 
 const SAFE_CODE = /^[a-z0-9_]{1,64}$/;
@@ -48,7 +48,9 @@ function failureStatus(code: string) {
 export function mapOpenOrdersSyncResult(result: Record<string, unknown> | null | undefined): OpenOrdersCronResponse {
   switch (result?.status) {
     case "committed":
-      return { status: 200, body: { ok: true, outcome: "committed", orders: count(result.orders), lines: count(result.lines) } };
+      // Partial collection is still a commit: other orders were refreshed; quarantined ones are flagged.
+      return { status: 200, body: { ok: true, outcome: "committed", orders: count(result.orders), lines: count(result.lines),
+        ...(count(result.quarantined) ? { quarantined: count(result.quarantined) } : {}) } };
     case "busy":
       return { status: 200, body: { ok: true, outcome: "skipped_busy" } };
     case "fresh":

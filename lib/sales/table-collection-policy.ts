@@ -3,7 +3,7 @@ import { evaluateOpenOrdersCronWindow, OPEN_ORDERS_CRON_FIRST_START_MINUTE, OPEN
   OPEN_ORDERS_CRON_FIRST_SUCCESS_DEADLINE_MINUTE } from "../pos/cukcuk/open-orders-cron-policy.ts";
 
 export type TableCollectionHealth = "waiting" | "healthy" | "delayed" | "collection_failed" | "read_failed"
-  | "stale" | "evidence_conflict" | "unavailable" | "disabled";
+  | "stale" | "evidence_conflict" | "unavailable" | "disabled" | "partial";
 export type TableCollectionPhase = "before_opening" | "before_collection" | "first_start" | "first_run" | "collecting" | "outside_collection";
 export type TableCollectionState = { phase: TableCollectionPhase; health: TableCollectionHealth; normalWaiting: boolean; hasSuccess: boolean };
 

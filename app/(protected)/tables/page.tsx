@@ -368,7 +368,7 @@ export default function TablesPage() {
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{t.orderCheck}</p> : null}
-          {retainedOrders.length ? <details className={styles.detailSection}><summary>{t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
+          {retainedOrders.length ? <details className={styles.detailSection}><summary>{retainedOrders.some(order => order.quarantined) ? t.quarantinedOrders : t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
       {tile ? <>
         {tile.state === "paid" && !detail && !detailFailed ? <p role="status" className={styles.muted}>{t.historyLoading}</p> : null}
         {standaloneReceipt ? <section className={styles.detailSection}><h3>🧾 {t.latestPayment}

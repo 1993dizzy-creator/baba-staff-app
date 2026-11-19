@@ -485,6 +485,38 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
   - 증거가 없으면 운영과 같은 진단으로 실패한다.
 - 격리 PostgreSQL 17.12 14/14: 실제 수집기와 빈 GUID 응답, 운영과 같은 DB 구조로 끝까지(end-to-end) 커밋되고 기능 점검 SQL을 통과했다.
 
+### 2026-11-19 종료 미확인 주문 격리(부분 정상 수집) (운영 미적용, 이전 상태 설명보다 우선)
+
+**장애(2026-11-18)**: 21:47부터 다음 날 02:52까지 62회 연속 `orders_vanished_unconfirmed`. 진단은 매번 `vanished_detail / order_id_invalid / orders_invalid_row / vanishedCount 1 / confirmedCount 0`였다. 테이블 14 주문이 BAR1에 합쳐진 뒤 빈 GUID 상세를 돌려줬다. 22:02 영수증 #8964(TableName `BAR1, 14`)에는 옵션 라인(Type 2)과 커스텀 품목(Type 3, ItemID 없음)이 있었다. 결제 전에 음식 560,000₫가 빠져 두 주문 합계(4,970,000₫)와 영수증(4,410,000₫)이 달랐다. 그래서 합치기 증명이 불가능했다.
+
+**전역 실패 분기**: `collectOpenOrderSnapshot`의 합치기 후보 처리에서 `proveMergedOrders`가 증명하지 못한 후보 1건이 `throw orders_vanished_unconfirmed`로 실행 전체를 중단했다. 그동안 다른 주문은 전혀 갱신되지 않았다.
+
+**변경 (Migration `20261119080000_pos_open_orders_vanished_quarantine.sql` + 앱, read 계약 4)**
+
+- 격리 조건(모두 충족):
+  - 전체 목록의 Total·페이지·행 검증을 통과했다.
+  - 이전 스냅샷에서 미완료였던 주문이 목록에서 사라졌다.
+  - 상세 조회가 성공 응답이지만 식별자가 없다(빈 GUID, `Id`·`Data` 누락).
+  - 합치기 영수증 증거 조회는 성공했지만 증명되지 않았다.
+  - 위 조건을 갖춘 주문만 격리하고 나머지 주문은 최신 목록·상세로 커밋한다.
+- 계속 전체 실패(기존 정책 유지): 인증 실패, 불완전 페이지, 잘못된 목록 행, 공급자 오류·HTTP 실패·102, 다른 ID·다른 영업일·비GUID Id 응답, 영수증 증거 조회 실패, 사라진 주문 20건 초과, 실행 시한 초과.
+- 격리 행: 이전 행의 ID·상태·금액·메뉴·`observed_at`(마지막 공급자 관측)을 그대로 보존하고, `quarantined_at`(최초 격리 시각)·`quarantine_reason='vanished_unconfirmed'`만 추가한다. 매 실행 다시 확인한다. 목록에 다시 나오거나 상세가 식별자를 돌려주면 일반 행으로 교체된다.
+- DB 독립 검증(`commit_v1`):
+  - 격리 행은 해당 영업일 현재 스냅샷의 미완료(open/unknown, Status≠5, 종료 증거 없음) 주문이어야 한다.
+  - 호출자가 보낸 상태·금액·메뉴는 저장하지 않고 이전 행을 저장한다.
+  - manifest `quarantinedCount`가 payload와 일치해야 하고, 20건 이하여야 한다.
+  - 종료 증거 필드를 동시에 가질 수 없고, 합치기 대상(target)이 될 수 없다.
+  - 누락·중복은 기존 vanished guard와 중복 검사로 거부한다.
+  - 기존 2026-11-14 commit은 `commit_merge_v1`로 이름만 바꿔 본문 그대로 호출한다.
+  - lease·소유 토큰·재실행·보관 규칙은 변경 없다. 실행 이력 manifest에 `quarantinedOrders` 감사 기록을 남긴다.
+- 화면:
+  - 격리 주문은 진행 주문 예상액·결제 매출 어디에도 더하지 않는다(미확정 `vanished_unconfirmed`, 건수 표시).
+  - 그 테이블은 `unknown`이다. 테이블명이 없으면 사용 중이 아닌 모든 테이블이 `unknown`이 된다.
+  - 다른 테이블은 정상 판정한다. 수집 상태는 `partial`(부분 정상)로 표시한다.
+  - DB 청소·자동정상 증거(`evidence_v1`)는 격리 행(자기 결제 영수증 없는 미완료 행)이 있는 테이블을 계속 차단한다.
+- 호환성: 앱은 read 계약 4일 때만 격리 행을 보낸다. 미적용 DB(계약 3)에서는 기존과 동일하게 전체 실패한다. 구 앱과 적용된 DB 조합도 기존 동작이다.
+- 검증: `tests/pos-open-orders-quarantine-db.test.mjs` 21/21(PGlite, 실제 Migration 체인). 수정 전 앱 코드에서는 4건이 RED였다.
+
 - 스키마 `pos_open_orders_private`. 테이블은 `runs`, `sync_state`, `orders`, `order_lines`이다. 모두 RLS를 켜고 권한을 전부 회수한다.
 - 로직은 private 스키마의 SECURITY DEFINER 함수 4개에 있다. Data API는 public의 SECURITY INVOKER 래퍼 4개로만 접근하며, 둘 다 `service_role`만 실행할 수 있다.
   - `claim`: advisory lock과 scope별 활성 run 1개 제한으로 단일 실행을 보장한다. lease는 3분이다.

@@ -10,6 +10,8 @@ export type OpenOrdersPanelText = {
   openOrdersNotEnabled: string;
   openOrdersStale: string;
   openOrdersSyncIncomplete: string;
+  /** "{count}" is replaced with the number of quarantined orders. */
+  openOrdersPartialSync: string;
   overallScaleUnavailable: string;
   lastCheckedAt: string;
   noRecentCheck: string;
@@ -39,8 +41,10 @@ export default function OpenOrdersPanel({ data, text, active = true }: {
       <span>{checkedLine}</span>
     </section>;
   }
+  const quarantined = data.quarantinedOrderCount ?? 0;
   return <section role="status" style={data.complete ? note : partialCard}>
     {!data.complete ? <strong>{text.openOrdersIncomplete}</strong> : null}
+    {quarantined > 0 ? <span>{text.openOrdersPartialSync.replace("{count}", String(quarantined))}</span> : null}
     {data.detailWarnings && data.detailWarnings.length > 0 ? <span>{text.openOrdersDetailWarning}</span> : null}
     <span>{checkedLine} · {text.openOrdersNote}</span>
   </section>;

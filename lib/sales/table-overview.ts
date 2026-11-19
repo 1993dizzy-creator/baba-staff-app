@@ -17,6 +17,8 @@ export type TableCatalog = { status: "ok" | "not_enabled" | "unavailable"; colle
 export type TableOrder = {
   id: string; number: string | null; tableName: string | null; startedAt: string; collectedAt: string | null;
   amount: number; verifiedOpen: boolean; detailsNeedReview: boolean;
+  /** Vanished from the POS without a provable ending; last facts only. Its table stays unknown. */
+  quarantined?: boolean;
   lines: { id: string; name: string; quantity: number; price: number; amount: number; option: boolean; canceled: boolean }[] | null;
 };
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
@@ -164,6 +166,7 @@ export function buildTableOverview(input: {
         && Date.parse(order.orderDate) <= now.getTime()
         && calculateStoreBusinessDate(order.orderDate, input.cutoff) === businessDate,
       detailsNeedReview: reviewIds.has(order.orderId) || !order.lines,
+      ...(order.quarantinedAt ? { quarantined: true } : {}),
       lines: order.lines?.map(line => ({ id: line.detailId, name: line.itemName, quantity: line.quantity, price: line.price,
         amount: line.amount, option: line.isOption, canceled: line.isCanceled })) ?? null };
   });
@@ -223,7 +226,10 @@ export function buildTableOverview(input: {
     healthy: snapshotOk && !conflict && !receiptConflict, receipts, cutoff: input.cutoff });
   const hasCurrentEvidence = projected.length > 0 || receipts.some(receipt => receipt.businessDate === businessDate
     && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
-  if (health === "healthy" && (unknown > 0 || unlocatedOrder || unlinkedReceiptCount > 0)
+  // Partial collection: the latest run committed, but some earlier orders vanished without a
+  // provable ending. Their tables (or, when unlocated, every non-occupied table) stay unknown.
+  if (health === "healthy" && projected.some(order => order.quarantined)) health = "partial";
+  else if (health === "healthy" && (unknown > 0 || unlocatedOrder || unlinkedReceiptCount > 0)
     || health === "waiting" && (hasCurrentEvidence || [...nameCounts.values()].some(count => count !== 1))) health = "evidence_conflict";
   return {
     // Display metadata only. Collection windows, tile states and count contracts stay independent.

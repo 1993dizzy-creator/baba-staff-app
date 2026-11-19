@@ -51,7 +51,7 @@ type OpenOrderDiagnosticContext = {
   vanishedCount?: number;
   confirmedCount?: number;
 };
-export type OpenOrderSyncDiagnostic = OpenOrderDiagnosticContext & { code: string };
+export type OpenOrderSyncDiagnostic = OpenOrderDiagnosticContext & { code: string; quarantinedCount?: number };
 
 export class OpenOrderSyncError extends Error {
   code: OpenOrderErrorCode;
@@ -75,7 +75,8 @@ function withDiagnostic(error: unknown, context: OpenOrderDiagnosticContext) {
 /** Strict projection for logs: never message/stack/IDs/raw rows or arbitrary provider values. */
 function syncFailureDiagnostic(error: unknown, code: string): OpenOrderSyncDiagnostic {
   const allowedCodes: readonly string[] = [...OPEN_ORDER_ERROR_CODES, ...OPEN_ORDERS_DB_ERRORS,
-    "open_orders_permission_denied", "open_orders_rpc_missing", "open_orders_persistence_failed", "collection_failed"];
+    "open_orders_permission_denied", "open_orders_rpc_missing", "open_orders_persistence_failed", "collection_failed",
+    "orders_vanished_quarantined"];
   const context = error instanceof OpenOrderSyncError ? error.diagnostic : undefined;
   const diagnostic: OpenOrderSyncDiagnostic = { code: allowedCodes.includes(code) ? code : "collection_failed", stage: "run" };
   if (context?.stage && DIAGNOSTIC_STAGES.includes(context.stage)) diagnostic.stage = context.stage;
@@ -365,6 +366,13 @@ export type CollectedOrder = OrderSummary & {
   /** Set only with closureReceiptId: this order was merged in POS into that surviving order. */
   closureMergedIntoOrderId?: string | null;
   providerObservedAt?: string | null;
+  /**
+   * Read contract >= 4: a previously unfinished order that vanished without a provable
+   * ending. Every other field is its last provider fact, never a fresh observation.
+   */
+  quarantinedAt?: string | null;
+  /** Collector -> commit only ("vanished_unconfirmed"); the DB stores its own preserved row. */
+  quarantineReason?: string | null;
 };
 
 /** Applies GET orders/{id}: the detail must be the same order and carry OrderDetails. */
@@ -440,7 +448,9 @@ export type UncertainReason =
   | "unknown_status"
   | "open_without_lines"
   | "closure_evidence_changed"
-  | "open_after_canceled_receipt";
+  | "open_after_canceled_receipt"
+  /** Quarantined: vanished from the POS without a provable ending (never open, never a sale). */
+  | "vanished_unconfirmed";
 
 export type ClassifiedOrders = {
   open: (CollectedOrder & { lines: OrderLine[] })[];
@@ -482,6 +492,12 @@ export function classifyOrdersForBusinessDate(
     }
     const statusKey = String(order.status);
     result.statusCounts[statusKey] = (result.statusCounts[statusKey] ?? 0) + 1;
+    // Preserved last facts of a vanished order: neither a current open order nor a sale.
+    // Any receipt it may have is counted once by the paid (receipt) source only.
+    if (order.quarantinedAt) {
+      result.uncertain.push({ orderId: order.orderId, orderNo: order.orderNo, reason: "vanished_unconfirmed", amount: order.totalAmount });
+      continue;
+    }
     const linked = links.get(order.orderId) ?? [];
     // Persisted snapshots may still classify Status 3 as unknown. Raw header status
     // is authoritative for this policy; no migration or stored-data rewrite needed.
@@ -696,6 +712,8 @@ export async function collectOpenOrderSnapshot(
     loadReceiptEvidence?: () => Promise<ReceiptLink[]>;
     /** Only with a DB that revalidates merge proofs (read contract >= 3). */
     loadMergeReceiptEvidence?: () => Promise<MergeReceiptEvidence[]>;
+    /** Only with a DB that verifies and preserves quarantined orders (read contract >= 4). */
+    quarantineUnproven?: boolean;
     deadlineAt?: number; now?: () => number }
 ) {
   const windowStart = Date.parse(input.windowFrom);
@@ -821,12 +839,15 @@ export async function collectOpenOrderSnapshot(
     orders.push(confirmed);
     confirmedCount++;
   }
+  const quarantined: OpenOrderDiagnosticContext[] = [];
   if (mergeCandidates.length) {
     let proven = new Map<string, { receiptId: number; targetOrderId: string }>();
+    let evidenceRead = false;
     try {
       assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "merge_evidence");
       const receipts = await input.loadMergeReceiptEvidence!();
       assertWithinDeadline(state, 0, "merge_evidence");
+      evidenceRead = true;
       proven = proveMergedOrders({ businessDate: input.businessDate, branchId: input.branchId,
         candidates: mergeCandidates.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts });
     } catch (error) {
@@ -835,7 +856,19 @@ export async function collectOpenOrderSnapshot(
     }
     for (const candidate of mergeCandidates) {
       const proof = proven.get(toId(candidate.previous.orderId));
-      if (!proof) throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, { ...candidate.context, confirmedCount });
+      if (!proof) {
+        // Partial collection (read contract >= 4): the full list was complete and valid and
+        // the POS answered successfully that this order has no identity any more, but no
+        // receipt proves how it ended. Keep its last facts as quarantined instead of failing
+        // every other order. An unreadable receipt source still fails the run.
+        if (input.quarantineUnproven && evidenceRead) {
+          orders.push({ ...candidate.previous, raw: {}, closureReceiptId: null, closureMergedIntoOrderId: null,
+            quarantineReason: "vanished_unconfirmed" });
+          quarantined.push(candidate.context);
+          continue;
+        }
+        throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, { ...candidate.context, confirmedCount });
+      }
       // Preserved provider facts plus independent evidence; never a synthesized Status 4.
       orders.push({ ...candidate.previous, raw: {}, closureReceiptId: proof.receiptId, closureMergedIntoOrderId: proof.targetOrderId });
       confirmedCount++;
@@ -843,6 +876,7 @@ export async function collectOpenOrderSnapshot(
   }
   return {
     orders,
+    quarantined,
     manifest: {
       businessDate: input.businessDate,
       mode: "full",
@@ -855,6 +889,8 @@ export async function collectOpenOrderSnapshot(
       vanishedConfirmedCount: vanished.length,
       detailCount,
       relogins: state.relogins,
+      // Only sent to read contract >= 4, whose commit requires it to match the payload.
+      ...(input.quarantineUnproven ? { quarantinedCount: quarantined.length } : {}),
     },
   };
 }
@@ -919,15 +955,17 @@ export async function runOpenOrderSync(
     const contract = previous?.recoveryContractVersion;
     assertWithinDeadline({ relogins: 0, maxRelogins: 0, deadlineAt, now }, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "login");
     await deps.transport.login();
-    const { orders, manifest } = await collectOpenOrderSnapshot(deps.transport, {
+    const mergeEvidence = typeof contract === "number" && contract >= 3 && deps.loadReceiptEvidence && deps.loadMergeReceiptEvidence;
+    const { orders, manifest, quarantined } = await collectOpenOrderSnapshot(deps.transport, {
       ...input, previousOrders, previousUnfinishedIds: unfinishedOrderIds(previousOrders), deadlineAt, now,
       // Old commit RPCs ignore unknown JSON fields: never send receipt fallback to
       // an unupgraded DB that cannot preserve/validate its independent evidence.
-      // Contract 2 validates single-order receipts; 3 also revalidates merge proofs.
+      // Contract 2 validates single-order receipts; 3 also revalidates merge proofs;
+      // 4 also verifies quarantined orders (an older DB would store them as fresh rows).
       loadReceiptEvidence: typeof contract === "number" && contract >= 2 && deps.loadReceiptEvidence
         ? () => deps.loadReceiptEvidence!(input.businessDate) : undefined,
-      loadMergeReceiptEvidence: typeof contract === "number" && contract >= 3 && deps.loadReceiptEvidence && deps.loadMergeReceiptEvidence
-        ? () => deps.loadMergeReceiptEvidence!(input.businessDate) : undefined,
+      loadMergeReceiptEvidence: mergeEvidence ? () => deps.loadMergeReceiptEvidence!(input.businessDate) : undefined,
+      quarantineUnproven: Boolean(mergeEvidence) && typeof contract === "number" && contract >= 4,
     });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
@@ -936,10 +974,20 @@ export async function runOpenOrderSync(
       tableName: order.tableName, lines: order.lines,
       ...(order.closureReceiptId ? { closureReceiptId: order.closureReceiptId } : {}),
       ...(order.closureReceiptId && order.closureMergedIntoOrderId ? { closureMergedIntoOrderId: order.closureMergedIntoOrderId } : {}),
+      ...(order.quarantineReason ? { quarantineReason: order.quarantineReason } : {}),
     }));
-    return await deps.rpc(OPEN_ORDERS_RPC.commit, {
+    const committed = await deps.rpc(OPEN_ORDERS_RPC.commit, {
       p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
     });
+    if (quarantined.length) {
+      // Committed, but partial: the same fixed fields as a failure diagnostic, never IDs.
+      try {
+        const first = quarantined[0];
+        deps.onDiagnostic?.({ ...syncFailureDiagnostic(new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, first),
+          "orders_vanished_quarantined"), quarantinedCount: quarantined.length });
+      } catch { /* Diagnostics never change the run outcome. */ }
+    }
+    return committed;
   } catch (error) {
     // DB guard codes (e.g. open_orders_vanished from commit) are kept; anything else is generic.
     const code = error instanceof OpenOrderSyncError
@@ -987,6 +1035,11 @@ export type OpenOrderKpi = {
    */
   complete: boolean;
   statusCounts: Record<string, number> | null;
+  /**
+   * Status "ok" only: orders kept from an earlier observation because they vanished without
+   * a provable ending (partial collection). Excluded from open and provisional amounts.
+   */
+  quarantinedOrderCount: number | null;
 };
 
 /**
@@ -1021,6 +1074,7 @@ export function buildOpenOrderKpi(input: {
     detailWarnings: null,
     complete: false,
     statusCounts: null,
+    quarantinedOrderCount: null,
   };
   if (!input.enabled) return { ...base, status: "not_enabled" };
   // After close (or for any non-live date) the estimate is never added to confirmed sales.
@@ -1063,5 +1117,6 @@ export function buildOpenOrderKpi(input: {
     detailWarnings,
     complete: input.classified.uncertain.length === 0 && detailWarnings.length === 0,
     statusCounts: input.classified.statusCounts,
+    quarantinedOrderCount: reasons.vanished_unconfirmed ?? 0,
   };
 }
