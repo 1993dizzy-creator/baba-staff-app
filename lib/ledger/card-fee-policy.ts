@@ -1,5 +1,6 @@
 import { cardMoney, sumCardMoney, type CardDepositAutoAllocationRow } from "./card-settlements.ts";
 
+export type CardDepositReviewReason = "legacy_unallocated_deposits" | "provisional_fee_mismatch";
 // provisionalFee: confirmed manual card-fee expense already taken from card clearing for this sale month.
 export type AutoCardFeeMonth = { month: string; gross: number; outstanding: number; reviewRequired?: boolean; provisionalFee?: number; closed?: boolean };
 
@@ -16,8 +17,10 @@ export function planCardDepositWithFees(
     .sort((a,b) => a.business_date.localeCompare(b.business_date) || a.id-b.id);
   const availableOutstanding = sumCardMoney(eligible.map(sale => sale.outstandingGrossAmount));
   let remaining = amount;
-  const result = (error: "invalid_amount" | "nothing_outstanding" | "exceeds_outstanding" | "review_required" | null) => ({
-    error, depositAmount: amount, availableOutstanding, rows: error ? [] : rows, fees: error ? [] : fees,
+  // reviewReason tells the UI why a review stops the deposit; the RPC returns the same reason on save.
+  const result = (error: "invalid_amount" | "nothing_outstanding" | "exceeds_outstanding" | "review_required" | null,
+    reviewReason: CardDepositReviewReason | null = null) => ({
+    error, reviewReason, depositAmount: amount, availableOutstanding, rows: error ? [] : rows, fees: error ? [] : fees,
     totalAllocated: error ? 0 : sumCardMoney(rows.map(row => row.allocatedAmount)),
   });
   if (!Number.isFinite(amount) || amount<=0 || cardMoney(amount)!==amount) return result("invalid_amount");
@@ -32,11 +35,13 @@ export function planCardDepositWithFees(
     if (provisional !== 0) {
       // Already expensed and out of card clearing: never repaid (RPC provisional_fee guard). Only a prior
       // closed month is unambiguous.
-      if (!feeMonth || month >= depositDate.slice(0,7) || feeMonth.closed === false || feeMonth.reviewRequired || provisional < 0 || provisional > outstanding) return result("review_required");
+      // Same order as the RPC: a provisional mismatch first, then an unresolved legacy deposit.
+      if (!feeMonth || month >= depositDate.slice(0,7) || feeMonth.closed === false || provisional < 0 || provisional > outstanding) return result("review_required", "provisional_fee_mismatch");
+      if (feeMonth.reviewRequired) return result("review_required", "legacy_unallocated_deposits");
       payment = Math.min(remaining, cardMoney(outstanding - provisional));
     }
     // Any month: an unresolved legacy deposit may already be money for these sales (RPC guard).
-    if (payment > 0 && feeMonth?.reviewRequired) return result("review_required");
+    if (payment > 0 && feeMonth?.reviewRequired) return result("review_required", "legacy_unallocated_deposits");
     remaining=cardMoney(remaining-payment);
     for (const sale of monthSales) {
       if (payment<=0) break;

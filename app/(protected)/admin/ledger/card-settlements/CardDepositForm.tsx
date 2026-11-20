@@ -22,6 +22,8 @@ export const cardDepositText = {
     availableOutstanding: "정산 가능 미정산", thisSettlement: "이번 정산", totalSettlement: "총 정산",
     insufficientOutstanding: "미정산 카드매출 잔액이 실제 입금액보다 부족합니다.", invalidAmount: "실제 입금액을 확인해주세요.",
     noEligibleSales: "입금일 이전의 미정산 카드매출이 없습니다.", reviewRequired: "카드 정산 데이터를 확인해주세요.",
+    legacyBlocked: "카드매출 배분이 복원되지 않은 과거 카드입금이 있어 자동 정산을 할 수 없습니다. 과거 입금을 취소·재등록하지 말고 장부 관리자에게 배분 복원을 요청하세요.",
+    legacyBlockedSave: "카드매출 배분이 복원되지 않은 과거 카드입금이 있어 저장하지 않았습니다. 과거 입금을 취소·재등록하지 말고 장부 관리자에게 배분 복원을 요청하세요.",
     dataInvalid: "카드 정산 데이터를 확인해주세요. 입금은 저장되지 않았습니다.", createFailed: "등록 실패", readFailed: "카드 정산 정보를 불러오지 못했습니다.",
     loading: "카드 정산 정보를 불러오는 중…",
     created: (count: number) => count > 0 ? `카드 입금을 등록하고 카드매출 ${count}건을 자동 정산했습니다.` : "카드 입금을 등록했습니다.",
@@ -33,6 +35,8 @@ export const cardDepositText = {
     availableOutstanding: "Có thể quyết toán", thisSettlement: "Lần này", totalSettlement: "Tổng quyết toán",
     insufficientOutstanding: "Số dư doanh thu thẻ chưa quyết toán nhỏ hơn số tiền thực nhận.", invalidAmount: "Hãy kiểm tra số tiền thực nhận.",
     noEligibleSales: "Không có doanh thu thẻ chưa quyết toán trước ngày tiền về.", reviewRequired: "Cần kiểm tra dữ liệu quyết toán thẻ.",
+    legacyBlocked: "Có khoản tiền thẻ về cũ chưa được phân bổ vào doanh thu thẻ nên không thể tự động quyết toán. Đừng hủy hay ghi nhận lại khoản cũ; hãy báo quản lý sổ sách để khôi phục phân bổ.",
+    legacyBlockedSave: "Có khoản tiền thẻ về cũ chưa được phân bổ vào doanh thu thẻ nên khoản này chưa được lưu. Đừng hủy hay ghi nhận lại khoản cũ; hãy báo quản lý sổ sách để khôi phục phân bổ.",
     dataInvalid: "Dữ liệu quyết toán thẻ cần được kiểm tra. Khoản tiền về chưa được lưu.", createFailed: "Ghi nhận thất bại", readFailed: "Không thể tải thông tin quyết toán thẻ.",
     loading: "Đang tải thông tin quyết toán thẻ…",
     created: (count: number) => count > 0 ? `Đã ghi nhận tiền thẻ và tự động quyết toán ${count} doanh thu thẻ.` : "Đã ghi nhận tiền thẻ.",
@@ -49,8 +53,10 @@ export function cardDepositBusinessDate(depositAt: string) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(depositAt) ? manualBusinessDate(depositAt.slice(0, 10), depositAt.slice(11, 16)) : depositAt.slice(0, 10);
 }
 
-export function cardDepositErrorMessage(code: string, lang: Lang) {
+// reason: the RPC result reason (e.g. legacy_unallocated_deposits) that explains a review stop.
+export function cardDepositErrorMessage(code: string, lang: Lang, reason?: unknown) {
   const t = cardDepositText[lang];
+  if (code === "CARD_FEE_REVIEW_REQUIRED" && reason === "legacy_unallocated_deposits") return t.legacyBlockedSave;
   if (["INSUFFICIENT_UNSETTLED_CARD_SALES", "INSUFFICIENT_CARD_PENDING"].includes(code)) return t.insufficientOutstanding;
   if (["CARD_FEE_REVIEW_REQUIRED", "CARD_DATA_INVALID"].includes(code)) return t.dataInvalid;
   return code;
@@ -102,7 +108,7 @@ export function useCardDepositDraft({ lang, sources, saving, setSaving, onCreate
     try {
       const response = await fetch("/api/admin/ledger/card-settlements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ depositAt: `${depositAt}:00+07:00`, amount: depositAmount, memo }) });
       const body = await response.json();
-      if (!response.ok) throw new Error(cardDepositErrorMessage(String(body.code), lang));
+      if (!response.ok) throw new Error(cardDepositErrorMessage(String(body.code), lang, body.result?.reason));
       await onCreated(Array.isArray(body.result?.allocations) ? body.result.allocations.length : 0);
     } catch (cause) {
       setError(`${t.createFailed}: ${(cause as Error).message}`);
@@ -134,7 +140,7 @@ export function CardDepositFields({ lang, draft, sources, sourcesError, disabled
         <p>{t.availableOutstanding} {money(plan.availableOutstanding)}</p>
       </> : plan.error === "exceeds_outstanding" ? <p role="alert" className={styles.validation}>{t.insufficientOutstanding} ({t.availableOutstanding} {money(plan.availableOutstanding)})</p>
       : plan.error === "nothing_outstanding" ? <p role="alert" className={styles.validation}>{t.noEligibleSales}</p>
-      : plan.error === "review_required" ? <p role="alert" className={styles.validation}>{t.reviewRequired}</p>
+      : plan.error === "review_required" ? <p role="alert" className={styles.validation}>{plan.reviewReason === "legacy_unallocated_deposits" ? t.legacyBlocked : t.reviewRequired}</p>
       : plan.error ? <p role="alert" className={styles.validation}>{t.invalidAmount}</p>
       : <>
         <ol className={styles.previewRows}>{plan.rows.map(row => <li key={row.transactionId}>

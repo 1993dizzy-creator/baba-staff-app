@@ -990,7 +990,9 @@ test('legacy unmatched deposits stay reachable read-only with cancellation, and 
   const legacy={id:20,deposit_date:'2026-09-16',deposit_amount:3_000_000,matched_gross_amount:0,difference_amount:0,status:'unmatched',memo:null,destination:{display_name:'BABA 법인'}};
   const data=cardData([cardSale(14,'2026-09-14',6_245_400)],[legacy]);
   const detail=pageFixture(cardPath,{0:'2026-09',1:data,15:legacy}).html;
-  assert.match(detail,/카드매출에 자동 반영되지 않은 입금입니다\. 필요하면 입금 취소 후 다시 등록하세요\./);
+  assert.match(detail,/카드매출 배분이 복원되지 않은 과거 입금입니다\. 입금을 취소·재등록하지 말고 장부 관리자에게 배분 복원을 요청하세요\./);
+  assert.doesNotMatch(detail,/취소 후 다시 등록/);
+  assert.match(pageFixture(cardPath,{0:'2026-09',1:data,15:legacy},undefined,'vi').html,/Khoản tiền về cũ chưa được phân bổ vào doanh thu thẻ\. Đừng hủy hay ghi nhận lại/);
   assert.match(detail,/입금 취소/);assert.doesNotMatch(detail,/정산 취소|매출 연결|부분 저장|정산 확정/);
   const list=pageFixture(cardPath,{0:'2026-09',1:data},async()=>Response.json({reconciliation:{...legacy,lines:[]}}));
   list.elements.find(element=>element.type==='button'&&element.props['aria-label']==='2026-09-16 카드 입금').props.onClick({currentTarget:{}});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import ts from 'typescript';
 
 function load(path, dependencies = {}) {
@@ -59,8 +59,8 @@ function setup({ sales=[], reconciliations=[], lines=[], movements=[], feeClosur
   const deps={'@/lib/supabase/server':{supabaseServer:db},'@/lib/ledger/server':server};
   deps['@/lib/ledger/card-settlements']=load('lib/ledger/card-settlements.ts');
   deps['@/lib/ledger/card-settlement-data']=load('lib/ledger/card-settlement-data.ts',deps);
-  const api=load('app/api/admin/ledger/card-settlements/route.ts',deps),match=load('app/api/admin/ledger/card-settlements/[id]/match/route.ts',deps),cancel=load('app/api/admin/ledger/card-settlements/[id]/cancel/route.ts',deps);
-  return {api,match,cancel,calls,rpcCalls};
+  const api=load('app/api/admin/ledger/card-settlements/route.ts',deps),cancel=load('app/api/admin/ledger/card-settlements/[id]/cancel/route.ts',deps);
+  return {api,cancel,calls,rpcCalls};
 }
 const get=async(state,month='2026-08')=>state.api.GET(new Request(`http://local/api/admin/ledger/card-settlements?month=${month}`));
 
@@ -117,15 +117,11 @@ test('GET authorization, invalid month and failed reads do not silently return f
   const invalid=setup();assert.equal((await get(invalid,'2026-13')).status,400);assert.equal(invalid.calls.length,0);
   const failed=setup({failTable:'ledger_card_reconciliation_lines'});assert.equal((await get(failed)).status,500);
 });
-test('create calls only the atomic auto-allocation RPC while the legacy match route keeps its RPC contract without direct writes',async()=>{
+test('create calls only the atomic auto-allocation RPC without direct writes',async()=>{
   const state=setup();
   const deposit={depositAt:'2026-09-10T10:00:00+07:00',amount:982,memo:'local-test'};
   const response=await state.api.POST(new Request('http://local/api/admin/ledger/card-settlements',{method:'POST',body:JSON.stringify(deposit)}));assert.equal(response.status,201);
   assert.deepEqual(state.rpcCalls,[{name:'ledger_create_card_deposit_auto_allocate_v1',args:{p_deposit_at:deposit.depositAt,p_amount:982,p_destination_account_id:5,p_memo:'local-test',p_actor_user_id:7}}]);
-  const allocations=[{transactionId:1,allocatedGrossAmount:1000}];
-  for(const confirm of [false,true]){
-    const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations,confirm})}),{params:Promise.resolve({id:'1'})});assert.equal(response.status,200);assert.deepEqual(state.rpcCalls.at(-1),{name:'ledger_match_card_reconciliation_v1',args:{p_reconciliation_id:1,p_allocations:allocations,p_confirm:confirm,p_actor_user_id:7}});
-  }
   assert.deepEqual(state.calls.map(call=>[call.table,call.single]),[['ledger_fund_accounts',true]]);
 });
 
@@ -177,11 +173,8 @@ test('create returns CORPORATE_BANK_ACCOUNT_MISSING when no active baba_corporat
   }
 });
 
-test('future card sale is a 409 and preserves the RPC date context',async()=>{
-  const result={status:'future_card_sale',transactionId:21,saleBusinessDate:'2026-08-21',depositDate:'2026-08-20'};
-  const state=setup({rpcStatuses:{ledger_match_card_reconciliation_v1:result}});
-  const response=await state.match.POST(new Request('http://local/api/admin/ledger/card-settlements/1/match',{method:'POST',body:JSON.stringify({allocations:[{transactionId:21,allocatedGrossAmount:1000}],confirm:false})}),{params:Promise.resolve({id:'1'})});
-  assert.equal(response.status,409);assert.deepEqual((await response.json()).result,result);
+test('the manual match route is retired: a new deposit is never left for manual matching',()=>{
+  assert.equal(existsSync('app/api/admin/ledger/card-settlements/[id]/match/route.ts'),false);
 });
 
 test('cancel requires a reason, rejects extra keys, and forwards only the canonical RPC arguments',async()=>{

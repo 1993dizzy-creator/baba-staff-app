@@ -29,7 +29,7 @@ const cardText = {
     unmatched:"미연결",partial:"부분 연결",cancelled:"취소",depositTitle:"카드 입금",close:"닫기",
     actualDeposit:"실제 입금",appliedToSales:"카드매출 반영",cancelDeposit:"입금 취소",confirmCancel:"취소 확정",back:"돌아가기",cancelRecord:"취소 기록",noReason:"사유 기록 없음",cancelReason:"취소 사유",
     depositOn:"입금",saleDate:"매출일",
-    appliedSales:"반영된 카드매출",legacyHint:"카드매출에 자동 반영되지 않은 입금입니다. 필요하면 입금 취소 후 다시 등록하세요.",autoAppliedHint:"실제 입금액만큼 오래된 카드매출부터 자동 반영되었습니다.",
+    appliedSales:"반영된 카드매출",legacyHint:"카드매출 배분이 복원되지 않은 과거 입금입니다. 입금을 취소·재등록하지 말고 장부 관리자에게 배분 복원을 요청하세요.",autoAppliedHint:"실제 입금액만큼 오래된 카드매출부터 자동 반영되었습니다.",
     posCardDetail:"POS 카드매출 상세",source:"원본",ledger:"장부",loading:"불러오는 중…",loadingPage:"카드 정산을 불러오는 중…",
     readFailed:"조회 실패",posFailed:"POS 조회 실패",cancelledMessage:"카드 입금을 취소하고 역분개했습니다.",cancelFailed:"취소 실패",
     cancelHint:"카드 입금 기록을 취소합니다. 입금 이동을 역분개하고 반영된 카드매출을 다시 미정산으로 돌립니다. 기록은 취소 이력으로 보존됩니다.",historicalDifferenceCancelHint:"이 입금에 기록된 과거 정산 차액도 함께 역분개됩니다.",
@@ -37,7 +37,7 @@ const cardText = {
     feeReadOnly:"월마감 완료 · 읽기 전용",cancelFee:"수수료 확정 취소",feeCancelHint:"월말 수수료 비용을 역분개하고 소진한 카드매출을 다시 미정산으로 돌립니다. 확정 기록은 취소 이력으로 보존됩니다.",
     feeCancelled:"카드 수수료 확정을 취소하고 역분개했습니다.",feeSettled:"카드대금 정산을 완료하고 실제 수수료를 확정했습니다.",settleFailed:"정산 실패",
     settlePosMismatch:"POS와 장부 카드매출이 달라 확정하지 않았습니다. 매출 동기화를 먼저 확인하세요.",settleNoDeposit:"이 달 매출에 배분된 익월 카드입금이 없어 확정할 수 없습니다.",settleAmountChanged:"확인한 금액과 현재 차액이 달라 확정하지 않았습니다. 새로고침 후 다시 확인하세요.",
-    feeBlockLegacy:"카드매출에 반영되지 않은 입금이 있습니다. 입금 취소 후 다시 등록한 뒤 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
+    feeBlockLegacy:"카드매출 배분이 복원되지 않은 과거 입금이 있어 확정할 수 없습니다. 입금을 취소·재등록하지 말고 배분 복원 후 확정하세요.",feeBlockEarlier:"{month} 카드 정산을 먼저 처리합니다.",feeBlockPending:"카드 미정산 잔액이 수수료보다 적습니다. 카드 입금 기록을 확인하세요.",
   },
   vi: {
     title:"Quyết toán thẻ",previous:"Trước",next:"Sau",previousMonth:"Tháng trước",nextMonth:"Tháng sau",selectMonth:"Chọn tháng",
@@ -47,7 +47,7 @@ const cardText = {
     unmatched:"Chưa kết nối",partial:"Kết nối một phần",cancelled:"Đã hủy",depositTitle:"Tiền thẻ về",close:"Đóng",
     actualDeposit:"Tiền thực nhận",appliedToSales:"Trừ vào doanh thu thẻ",cancelDeposit:"Hủy tiền về",confirmCancel:"Xác nhận hủy",back:"Quay lại",cancelRecord:"Lịch sử hủy",noReason:"Không có lý do",cancelReason:"Lý do hủy",
     depositOn:"Tiền về",saleDate:"Ngày bán",
-    appliedSales:"Doanh thu thẻ đã trừ",legacyHint:"Khoản tiền về chưa được trừ tự động vào doanh thu thẻ. Nếu cần, hủy tiền về rồi ghi nhận lại.",autoAppliedHint:"Đã tự động trừ vào doanh thu thẻ cũ nhất trước, đúng bằng số tiền thực nhận.",
+    appliedSales:"Doanh thu thẻ đã trừ",legacyHint:"Khoản tiền về cũ chưa được phân bổ vào doanh thu thẻ. Đừng hủy hay ghi nhận lại; hãy báo quản lý sổ sách để khôi phục phân bổ.",autoAppliedHint:"Đã tự động trừ vào doanh thu thẻ cũ nhất trước, đúng bằng số tiền thực nhận.",
     posCardDetail:"Chi tiết doanh thu thẻ POS",source:"Nguồn",ledger:"Sổ cái",loading:"Đang tải…",loadingPage:"Đang tải quyết toán thẻ…",
     readFailed:"Tải thất bại",posFailed:"Tải chi tiết POS thất bại",cancelledMessage:"Đã hủy tiền thẻ về và ghi bút toán đảo.",cancelFailed:"Hủy thất bại",
     cancelHint:"Hủy bản ghi tiền thẻ về. Bút toán tiền về sẽ được đảo và doanh thu thẻ đã trừ trở lại trạng thái chưa quyết toán. Lịch sử được giữ lại.",historicalDifferenceCancelHint:"Chênh lệch quyết toán cũ của khoản này cũng sẽ được đảo.",
@@ -55,7 +55,7 @@ const cardText = {
     feeReadOnly:"Đã chốt sổ · Chỉ xem",cancelFee:"Hủy xác nhận phí",feeCancelHint:"Chi phí phí thẻ cuối tháng sẽ được đảo và doanh thu thẻ đã dùng trở lại chưa quyết toán. Lịch sử xác nhận được giữ lại.",
     feeCancelled:"Đã hủy xác nhận phí thẻ và ghi bút toán đảo.",feeSettled:"Đã hoàn tất quyết toán tiền thẻ và xác nhận phí thực tế.",settleFailed:"Quyết toán thất bại",
     settlePosMismatch:"Doanh thu thẻ POS và sổ cái khác nhau nên chưa xác nhận. Hãy kiểm tra đồng bộ doanh thu trước.",settleNoDeposit:"Chưa có tiền thẻ về sau tháng này được trừ vào doanh thu tháng này nên chưa thể xác nhận.",settleAmountChanged:"Số tiền đã kiểm tra khác chênh lệch hiện tại nên chưa xác nhận. Hãy tải lại và kiểm tra lại.",
-    feeBlockLegacy:"Có khoản tiền về chưa trừ vào doanh thu thẻ. Hãy hủy và ghi nhận lại trước khi xác nhận.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
+    feeBlockLegacy:"Có khoản tiền về cũ chưa phân bổ vào doanh thu thẻ nên chưa thể xác nhận. Đừng hủy hay ghi nhận lại; hãy xác nhận sau khi khôi phục phân bổ.",feeBlockEarlier:"Hãy xác nhận phí thẻ tháng {month} trước.",feeBlockPending:"Số dư thẻ chờ quyết toán nhỏ hơn phí. Hãy kiểm tra tiền thẻ về.",
   },
 } as const;
 type CardText = typeof cardText["ko"] | typeof cardText["vi"];

@@ -76,9 +76,23 @@ test('card deposit fields block short, missing and review-required plans and hin
   // Actual-deposit policy: any closed-month remainder is ordinary FIFO principal (no rate window), so it can be paid.
   const remainder = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000 }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
   assert.equal(remainder.draft.plan.error, null); assert.deepEqual(remainder.draft.plan.rows.map(row => row.allocatedAmount), [500]); assert.equal(remainder.draft.canSubmit, true);
-  // A provisional-fee month with unresolved legacy deposits still needs review, so nothing can be saved.
-  const review = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000, provisionalFee: 1_000, reviewRequired: true }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
-  assert.match(review.html, /카드 정산 데이터를 확인해주세요\./); assert.equal(review.draft.canSubmit, false);
+  // An unresolved legacy (unallocated) deposit still blocks saving; the reason is named and the old
+  // "cancel and register again" advice is never given.
+  const legacySources = sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000, provisionalFee: 1_000, reviewRequired: true }]);
+  const review = formFixture({ sources: legacySources, states: { 0: '2026-09-05T10:00', 1: '500' } });
+  assert.equal(review.draft.plan.reviewReason, 'legacy_unallocated_deposits'); assert.equal(review.draft.canSubmit, false);
+  assert.match(review.html, /role="alert" class="validation">카드매출 배분이 복원되지 않은 과거 카드입금이 있어 자동 정산을 할 수 없습니다\. 과거 입금을 취소·재등록하지 말고 장부 관리자에게 배분 복원을 요청하세요\./);
+  const reviewVi = formFixture({ lang: 'vi', sources: legacySources, states: { 0: '2026-09-05T10:00', 1: '500' } });
+  assert.match(reviewVi.html, /Có khoản tiền thẻ về cũ chưa được phân bổ vào doanh thu thẻ nên không thể tự động quyết toán\./); assert.equal(reviewVi.draft.canSubmit, false);
+  for (const html of [review.html, reviewVi.html]) assert.doesNotMatch(html, /취소 후 다시 등록|hủy tiền về rồi ghi nhận lại/);
+  // Other review reasons (provisional fee mismatch) keep the generic data-review message.
+  const mismatch = formFixture({ sources: sources([sale(1, '2026-08-20', 1_000)], [{ month: '2026-08', gross: 1_000_000, outstanding: 1_000, provisionalFee: 2_000 }]), states: { 0: '2026-09-05T10:00', 1: '500' } });
+  assert.equal(mismatch.draft.plan.reviewReason, 'provisional_fee_mismatch'); assert.match(mismatch.html, /카드 정산 데이터를 확인해주세요\./); assert.equal(mismatch.draft.canSubmit, false);
+  // Save-time rejection from the RPC names the same cause (KO/VI); other codes are unchanged.
+  const { cardDepositErrorMessage } = review.form;
+  assert.match(cardDepositErrorMessage('CARD_FEE_REVIEW_REQUIRED', 'ko', 'legacy_unallocated_deposits'), /과거 카드입금이 있어 저장하지 않았습니다\. 과거 입금을 취소·재등록하지 말고/);
+  assert.match(cardDepositErrorMessage('CARD_FEE_REVIEW_REQUIRED', 'vi', 'legacy_unallocated_deposits'), /khoản này chưa được lưu\./);
+  assert.equal(cardDepositErrorMessage('CARD_FEE_REVIEW_REQUIRED', 'ko', 'provisional_fee_mismatch'), '카드 정산 데이터를 확인해주세요. 입금은 저장되지 않았습니다.');
   // Sources still loading or failed: no preview numbers and no save.
   const loading = formFixture({ states: { 0: '2026-09-15T10:00', 1: '100' } });
   assert.match(loading.html, /카드 정산 정보를 불러오는 중…/); assert.equal(loading.draft.canSubmit, false);
