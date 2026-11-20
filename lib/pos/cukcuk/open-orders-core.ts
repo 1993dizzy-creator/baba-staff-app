@@ -15,6 +15,7 @@
 //   Code 7 and HTTP/Code 401 are treated as credential problems: one re-login,
 //   then the run fails. The exact meaning of 7 is not documented in this repo.
 import { addStoreDays, calculateStoreBusinessDate } from "../../store-settings/business-time-core.ts";
+import { buildOrderChangeLog, withOrderChangeLog } from "./open-orders-change-log.ts";
 
 export const ORDER_PAGE_LIMIT = 100;
 export const ORDER_STATUS_OPEN = 1;
@@ -982,8 +983,13 @@ export async function runOpenOrderSync(
       ...(order.closureReceiptId && order.closureMergedIntoOrderId ? { closureMergedIntoOrderId: order.closureMergedIntoOrderId } : {}),
       ...(order.quarantineReason ? { quarantineReason: order.quarantineReason } : {}),
     }));
+    // Diagnostic only: compares against the previous committed snapshot after every decision
+    // above is final; it never changes the payload, and a builder error never fails the run.
+    const manifestWithChanges = withOrderChangeLog(manifest, () => buildOrderChangeLog({
+      runId, detectedAt: new Date(now()).toISOString(), businessDate: input.businessDate, previousOrders, orders,
+    }));
     const committed = await deps.rpc(OPEN_ORDERS_RPC.commit, {
-      p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifest, p_orders: payload,
+      p_run_id: runId, p_owner_token: ownerToken, p_manifest: manifestWithChanges, p_orders: payload,
     });
     if (quarantined.length) {
       // Committed, but partial: the same fixed fields as a failure diagnostic, never IDs.

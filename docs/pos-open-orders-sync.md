@@ -646,3 +646,14 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
 - `20261119144531_pos_open_orders_last_verified_table.sql`(운영 미적용): 같은 scope·영업일·OrderId·주문시각의 직전 행에서 공급자가 마지막으로 표시한 테이블명과 관측시각을 `last_table_name`·`last_table_observed_at`에 보존한다. Status 4·TableName 없음 행에만 저장하며 `table_name`은 공급자 값 그대로 둔다. 청소·자동 일반 전환 트리거의 6개 주문 사실은 변하지 않는다.
 - 화면: 영수증 0건 + 유효한 마지막 위치 → 그 테이블만 `unknown` + "결제 확인 중"(`paymentPending`). 단건 pending 영수증은 기존 판정을 재사용하고, 마지막 위치와 영수증 위치가 다르면 두 테이블 모두 일반 미확인으로 둔다. 영수증 2건 이상·위치 증거 없음·다른 영업일·주문 시작 전 관측·수집 실패는 기존 보수 규칙을 유지한다.
 - 결제 확인 중 테이블은 `paid`가 아니므로 청소완료·30분 자동 일반 전환이 열리지 않는다. Migration 미적용 DB는 `lastTableName`을 보내지 않아 기존 동작이 그대로 유지된다.
+
+## 주문 변경 진단 기록 (2026-11-20, 진단 전용)
+
+- 위치: 정상 commit된 실행의 기존 `pos_open_orders_private.runs.manifest`에 `orderChanges` 키 하나만 추가한다. 새 테이블·Migration·RPC·권한 변경은 없다. `runs`의 RLS와 일반 앱 역할 비공개, 30일 보존 정책은 그대로다.
+- 비교 기준: 같은 영업일의 직전 정상 스냅샷. 같은 주문은 주문 ID + 주문 시작시각 + 영업일이 모두 같을 때만 같은 주문으로 본다(ID 재사용·다른 영업일 혼용 금지). 변화가 없으면 키를 쓰지 않는다.
+- 이벤트(`lib/pos/cukcuk/open-orders-change-log.ts`):
+  - `table_name_changed`: 공급자 TableName 변경 관측(`fromTable`·`toTable`·`fromObservedAt`). 물리적 자리이동 확정이 아니다.
+  - `payment_candidate`: Status 1/3 → 4 전환과 `lastTable`. 결제완료가 아니다.
+  - `merge_closure`·`receipt_closure`·`quarantined`: 이번 실행에서 새로 생긴 종료·격리의 주문 ID와 기존 증거 키(`receiptClosures`·`quarantinedOrders`) 연결만 남긴다. 증거 본문은 복사하지 않으며, 합산은 DB가 검증해 commit한 경우에만 manifest에 남는다.
+- 헤더: `version`, `runId`, `detectedAt`, `eventCount`, `droppedCount`. 이벤트는 실행당 최대 40건, 문자열 40자로 자르며 초과 건수는 `droppedCount`에 남긴다.
+- 실패한 실행은 manifest를 쓰지 않으므로 변경 이력으로 남지 않는다. 기록 생성 오류는 `{ version, error: "build_failed" }`만 남기고 수집 결과를 바꾸지 않는다. 고객명·전화·원본 응답은 저장하지 않는다.
