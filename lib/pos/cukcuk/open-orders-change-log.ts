@@ -9,6 +9,9 @@ import type { CollectedOrder } from "./open-orders-core.ts";
  * - table_name_changed: the provider listed a different TableName for the same order
  *   (same id + order start time + business date). An observation, not a proven physical move.
  * - payment_candidate: Status 1/3 -> 4. A payment candidate, never a confirmed payment.
+ * - merge_linked / merge_link_released: this run submits a new pending merge link (verified again
+ *   by the DB, which rejects the whole commit otherwise) or drops a stored one. A relation, never
+ *   a payment and never a physical seat move.
  * - receipt_closure / merge_closure / quarantined: only a pointer to the evidence the DB already
  *   writes in the same manifest (receiptClosures / quarantinedOrders). Nothing is copied, and a
  *   merge is linked only when this run submits a verified merge proof (the DB rejects the whole
@@ -26,7 +29,9 @@ export type OrderChangeEvent =
   | { kind: "table_name_changed"; orderId: string; fromTable: string; toTable: string; fromObservedAt: string | null }
   | { kind: "payment_candidate"; orderId: string; fromStatus: number; toStatus: 4; lastTable: string | null }
   | { kind: "receipt_closure" | "merge_closure"; orderId: string; evidence: "receiptClosures" }
-  | { kind: "quarantined"; orderId: string; evidence: "quarantinedOrders" };
+  | { kind: "quarantined"; orderId: string; evidence: "quarantinedOrders" }
+  | { kind: "merge_linked"; orderId: string; targetOrderId: string; targetTable: string | null }
+  | { kind: "merge_link_released"; orderId: string; targetOrderId: string };
 
 export type OrderChangeLog = {
   version: number;
@@ -69,6 +74,14 @@ export function buildOrderChangeLog(input: {
     // A reused id (different start time) is a different order: no history is shared.
     if (!id || !before || !sameStart(before.orderDate, current.orderDate)) continue;
     const orderId = text(current.orderId) ?? id;
+    if (current.mergeTargetOrderId && !current.closureReceiptId) {
+      if (!before.mergeTargetOrderId) events.push({ kind: "merge_linked", orderId, targetOrderId: text(current.mergeTargetOrderId) ?? "",
+        targetTable: text(current.mergeTargetTable) });
+      continue;
+    }
+    if (before.mergeTargetOrderId && !before.closureReceiptId && !current.closureReceiptId) {
+      events.push({ kind: "merge_link_released", orderId, targetOrderId: text(before.mergeTargetOrderId) ?? "" });
+    }
     if (current.quarantineReason) {
       if (!before.quarantinedAt) events.push({ kind: "quarantined", orderId, evidence: "quarantinedOrders" });
       continue;

@@ -1,6 +1,6 @@
 import {
   buildOpenOrderKpi, classifyOrdersForBusinessDate, classifyOrderStatus,
-  DEFAULT_STALE_AFTER_MS, singlePaidOrderReceipt, type CollectedOrder, type OpenOrderSyncState, type ReceiptLink,
+  DEFAULT_STALE_AFTER_MS, mergeTableTokens, singlePaidOrderReceipt, type CollectedOrder, type OpenOrderSyncState, type ReceiptLink,
 } from "../pos/cukcuk/open-orders-core.ts";
 
 import { addStoreDays, calculateStoreBusinessDate } from "../store-settings/business-time-core.ts";
@@ -21,13 +21,22 @@ export type TableOrder = {
    * Its table stays unknown unless a clearly newer, independently verified order supersedes it. */
   quarantined?: boolean;
   quarantinedAt?: string;
+  /** Pending merge link (contract 6): merged in POS into that order, not paid; never summed or occupying. */
+  mergedInto?: { orderId: string; table: string | null };
+  /** Tables this order is placed at: one, or several when a composite name is explained by its merge links. */
+  locations?: string[];
   lines: { id: string; name: string; quantity: number; price: number; amount: number; option: boolean; canceled: boolean }[] | null;
 };
 export type TableTile = CatalogTable & { state: TableState; orders: TableOrder[]; lastPaidAt: string | null; area: string;
   detailEvidence?: string;
   /** Unknown only because an order of this table waits for its paid receipt (display label). */
   paymentPending?: boolean;
-  paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean } };
+  paymentObservation?: { receiptId: number; firstVerifiedAt: string; expiresAt: string; expired: boolean };
+  /**
+   * Display only: this table's current (or last paid) order spans several tables through verified
+   * merge links. target = the surviving order's own table; member = a table merged into it.
+   */
+  merge?: { role: "target" | "member"; tables: string[]; targetTable: string | null; paid: boolean } };
 export type TableOverview = {
   beforeOpening?: boolean;
   collection?: TableCollectionState;
@@ -102,6 +111,41 @@ export function buildTableOverview(input: {
     else byId.set(id, normalized);
   }
   const orders = [...byId.values()];
+  const nameCounts = new Map<string, number>();
+  for (const table of catalog.tables) nameCounts.set(nameKey(table.name), (nameCounts.get(nameKey(table.name)) ?? 0) + 1);
+  const uniqueName = (name: string | null | undefined) => !!name && nameCounts.get(nameKey(name)) === 1;
+  const catalogName = new Map(catalog.tables.map(table => [nameKey(table.name), table.name]));
+  // Verified merge relations of this date: pending links and links/merges closed by a receipt.
+  const membersByTarget = new Map<string, CollectedOrder[]>();
+  for (const order of orders) {
+    const target = order.mergeTargetOrderId?.trim().toLowerCase() || (order.closureReceiptId ? order.closureMergedIntoOrderId?.trim().toLowerCase() : "");
+    if (order.businessDate !== businessDate || !target || order.quarantinedAt) continue;
+    membersByTarget.set(target, [...(membersByTarget.get(target) ?? []), order]);
+  }
+  const memberTablesOf = (orderId: string) => (membersByTarget.get(orderId) ?? []).map(member => mergeTableTokens(member.tableName))
+    .filter((parts): parts is string[] => parts?.length === 1).map(parts => nameKey(parts[0]));
+  /**
+   * Tables a POS TableName places an order at. A single catalog name as before. A composite name
+   * ("BAR9, 2") only when every part is a catalog table and all parts but at most one (the
+   * surviving order's own table) are the single tables of orders verified as merged into it.
+   * Anything else stays unlocated (never split by guess).
+   */
+  const locate = (name: string | null | undefined, orderId: string): string[] | null => {
+    if (!name?.trim()) return null;
+    if (uniqueName(name)) return [nameKey(name)];
+    const tokens = mergeTableTokens(name);
+    if (!tokens || tokens.length < 2 || !tokens.every(uniqueName)) return null;
+    const memberTables = memberTablesOf(orderId);
+    const keys = tokens.map(nameKey);
+    const own = keys.filter(table => !memberTables.includes(table));
+    return own.length <= 1 && own.length < keys.length ? keys : null;
+  };
+  const primaryOf = (name: string | null | undefined, orderId: string) => {
+    const keys = locate(name, orderId);
+    if (!keys || keys.length < 2) return null;
+    const memberTables = memberTablesOf(orderId);
+    return keys.find(table => !memberTables.includes(table)) ?? null;
+  };
   const classified = classifyOrdersForBusinessDate(orders, receipts, businessDate);
   const kpi = buildOpenOrderKpi({ enabled: input.enabled, businessDate, now, sync,
     classified: conflict ? null : classified, isLiveBusinessDay: true, isClosed: false, paid: { amount: 0, receiptCount: 0 } });
@@ -167,8 +211,10 @@ export function buildTableOverview(input: {
     if (active.length === 1 && active[0].tableName) {
       pendingTableByOrder.set(order.orderId, active[0].tableName);
       if (lastTable && nameKey(lastTable) !== nameKey(active[0].tableName)) {
-        locationConflicts.add(nameKey(lastTable));
-        locationConflicts.add(nameKey(active[0].tableName));
+        for (const name of [lastTable, active[0].tableName]) {
+          locationConflicts.add(nameKey(name));
+          for (const part of mergeTableTokens(name) ?? []) locationConflicts.add(nameKey(part));
+        }
       }
     } else if (active.length === 0 && lastTable) pendingTableByOrder.set(order.orderId, lastTable);
   }
@@ -185,6 +231,8 @@ export function buildTableOverview(input: {
         && calculateStoreBusinessDate(order.orderDate, input.cutoff) === businessDate,
       detailsNeedReview: reviewIds.has(order.orderId) || !order.lines,
       ...(order.quarantinedAt ? { quarantined: true, quarantinedAt: order.quarantinedAt } : {}),
+      ...(order.mergeTargetOrderId && !order.closureReceiptId ? { mergedInto: { orderId: order.mergeTargetOrderId.trim().toLowerCase(),
+        table: order.mergeTargetTable?.trim() || null } } : {}),
       lines: order.lines?.map(line => ({ id: line.detailId, name: line.itemName, quantity: line.quantity, price: line.price,
         amount: line.amount, option: line.isOption, canceled: line.isCanceled })) ?? null };
   });
@@ -197,27 +245,41 @@ export function buildTableOverview(input: {
       contradictoryNames.add(nameKey(receipt.tableName!));
     }
   }
-  const nameCounts = new Map<string, number>();
-  for (const table of catalog.tables) nameCounts.set(nameKey(table.name), (nameCounts.get(nameKey(table.name)) ?? 0) + 1);
-  const uniqueName = (name: string | null | undefined) => !!name && nameCounts.get(nameKey(name)) === 1;
-  const assigned = new Set(projected.filter(order => uniqueName(order.tableName)).map(order => order.id));
+  for (const order of projected) {
+    const keys = locate(order.tableName, order.id);
+    if (keys) order.locations = keys.map(key => catalogName.get(key) ?? key);
+  }
+  const locationKeys = (order: TableOrder) => order.locations?.map(nameKey) ?? [];
+  const projectedById = new Map(projected.map(order => [order.id, order]));
+  // A pending link is shown through its target only while the target is placed at the member's
+  // table. Otherwise the member stays an ordinary unverified order of its table (unknown).
+  const linkedIds = new Set(projected.filter(order => {
+    if (!order.mergedInto) return false;
+    const target = projectedById.get(order.mergedInto.orderId);
+    const table = mergeTableTokens(order.tableName);
+    return !!target && table?.length === 1 && locationKeys(target).includes(nameKey(table[0]));
+  }).map(order => order.id));
+  const assigned = new Set(projected.filter(order => order.locations?.length).map(order => order.id));
   const unlinked = projected.filter(order => !assigned.has(order.id));
-  const unlocatedOrder = unlinked.some(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id));
+  const unlocatedOrder = unlinked.some(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id) && !linkedIds.has(order.id));
+  const receiptTables = (receipt: TableReceipt) => locate(receipt.tableName, receipt.orderId) ?? [];
   const unlinkedReceiptCount = currentPaid.filter(receipt => !paidByOrder.has(receipt.orderId)
-    || !uniqueName(receipt.tableName)).length;
+    || !receiptTables(receipt).length).length;
   const tables = catalog.tables.map((table): TableTile => {
     const unique = nameCounts.get(nameKey(table.name)) === 1;
-    const matches = unique ? projected.filter(order => order.tableName && nameKey(order.tableName) === nameKey(table.name)) : [];
-    const candidates = matches.filter(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id));
-    const settlements = [...paidByOrder.values()].filter(receipt => unique && nameKey(receipt.tableName!) === nameKey(table.name));
+    const here = nameKey(table.name);
+    const matches = unique ? projected.filter(order => locationKeys(order).includes(here)) : [];
+    const candidates = matches.filter(order => !convertedIds.has(order.id) && !revokedIds.has(order.id) && !mergedIds.has(order.id)
+      && !linkedIds.has(order.id));
+    const settlements = [...paidByOrder.values()].filter(receipt => unique && receiptTables(receipt).includes(here));
     const last = settlements.sort((a, b) => Date.parse(b.paidAt!) - Date.parse(a.paidAt!))[0];
     const issues = receipts.filter(receipt => receipt.businessDate === businessDate && receipt.tableName
-      && nameKey(receipt.tableName) === nameKey(table.name) && !paidByOrder.has(receipt.orderId)
+      && (nameKey(receipt.tableName) === here || receiptTables(receipt).includes(here)) && !paidByOrder.has(receipt.orderId)
       && !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5));
     const receiptIssue = issues.length > 0;
     const mismatchedReceipt = matches.some(order => {
       const receipt = paidByOrder.get(order.id);
-      return receipt && nameKey(receipt.tableName!) !== nameKey(table.name);
+      return receipt && !receiptTables(receipt).includes(here);
     });
     // A quarantined order is superseded only by a later generation: every remaining order at
     // this table started strictly after the latest quarantine commit (so none of them can be the
@@ -248,14 +310,28 @@ export function buildTableOverview(input: {
     else if (snapshotOk && last) state = "paid";
     // Before the first collection, an open shop's unobserved seats are never certified idle.
     if (waiting && !timing.beforeOpening && state === "idle") state = "unknown";
+    // Merge display only (no own state or color). A newer order placed at this table alone takes
+    // precedence over a merge that merely covers it.
+    let merge: TableTile["merge"];
+    const spanning = state === "occupied" || state === "unknown" && paymentPending
+      ? current.find(order => (order.locations?.length ?? 0) > 1)
+      : state === "paid" && last ? projectedById.get(last.orderId) : undefined;
+    const spanTables = state === "paid" && last ? receiptTables(last) : spanning ? locationKeys(spanning) : [];
+    if (spanning && spanTables.length > 1 && spanTables.includes(here)) {
+      const primary = primaryOf(state === "paid" ? last!.tableName : spanning.tableName, spanning.id);
+      const role = primary === here ? "target" as const : "member" as const;
+      const ownNewer = state === "occupied" && current.some(order => order !== spanning && locationKeys(order).length === 1);
+      if (role === "target" || !ownNewer) merge = { role, paid: state === "paid", targetTable: primary ? catalogName.get(primary) ?? primary : null,
+        tables: spanTables.filter(key => key !== here).map(key => catalogName.get(key) ?? key) };
+    }
     return { ...table, area: table.displayArea ?? tableArea(table.areaName), state, orders: matches,
-      ...(paymentPending ? { paymentPending: true } : {}),
+      ...(paymentPending ? { paymentPending: true } : {}), ...(merge ? { merge } : {}),
       // Include receipt/closure changes that may leave the displayed state and paid time unchanged.
       // Explicit fields only: never expose provider raw/customer data or collection timestamps.
       detailEvidence: JSON.stringify([
         orders.filter(order => matches.some(match => match.id === order.orderId)).map(order =>
           [order.orderId, order.status, order.closureReceiptId, order.closureMergedIntoOrderId,
-            ...(order.quarantinedAt ? [order.quarantinedAt] : [])]).sort(),
+            ...(order.quarantinedAt ? [order.quarantinedAt] : []), ...(order.mergeTargetOrderId ? [order.mergeTargetOrderId] : [])]).sort(),
         receipts.filter(receipt => receipt.tableName && nameKey(receipt.tableName) === nameKey(table.name)
           || matches.some(match => match.id === receipt.orderId)).map(receipt =>
           [receipt.receiptId, receipt.orderId, receipt.paymentStatus, receipt.isCanceled, receipt.businessDate, receipt.tableName, receipt.paidAt,

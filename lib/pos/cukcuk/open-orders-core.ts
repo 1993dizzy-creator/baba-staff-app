@@ -380,6 +380,15 @@ export type CollectedOrder = OrderSummary & {
    */
   lastTableName?: string | null;
   lastTableObservedAt?: string | null;
+  /**
+   * Read contract >= 6: merged in POS into this order and not paid yet (a relation, never a
+   * payment or an ending). Every other field is this order's last provider fact. After the
+   * target's paid receipt closes it, the link is kept as history next to the closure.
+   */
+  mergeTargetOrderId?: string | null;
+  mergeLinkedAt?: string | null;
+  /** The target's TableName when the link was first verified (e.g. "BAR9, 2"). */
+  mergeTargetTable?: string | null;
 };
 
 /** Applies GET orders/{id}: the detail must be the same order and carry OrderDetails. */
@@ -465,6 +474,8 @@ export type ClassifiedOrders = {
   converted: number;
   /** Merged in POS into another order whose single paid receipt contains it (already in paid sales once). */
   merged: number;
+  /** Merged in POS into another listed order, not paid yet: its menu is in that order's amount. */
+  mergedPending: number;
   canceled: number;
   receiptPending: number;
   receiptCanceled: number;
@@ -491,7 +502,9 @@ export function classifyOrdersForBusinessDate(
     receiptSeen.add(receipt.receiptId);
     links.set(orderId, [...(links.get(orderId) ?? []), receipt]);
   }
-  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, merged: 0, canceled: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
+  const result: ClassifiedOrders = { open: [], uncertain: [], converted: 0, merged: 0, mergedPending: 0, canceled: 0, receiptPending: 0, receiptCanceled: 0, otherBusinessDate: 0, statusCounts: {} };
+  const liveTargets = new Set(orders.filter((order) => order.businessDate === businessDate && !order.mergeTargetOrderId
+    && !order.closureMergedIntoOrderId && !order.quarantinedAt && classifyOrderStatus(order.status) !== "canceled").map((order) => toId(order.orderId)));
   for (const order of orders) {
     if (order.businessDate !== businessDate) {
       result.otherBusinessDate++;
@@ -503,6 +516,12 @@ export function classifyOrdersForBusinessDate(
     // Any receipt it may have is counted once by the paid (receipt) source only.
     if (order.quarantinedAt) {
       result.uncertain.push({ orderId: order.orderId, orderNo: order.orderNo, reason: "vanished_unconfirmed", amount: order.totalAmount });
+      continue;
+    }
+    // Pending merge link: counted once inside its target's amount, never as its own open order.
+    if (order.mergeTargetOrderId && !order.closureReceiptId) {
+      if (liveTargets.has(toId(order.mergeTargetOrderId))) result.mergedPending++;
+      else result.uncertain.push({ orderId: order.orderId, orderNo: order.orderNo, reason: "closure_evidence_changed", amount: order.totalAmount });
       continue;
     }
     const linked = links.get(order.orderId) ?? [];
@@ -569,16 +588,18 @@ export type MergeReceiptEvidence = ReceiptLink & {
   headerDiscounts: unknown[];
   /** Raw SAInvoiceDetails. */
   details: unknown;
-  /** Raw header TableName (merge proof contract 2 only: absorbed-merge table evidence). */
+  /** Raw header TableName (contract 6 only: a merge link's receipt must name the merged table). */
   tableName?: string | null;
 };
 
 /**
  * Merge proof contract. 1 (DB read contract 3/4): item-ID lines only, surviving order +
- * merged orders = receipt. 2 (DB read contract >= 5, migration 20261125115152): also exact
- * manual (no item ID) lines by name and the "already absorbed" merge. Mirrors the DB.
+ * merged orders = receipt. 2 (DB read contract >= 6, migration 20261125123044): also exact
+ * manual (no item ID) lines by name, and merge links (detectMergeLinks). Mirrors the DB.
  */
 export type MergeProofVersion = 1 | 2;
+/** First DB read contract that verifies version 2 proofs and stores merge links. */
+export const MERGE_LINK_CONTRACT = 6;
 
 type MenuEntry = { item: string; price: number; quantity: number; amount: number };
 type MenuMap = Map<string, MenuEntry>;
@@ -664,38 +685,111 @@ const menuWithin = (part: MenuMap, whole: MenuMap) => [...part].every(([key, ent
 const menuEqual = (a: MenuMap, b: MenuMap) => a.size === b.size
   && [...a].every(([key, entry]) => { const own = b.get(key); return own && own.quantity === entry.quantity && own.amount === entry.amount; });
 
+/** The single table name of an order, or null (absent, composite or malformed). */
+const singleTable = (order: CollectedOrder) => { const tokens = mergeTableTokens(order.tableName); return tokens?.length === 1 ? tokens[0] : null; };
+const plainOpen = (order: CollectedOrder) => (order.statusClass === "open" || order.statusClass === "unknown") && order.status !== ORDER_STATUS_CANCELED;
+const noEvidence = (order: CollectedOrder) => !order.closureReceiptId && !order.closureMergedIntoOrderId && !order.quarantinedAt
+  && !order.quarantineReason && !order.mergeTargetOrderId;
+
+export type MergeLink = { targetOrderId: string; targetTable: string };
+
 /**
- * "Already absorbed" merge (contract 2, production 2026-11-24 #9081). CUKCUK moved a
- * quarantined order's lines into the surviving order (new detail IDs, TableName "BAR9, 2")
- * one or more runs before payment, so the surviving order's previous snapshot already holds
- * them and "surviving + merged = receipt" would count them twice. Proven only when:
- * - the surviving order's previous menu and header equal the receipt exactly;
- * - its previous TableName and the receipt TableName name the same >= 2 distinct tables;
- * - every vanished candidate previously quarantined on one of those tables (and only those)
- *   is in the group, each with a single table name, and no other quarantined order of the
- *   date names one of those tables;
- * - the group's combined menu is contained in the surviving menu, item by item, and is less
- *   than its whole amount.
- * Mirrors the DB commit (20261125115152).
+ * CUKCUK order merge, observed BEFORE payment (production 2026-11-24 #9081: table 2's order
+ * merged into BAR9 at 22:12). A merge is a relation, never a payment. In ONE run, comparing the
+ * previous committed snapshot with this run's complete listing:
+ *
+ * B. Into an existing order T (same id and start time in both snapshots, still open):
+ *    T's TableName keeps all its previous tables and newly adds the vanished orders' tables;
+ *    each added table has exactly one vanished candidate; T's menu now = T's previous menu + the
+ *    candidates' menus exactly (item ID or exact manual name, price, quantity, amount, header).
+ * C. Into a new order N (not in the previous snapshot): >= 2 vanished candidates whose single
+ *    tables are exactly N's tables, one per table; N's menu and header = their sum exactly; N
+ *    started no earlier than any of them.
+ *
+ * A candidate is a previously plain open order (never quarantined, linked or closed) whose
+ * detail now answers without identity. Two targets claiming one candidate, a second vanished
+ * order on a merged table, any option/addition/canceled-quantity or menu/amount difference ->
+ * no link (the order follows the existing receipt proof / quarantine rules). Pure; the DB
+ * (20261125123044 commit_v1) re-verifies every new link independently.
  */
-function absorbedMergeGroup(input: { target: CollectedOrder; receipt: MergeReceiptEvidence; receiptMenu: MenuMap; targetMenu: MenuMap;
-  pool: CollectedOrder[]; previousOrders: CollectedOrder[] }) {
-  const { target, receipt, receiptMenu, targetMenu } = input;
-  const tables = mergeTableTokens(target.tableName);
-  const receiptTables = mergeTableTokens(receipt.tableName);
-  if (!tables || tables.length < 2 || !receiptTables || receiptTables.join("\u0000") !== tables.join("\u0000")) return null;
-  if (!menuEqual(targetMenu, receiptMenu) || !finite(receipt.totalAmount) || Math.abs(target.totalAmount - receipt.totalAmount) > 0.005) return null;
-  const onTables = (order: CollectedOrder) => (mergeTableTokens(order.tableName) ?? []).some((token) => tables.includes(token));
-  const targetId = toId(target.orderId);
-  const members = input.pool.filter((order) => order.quarantinedAt && onTables(order));
-  const memberIds = new Set(members.map((order) => toId(order.orderId)));
-  if (!members.length || members.some((order) => mergeTableTokens(order.tableName)?.length !== 1)) return null;
-  if (input.previousOrders.some((order) => order.quarantinedAt && onTables(order)
-    && toId(order.orderId) !== targetId && !memberIds.has(toId(order.orderId)))) return null;
-  const memberMenu = mergeOrderMenu(members, 2);
-  const memberTotal = members.reduce((sum, order) => sum + order.totalAmount, 0);
-  if (!memberMenu || !menuWithin(memberMenu, targetMenu) || !(memberTotal < target.totalAmount - 0.005)) return null;
-  return members;
+export function detectMergeLinks(input: { businessDate: string; candidates: CollectedOrder[]; previousOrders: CollectedOrder[];
+  listed: CollectedOrder[]; alsoVanished?: CollectedOrder[] }) {
+  const previous = new Map(input.previousOrders.map((order) => [toId(order.orderId), order]));
+  // Vanished in THIS run: previously plain (never quarantined, linked or closed). An older
+  // quarantined order on the same table is unrelated to this merge and never a member.
+  const fresh = [...input.candidates, ...(input.alsoVanished ?? [])].filter((order) => order.businessDate === input.businessDate && noEvidence(order));
+  const vanishedByTable = new Map<string, number>();
+  for (const order of fresh) {
+    const table = singleTable(order);
+    if (table) vanishedByTable.set(table, (vanishedByTable.get(table) ?? 0) + 1);
+  }
+  const eligible = input.candidates.filter((order) => fresh.includes(order) && plainOpen(order) && Array.isArray(order.lines) && singleTable(order));
+  const groups: { link: MergeLink; members: string[] }[] = [];
+  for (const target of input.listed) {
+    const tables = mergeTableTokens(target.tableName);
+    if (target.businessDate !== input.businessDate || !plainOpen(target) || !Array.isArray(target.lines) || !tables || tables.length < 2) continue;
+    const before = previous.get(toId(target.orderId));
+    let added: string[];
+    if (before) {
+      const old = mergeTableTokens(before.tableName);
+      if (Date.parse(before.orderDate) !== Date.parse(target.orderDate) || before.businessDate !== input.businessDate || !plainOpen(before)
+        || !noEvidence(before) || !Array.isArray(before.lines) || !old || !old.every((table) => tables.includes(table))) continue;
+      added = tables.filter((table) => !old.includes(table));
+    } else added = tables;
+    const members = eligible.filter((order) => added.includes(singleTable(order)!));
+    if (!members.length || (!before && (members.length < 2 || members.length !== tables.length))) continue;
+    // Exactly one vanished order per merged table (none other on it), one member per table.
+    if (members.some((order) => vanishedByTable.get(singleTable(order)!) !== 1)) continue;
+    if (!before && members.some((order) => Date.parse(order.orderDate) > Date.parse(target.orderDate))) continue;
+    const parts = before ? [before, ...members] : members;
+    const expected = mergeOrderMenu(parts, 2);
+    const actual = mergeOrderMenu([target], 2);
+    if (!expected || !actual || !menuEqual(expected, actual)
+      || Math.abs(parts.reduce((sum, order) => sum + order.totalAmount, 0) - target.totalAmount) > 0.005) continue;
+    groups.push({ link: { targetOrderId: toId(target.orderId), targetTable: target.tableName! }, members: members.map((order) => toId(order.orderId)) });
+  }
+  // A member claimed by two targets voids both groups entirely.
+  const uses = new Map<string, number>();
+  for (const group of groups) for (const id of group.members) uses.set(id, (uses.get(id) ?? 0) + 1);
+  const links = new Map<string, MergeLink>();
+  for (const group of groups) if (group.members.every((id) => uses.get(id) === 1)) for (const id of group.members) links.set(id, group.link);
+  return links;
+}
+
+/**
+ * A stored link stays valid while the target is listed and either still open with the
+ * member's table in its TableName and the member's menu inside its menu, or already a
+ * payment candidate (Status 4, no lines: the POS dropped them). Anything else -> the link is
+ * released and the order follows the quarantine rules (re-split, cancel, re-change).
+ */
+export function mergeLinkStillValid(member: CollectedOrder, target: CollectedOrder | undefined) {
+  if (!target || target.businessDate !== member.businessDate || target.closureMergedIntoOrderId || target.mergeTargetOrderId
+    || target.quarantineReason) return false;
+  const table = singleTable(member);
+  if (!table) return false;
+  if (Array.isArray(target.lines)) {
+    const own = mergeOrderMenu([member], 2), whole = mergeOrderMenu([target], 2);
+    return plainOpen(target) && !!mergeTableTokens(target.tableName)?.includes(table) && !!own && !!whole && menuWithin(own, whole);
+  }
+  return target.status === ORDER_STATUS_PAID_CANDIDATE;
+}
+
+/**
+ * Payment of a linked merge: the target's single paid receipt (same/next business day, same
+ * branch) names the member's table and is at least the members' amount, and no member has an
+ * active receipt of its own. The menu was already verified when the link was made, so the
+ * target's lines are not needed (receipt saved after the order reached Status 4).
+ */
+export function linkedMergeReceipt(input: { businessDate: string; branchId: string; targetOrderId: string; members: CollectedOrder[];
+  receipts: MergeReceiptEvidence[] }) {
+  const receipt = singlePaidOrderReceipt(input.targetOrderId, input.businessDate, input.receipts);
+  const evidence = receipt && input.receipts.find((row) => row.receiptId === receipt.receiptId);
+  const tables = mergeTableTokens(evidence?.tableName);
+  if (!evidence || evidence.branchId !== input.branchId || !tables || !finite(evidence.totalAmount)
+    || input.members.some((member) => !tables.includes(singleTable(member) ?? "\u0000"))
+    || evidence.totalAmount < input.members.reduce((sum, member) => sum + member.totalAmount, 0) - 0.005
+    || input.receipts.some((row) => activeReceipt(row) && input.members.some((member) => toId(member.orderId) === toId(row.orderId)))) return null;
+  return evidence.receiptId;
 }
 
 const activeReceipt = (receipt: ReceiptLink) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5);
@@ -706,7 +800,8 @@ const activeReceipt = (receipt: ReceiptLink) => !(receipt.isCanceled === true ||
  * surviving order (previous snapshot, still listed) equals, item by item, the single paid
  * receipt of that surviving order. Amount-only matches, discounts, options, unpaid or
  * duplicated receipts, other days/branches and any ambiguity stay unconfirmed.
- * Version 2 adds exact manual lines and the already-absorbed merge (absorbedMergeGroup).
+ * Version 2 adds exact manual lines. A surviving order whose snapshot already holds the merged
+ * menu is never matched here (it would count twice); that case is a merge link.
  */
 export function proveMergedOrders(input: {
   businessDate: string; branchId: string; candidates: CollectedOrder[]; previousOrders: CollectedOrder[];
@@ -739,14 +834,7 @@ export function proveMergedOrders(input: {
       const rest = { ...left, quantity: round(left.quantity - entry.quantity, 4), amount: round(left.amount - entry.amount, 2) };
       if (rest.quantity === 0 && rest.amount === 0) needed.delete(key); else needed.set(key, rest);
     }
-    if (!explainable) continue;
-    if (!needed.size) {
-      // The surviving order alone already equals the receipt: only an absorbed merge can apply.
-      const absorbed = version === 2
-        ? absorbedMergeGroup({ target, receipt, receiptMenu, targetMenu, pool, previousOrders: input.previousOrders }) : null;
-      if (absorbed) groups.push({ receiptId: receipt.receiptId, targetOrderId: targetId, members: absorbed.map((order) => toId(order.orderId)) });
-      continue;
-    }
+    if (!explainable || !needed.size) continue;
     const fits = pool.map((order) => ({ order, menu: mergeOrderMenu([order], version) })).filter((entry) => entry.menu
       && [...entry.menu].every(([key, part]) => { const left = needed.get(key); return left && left.quantity >= part.quantity && left.amount >= part.amount; }));
     if (fits.length > 12) { // Too many look-alikes to rule out ambiguity: stay unconfirmed.
@@ -869,6 +957,8 @@ export async function collectOpenOrderSnapshot(
   // Vanished orders whose detail cannot confirm an ending and that have no paid receipt of
   // their own: they may still be proven merged once all vanished orders are known.
   const mergeCandidates: { previous: CollectedOrder; context: OpenOrderDiagnosticContext }[] = [];
+  // Vanished orders closed by their own paid receipt: they can make a merged table ambiguous.
+  const receiptClosedVanished: CollectedOrder[] = [];
   for (const orderId of vanished) {
     let confirmed: CollectedOrder;
     try {
@@ -902,6 +992,7 @@ export async function collectOpenOrderSnapshot(
           if (receipt) {
             // A proof ends a previous quarantine: never resend its stored quarantine fields.
             orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId, closureMergedIntoOrderId: null, ...CLEARED_QUARANTINE });
+            receiptClosedVanished.push(previous);
             confirmedCount++;
             continue;
           }
@@ -937,19 +1028,60 @@ export async function collectOpenOrderSnapshot(
   if (mergeCandidates.length) {
     let proven = new Map<string, { receiptId: number; targetOrderId: string }>();
     let evidenceRead = false;
+    let receipts: MergeReceiptEvidence[] = [];
     try {
       assertWithinDeadline(state, OPEN_ORDERS_REQUEST_TIMEOUT_MS, "merge_evidence");
-      const receipts = await input.loadMergeReceiptEvidence!();
+      receipts = await input.loadMergeReceiptEvidence!();
       assertWithinDeadline(state, 0, "merge_evidence");
       evidenceRead = true;
-      proven = proveMergedOrders({ businessDate: input.businessDate, branchId: input.branchId,
-        candidates: mergeCandidates.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts,
-        version: input.mergeProofVersion ?? 1 });
     } catch (error) {
       if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
       // An unavailable receipt read is not evidence. Keep the original vanished failure.
     }
-    for (const candidate of mergeCandidates) {
+    // Merge links (contract 6): relations observed before payment, resolved first.
+    const settled = new Set<string>();
+    if (input.mergeProofVersion === 2) {
+      const listed = orders.filter((order) => listedIds.has(order.orderId));
+      const listedById = new Map(listed.map((order) => [toId(order.orderId), order]));
+      // 1. Stored links: revalidated against the latest listing, closed by the target's receipt.
+      const byTarget = new Map<string, CollectedOrder[]>();
+      for (const { previous } of mergeCandidates) {
+        if (!previous.mergeTargetOrderId || previous.closureReceiptId) continue;
+        const targetId = toId(previous.mergeTargetOrderId);
+        if (!mergeLinkStillValid(previous, listedById.get(targetId))) continue; // released: quarantine rules below
+        byTarget.set(targetId, [...(byTarget.get(targetId) ?? []), previous]);
+      }
+      for (const [targetId, members] of byTarget) {
+        const receiptId = evidenceRead ? linkedMergeReceipt({ businessDate: input.businessDate, branchId: input.branchId,
+          targetOrderId: targetId, members, receipts }) : null;
+        for (const member of members) {
+          settled.add(toId(member.orderId));
+          orders.push(receiptId
+            ? { ...member, raw: {}, closureReceiptId: receiptId, closureMergedIntoOrderId: targetId, ...CLEARED_QUARANTINE }
+            : { ...member, raw: {}, closureReceiptId: null, closureMergedIntoOrderId: null, ...CLEARED_QUARANTINE });
+          confirmedCount++;
+        }
+      }
+      // 2. New links observed in this run (B: into an existing order, C: into a new order).
+      const links = detectMergeLinks({ businessDate: input.businessDate, previousOrders: input.previousOrders ?? [], listed,
+        candidates: mergeCandidates.map((candidate) => candidate.previous).filter((order) => !settled.has(toId(order.orderId))),
+        alsoVanished: receiptClosedVanished });
+      for (const { previous } of mergeCandidates) {
+        const link = links.get(toId(previous.orderId));
+        if (!link || settled.has(toId(previous.orderId))) continue;
+        settled.add(toId(previous.orderId));
+        orders.push({ ...previous, raw: {}, closureReceiptId: null, closureMergedIntoOrderId: null, ...CLEARED_QUARANTINE,
+          mergeTargetOrderId: link.targetOrderId, mergeTargetTable: link.targetTable, mergeLinkedAt: null });
+        confirmedCount++;
+      }
+    }
+    const remaining = mergeCandidates.filter((candidate) => !settled.has(toId(candidate.previous.orderId)));
+    if (evidenceRead) {
+      proven = proveMergedOrders({ businessDate: input.businessDate, branchId: input.branchId,
+        candidates: remaining.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts,
+        version: input.mergeProofVersion ?? 1 });
+    }
+    for (const candidate of remaining) {
       const proof = proven.get(toId(candidate.previous.orderId));
       if (!proof) {
         // Partial collection (read contract >= 4): the full list was complete and valid and
@@ -957,8 +1089,9 @@ export async function collectOpenOrderSnapshot(
         // receipt proves how it ended. Keep its last facts as quarantined instead of failing
         // every other order. An unreadable receipt source still fails the run.
         if (input.quarantineUnproven && evidenceRead) {
+          // A released merge link (re-split, cancel, re-change) is never resent as a link.
           orders.push({ ...candidate.previous, raw: {}, closureReceiptId: null, closureMergedIntoOrderId: null,
-            quarantineReason: "vanished_unconfirmed" });
+            mergeTargetOrderId: null, quarantineReason: "vanished_unconfirmed" });
           quarantined.push(candidate.context);
           continue;
         }
@@ -968,7 +1101,7 @@ export async function collectOpenOrderSnapshot(
       // A previously quarantined order (2026-11-24) must not carry its stored quarantine fields
       // into the payload: the DB counts quarantineReason against the manifest.
       orders.push({ ...candidate.previous, raw: {}, closureReceiptId: proof.receiptId, closureMergedIntoOrderId: proof.targetOrderId,
-        ...CLEARED_QUARANTINE });
+        mergeTargetOrderId: null, ...CLEARED_QUARANTINE });
       confirmedCount++;
     }
   }
@@ -1064,9 +1197,9 @@ export async function runOpenOrderSync(
         ? () => deps.loadReceiptEvidence!(input.businessDate) : undefined,
       loadMergeReceiptEvidence: mergeEvidence ? () => deps.loadMergeReceiptEvidence!(input.businessDate) : undefined,
       quarantineUnproven: Boolean(mergeEvidence) && typeof contract === "number" && contract >= 4,
-      // Contract 5 commits verify manual lines and absorbed merges; an older DB would reject
-      // such a proof and fail the whole run, so it keeps the version 1 proof only.
-      mergeProofVersion: mergeEvidence && typeof contract === "number" && contract >= 5 ? 2 : 1,
+      // Contract 6 commits verify manual lines and merge links; an older DB would reject such a
+      // proof (or store a link as a fresh open row), so it keeps the version 1 proof only.
+      mergeProofVersion: mergeEvidence && typeof contract === "number" && contract >= MERGE_LINK_CONTRACT ? 2 : 1,
     });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
@@ -1076,6 +1209,8 @@ export async function runOpenOrderSync(
       ...(order.closureReceiptId ? { closureReceiptId: order.closureReceiptId } : {}),
       ...(order.closureReceiptId && order.closureMergedIntoOrderId ? { closureMergedIntoOrderId: order.closureMergedIntoOrderId } : {}),
       ...(order.quarantineReason ? { quarantineReason: order.quarantineReason } : {}),
+      // Pending merge link only (the DB keeps a closed link's history itself).
+      ...(order.mergeTargetOrderId && !order.closureReceiptId ? { mergeTargetOrderId: order.mergeTargetOrderId } : {}),
     }));
     // Diagnostic only: compares against the previous committed snapshot after every decision
     // above is final; it never changes the payload, and a builder error never fails the run.

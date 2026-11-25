@@ -1,4 +1,4 @@
-import { classifyOrdersForBusinessDate, singlePaidOrderReceipt, type CollectedOrder } from "../pos/cukcuk/open-orders-core.ts";
+import { classifyOrdersForBusinessDate, mergeTableTokens, singlePaidOrderReceipt, type CollectedOrder } from "../pos/cukcuk/open-orders-core.ts";
 import type { CatalogTable, TableOverview, TableTile } from "./table-overview.ts";
 import { projectDailyTableUsage, type DailyTableUsage } from "./table-usage.ts";
 import { projectReceiptOrderUsage, type PaidOrderUsage } from "./table-paid-usage.ts";
@@ -66,10 +66,17 @@ export function projectTableDetail(input: {
     const targets = new Set(members.map(o => idKey(o.closureMergedIntoOrderId)));
     const targetOrders = orders.filter(o => o.businessDate === overview.businessDate && targets.has(idKey(o.orderId)));
     const group = [...members, ...targetOrders];
-    const names = [...new Set(group.map(o => exactName(o.tableName)).filter((n): n is string => !!n))];
+    // A paid surviving order has no TableName any more; its receipt's composite name ("BAR9, 2")
+    // places it only when every part is a catalog table and every member's table is one of them.
+    const receiptParts = (mergeTableTokens(receipt.table_name) ?? []).map(exactName);
+    const receiptPlaced = receiptParts.length > 1 && receiptParts.every(n => !!n)
+      && members.every(o => receiptParts.some(n => key(n) === key(exactName(o.tableName))));
+    const placed = (o: CollectedOrder) => !!exactName(o.tableName) || targetOrders.includes(o) && receiptPlaced;
+    const names = [...new Set([...group.map(o => exactName(o.tableName)), ...(receiptPlaced ? receiptParts : [])])
+      .values()].filter((n): n is string => !!n);
     const verified = targets.size === 1 && targetOrders.length === 1 && idKey(receipt.order_id) === [...targets][0]
       && receipt.business_date === overview.businessDate && receipt.is_canceled === false
-      && group.every(o => !!exactName(o.tableName))
+      && group.every(placed)
       && members.every(o => !!validTime(o.closureConfirmedAt ?? null, now)
         && classifyOrdersForBusinessDate([o], links, overview.businessDate).merged === 1)
       && singlePaidOrderReceipt(receipt.order_id ?? "", overview.businessDate, links)?.receiptId === receipt.id;

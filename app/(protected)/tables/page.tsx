@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/lib/language-context";
 import { tablesText } from "@/lib/text/tables";
-import type { TableOrder, TableOverview, TableState } from "@/lib/sales/table-overview";
+import type { TableOrder, TableOverview, TableState, TableTile } from "@/lib/sales/table-overview";
 import type { DetailReceipt } from "@/lib/sales/table-detail";
 import { detailTableName, orderElapsedMinutes, paidOrderElapsedMinutes, preferLatestOverview, receiptOrderTimeRange, tablePaymentHistory, verifiedOrderStart, verifiedPaidReferenceTime, verifiedReceiptOrderUsage } from "@/lib/sales/table-detail-display";
 import { localizedTableMenuName } from "@/lib/sales/table-menu-display";
@@ -127,7 +127,9 @@ export default function TablesPage() {
   const unlinked = selected?.kind === "order" ? data?.unlinked.find(item => item.id === selected.id) : null;
   const detailOrders = tile?.orders ?? (unlinked ? [unlinked] : []);
   const currentOrders = detailOrders.filter(order => order.verifiedOpen);
-  const retainedOrders = detailOrders.filter(order => !order.verifiedOpen);
+  // Orders merged into another current order: shown apart, never as this table's own unverified order.
+  const mergedSourceOrders = detailOrders.filter(order => !order.verifiedOpen && order.mergedInto && !order.quarantined);
+  const retainedOrders = detailOrders.filter(order => !order.verifiedOpen && !mergedSourceOrders.includes(order));
   const quarantinedOrders = retainedOrders.filter(order => order.quarantined);
   const cleaningReason = tile?.state === "occupied" || currentOrders.length ? t.cleaningReasons.active_orders
     : tile?.state === "unknown" ? t.cleaningReasons.snapshot_unhealthy
@@ -155,6 +157,11 @@ export default function TablesPage() {
     && !tile.lastPaidAt && (!detail || !detail.table.orders.length && !detail.table.lastPaidAt);
   // Still unknown (no cleaning/paid/idle); only the label says which payment it waits for.
   const detailConfirming = !detailWaiting && snapshotStatus === "ok" && tile?.state === "unknown" && !!tile.paymentPending;
+  // Merge relation label only: the tile keeps its own state color (occupied / paid / unknown).
+  const mergeText = (item: TableTile, status: string | undefined) => !item.merge || status !== "ok" ? null
+    : item.merge.paid ? t.mergedPaid
+    : item.merge.role === "member" ? t.mergedInto.replace("{table}", item.merge.targetTable ?? item.merge.tables.join(", "))
+    : t.mergedWith.replace("{tables}", item.merge.tables.join(", "));
   const health =data?.collection?.health, detailHealth = detail?.collection?.health;
   const collectionWarning = health && health !== "healthy" && health !== "waiting" ? t.collectionErrors[health] : null;
   const detailCollectionWarning = detailHealth && detailHealth !== "healthy" && detailHealth !== "waiting" ? t.collectionErrors[detailHealth] : null;
@@ -316,12 +323,14 @@ export default function TablesPage() {
         const start = data ? verifiedOrderStart(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         const paidAt = data ? verifiedPaidReferenceTime(item, data.snapshotAt, data.serverNow, data.snapshotStatus, data.businessDate) : null;
         const confirming = item.state === "unknown" && !!item.paymentPending && data?.snapshotStatus === "ok";
+        const mergeLabel = mergeText(item, data?.snapshotStatus);
         return <button key={item.id}
         className={cx(styles.tile, stateClass[item.state], selected?.kind === "table" && selected.id === item.id && styles.selected)}
-        aria-label={`${item.name} · ${areaName(item.area)} · ${confirming ? t.paymentPending : t[item.state]}${start ? ` · ${t.started} ${clock(start)}` : ""}${paidAt ? ` · ${t.receiptBasis} ${clock(paidAt)}` : ""}`} aria-haspopup="dialog"
+        aria-label={`${item.name} · ${areaName(item.area)} · ${confirming ? t.paymentPending : t[item.state]}${mergeLabel ? ` · ${mergeLabel}` : ""}${start ? ` · ${t.started} ${clock(start)}` : ""}${paidAt ? ` · ${t.receiptBasis} ${clock(paidAt)}` : ""}`} aria-haspopup="dialog"
         onClick={() => { setDetailResult(null); setSelected({ kind: "table", id: item.id }); }}>
         <strong>{item.name}</strong>
         {confirming ? <span className={styles.tileStart}>{t.paymentPending}</span> : null}
+        {mergeLabel ? <span className={styles.tileStart}><span aria-hidden="true">🔗</span> {mergeLabel}</span> : null}
         {start ? <time className={styles.tileStart} dateTime={start} title={t.orderStartedHint}><span aria-hidden="true">🕒</span> {clock(start)}</time> : null}
         {paidAt ? <time className={cx(styles.tileStart, styles.tilePaidTime)} dateTime={paidAt} title={t.receiptBasis}><span aria-hidden="true">🕒</span> {clock(paidAt)}</time> : null}
       </button>; })}</div>
@@ -368,12 +377,15 @@ export default function TablesPage() {
       {detail && !detailFresh && !detailWaiting ? <p role="status" className={detailFailed || presentation.paymentChanged ? styles.muted : styles.srOnly}>{detailFailed ? t.detailRefreshFailed : t.detailRefreshing}</p> : null}
       {cleaningFailure?.kind === "saved_refresh" ? <p role="status" className={styles.muted}>{t.cleanSavedRefresh}</p> : null}
       {tile?.paymentObservation?.expired && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>{t.automaticallyRetired}</p> : null}
+      {tile?.merge && snapshotStatus === "ok" ? <p className={styles.paymentSafety}>🔗 {mergeText(tile, snapshotStatus)} · {t.mergedTables}: {[tile.name, ...tile.merge.tables].join(", ")} · {t.mergeSafety}</p> : null}
       {detailWaiting ? <p role="status" className={cx(styles.emptyOrder, styles.idleEmpty)}><span aria-hidden="true">🕒</span><span>{waitingMessage}</span></p>
         : tile?.state === "idle" && snapshotStatus === "ok" ? <p className={cx(styles.emptyOrder, styles.idleEmpty)} title={t.noOrders}>
         <span aria-hidden="true">🍽️</span><span>{t.noCurrentOrders}</span></p>
         : currentOrders.length ? <section className={styles.detailSection} aria-label={t.currentOrders}>{currentOrders.map((order, index) => orderView(order, index, true))}</section>
         : !tile || tile.state === "unknown" || snapshotStatus !== "ok" ? <>{!compactWarning ? <p className={styles.emptyOrder}>{detailConfirming ? t.paymentPending : t.orderCheck}</p> : null}
           {retainedOrders.length ? <details className={styles.detailSection}><summary>{retainedOrders.some(order => order.quarantined) ? t.quarantinedOrders : t.retainedOrders}</summary>{retainedOrders.map((order, index) => orderView(order, index))}</details> : null}</> : null}
+      {mergedSourceOrders.length && snapshotStatus === "ok" ? <details className={styles.detailSection}><summary>{t.mergedSourceOrders}</summary>
+        {mergedSourceOrders.map((order, index) => orderView(order, index))}</details> : null}
       {/* Superseded quarantine records: separate and collapsed, never current, paid or summed. */}
       {quarantinedOrders.length && !detailWaiting && snapshotStatus === "ok" && (currentOrders.length || tile?.state === "paid")
         ? <details className={styles.detailSection}><summary>{t.quarantinedHistory}</summary>{quarantinedOrders.map((order, index) => orderView(order, index))}</details> : null}
