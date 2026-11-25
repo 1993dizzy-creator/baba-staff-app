@@ -16,12 +16,13 @@
 -- 2. Merge-link history (merge_target_order_id = closure_merged_into_order_id) no longer blocks
 --    as "merge membership" and a member closed by that link is not an unconverted order. Proof-
 --    only merges (#8885 shape, no link) still block exactly as before.
--- 3. For such a receipt, unresolved receipts and unconverted orders are also searched on every
---    TableName part (a new composite "BAR9, 2" order or a new order on 2 blocks), and the order
---    epoch adds the composite orders, the target and the members, so any change invalidates
---    both tables' manual/automatic keys. Each table keeps its own key (p_table is in the hash).
--- Tables without such a receipt keep byte-identical epochs and keys (existing cleaning events and
--- payment observations stay valid).
+-- 3. For EVERY table, whatever the latest receipt is (ordinary or merged), unresolved receipts and
+--    unconverted orders are also searched on every TableName part: a new in-progress "BAR9, 2"
+--    order blocks BAR9 and 2 even after an ordinary BAR9 payment. Composite orders also join the
+--    order epoch (so a key never comes back unchanged after such an order), and for a linked
+--    merged receipt the epoch adds its target and members. Each table keeps its own key.
+-- Tables with no composite-name order or linked receipt keep byte-identical epochs and keys
+-- (existing cleaning events and payment observations stay valid).
 begin;
 set local lock_timeout = '5s';
 do $$ begin
@@ -71,7 +72,7 @@ begin
  if exists(select 1 from public.pos_sales_receipts x where x.source='cukcuk' and x.branch_id=c.branch_id
   and x.business_date between p_day and p_day+1 and x.is_canceled is not true and (x.payment_status is null or x.payment_status not in(4,5))
   and (lower(btrim(x.raw_json->>'TableName'))=lower(c.table_name) or lower(btrim(x.raw_json->>'OrderId'))=lower(btrim(r.raw_json->>'OrderId'))
-   or (linked and exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(x.raw_json->>'TableName')) t where lower(t)=lower(c.table_name))))
+   or exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(x.raw_json->>'TableName')) t where lower(t)=lower(c.table_name)))
   and (x.payment_status is distinct from 3 or x.is_canceled is distinct from false or nullif(btrim(x.raw_json->>'OrderId'),'') is null
     or (select count(*) from public.pos_sales_receipts y where y.source='cukcuk' and y.branch_id=c.branch_id
        and y.business_date between p_day and p_day+1 and lower(btrim(y.raw_json->>'OrderId'))=lower(btrim(x.raw_json->>'OrderId'))
@@ -81,7 +82,7 @@ begin
  -- A quarantined order is superseded only by the receipt's own clearly newer order.
  if exists(select 1 from pos_open_orders_private.orders o where o.scope=p_scope and o.business_date=p_day
    and (lower(btrim(o.table_name))=lower(c.table_name)
-    or (linked and exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(o.table_name)) t where lower(t)=lower(c.table_name))))
+    or exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(o.table_name)) t where lower(t)=lower(c.table_name)))
    and o.status is distinct from 5
    and not exists(select 1 from public.pos_sales_receipts x where x.source='cukcuk' and x.branch_id=c.branch_id
     and x.business_date between p_day and p_day+1 and lower(btrim(x.raw_json->>'OrderId'))=lower(o.order_id)
@@ -106,8 +107,8 @@ begin
     order by q.order_id) from pos_open_orders_private.orders q where q.scope=p_scope and q.business_date=p_day
     and lower(btrim(q.table_name))=lower(c.table_name) and q.quarantined_at is not null),'[]'::jsonb) into epoch
  from pos_open_orders_private.orders o where o.scope=p_scope and o.business_date=p_day and (lower(btrim(o.table_name))=lower(c.table_name)
-  or (linked and (lower(o.order_id)=lower(btrim(r.raw_json->>'OrderId')) or o.closure_receipt_id=r.id
-   or exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(o.table_name)) t where lower(t)=lower(c.table_name)))));
+  or exists(select 1 from unnest(pos_open_orders_private.merge_table_tokens_v1(o.table_name)) t where lower(t)=lower(c.table_name))
+  or (linked and (lower(o.order_id)=lower(btrim(r.raw_json->>'OrderId')) or o.closure_receipt_id=r.id)));
  return jsonb_build_object('receiptId',r.id,'orderEpoch',epoch,'evidenceKey',md5(jsonb_build_array(p_table,p_day,
    table_operations_private.receipt_version_v1(r.id),epoch,(select generation from table_operations_private.config where singleton),
    (select coalesce(max(i.id),0) from table_operations_private.invalidations i join table_operations_private.cleaning_events e on e.id=i.event_id

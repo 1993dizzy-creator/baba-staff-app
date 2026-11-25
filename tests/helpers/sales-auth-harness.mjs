@@ -4,7 +4,9 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url);
 export function loadTs(path,mocks={}) {
  const out=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
- const exports={};new Function('require','exports',out)(name=>Object.hasOwn(mocks,name)?mocks[name]:name.startsWith('node:')?require(name):{},exports);return exports;
+ const exports={};new Function('require','exports',out)(name=>Object.hasOwn(mocks,name)?mocks[name]:name.startsWith('node:')?require(name)
+  // Pure read diagnostics (fixed log line, time budget): real module unless a test mocks it.
+  :/(^|\/)table-read-diagnostics$/.test(name)?loadTs('lib/sales/table-read-diagnostics.ts'):{},exports);return exports;
 }
 export function authHarness() {
  const tokens=loadTs('lib/auth/session-token.ts');

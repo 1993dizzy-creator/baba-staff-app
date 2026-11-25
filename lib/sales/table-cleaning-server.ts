@@ -9,6 +9,7 @@ import { validOrders } from "./table-overview-server";
 import { detailNumber, mergeSettled, type DetailReceiptRow, type TableDetail } from "./table-detail";
 import { projectReceiptOrderUsage } from "./table-paid-usage";
 import { autoNormalActivation, applyPaymentObservations, type PaymentObservation } from "./table-auto-normal";
+import { logTablesReadFailure, tablesReadBudget, tablesReadTimedOut, type TablesReadBudget } from "./table-read-diagnostics";
 
 export const cleaningFeatureEnabled = () => process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true"
   && process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
@@ -18,23 +19,38 @@ type Context = { enabled: true; snapshot: { sync: OpenOrderSyncState | null; ord
   receipts: (DetailReceiptRow & { version: string })[]; keys: Record<string, Key>; cleanedTableIds: string[];
   manualEnabled?: boolean; serverNow?: string; observations?: Record<string, PaymentObservation>; reviewTableIds?: string[] };
 
-/** Atomic DB read + existing complete v3 policy; DB separately validates the write. */
-export async function readCleaningState(now = new Date(), timeoutMs = 15_000) {
+/** A failed context read: which stage, and whether it was a timeout (never retried by the same path). */
+export const cleaningReadError = (stage: "auto_context" | "cleaning_context", code: string) =>
+  Object.assign(Error("CLEANING_UNAVAILABLE"), { stage, code, timedOut: tablesReadTimedOut(code) });
+
+/** Atomic DB read + existing complete v3 policy; DB separately validates the write.
+ * timeoutMs is the whole budget of this read (both context RPCs together), not per call. */
+export async function readCleaningState(now = new Date(), timeoutMs = 15_000, budget: TablesReadBudget = tablesReadBudget(timeoutMs)) {
   const activation = autoNormalActivation();
   if (!cleaningFeatureEnabled() && !activation) return null;
   const time = await loadBusinessTimeAdapter(now), day = time.databaseBusinessDate, scope = openOrdersScope();
+  let stage: "auto_context" | "cleaning_context" = activation ? "auto_context" : "cleaning_context";
+  let started = Date.now();
   let result = await supabaseServer.rpc(activation ? "tables_auto_context_v1" : "tables_cleaning_context_v1",
-    { p_scope: scope, p_day: day, ...(activation ? { p_activation: activation } : {}) }).abortSignal(AbortSignal.timeout(timeoutMs));
+    { p_scope: scope, p_day: day, ...(activation ? { p_activation: activation } : {}) }).abortSignal(budget.signal());
   // Failed/missing/disabled automatic capability must never disable working manual cleaning.
+  // A timeout is not retried with the manual context: it reads the same snapshot and would fail late.
   if (activation && (result.error || result.data?.enabled === false) && cleaningFeatureEnabled()) {
-    result = await supabaseServer.rpc("tables_cleaning_context_v1", { p_scope: scope, p_day: day }).abortSignal(AbortSignal.timeout(timeoutMs));
+    if (result.error) {
+      const code = logTablesReadFailure("auto_context", result.error, started);
+      if (tablesReadTimedOut(code) || !budget.allows()) throw cleaningReadError("auto_context", code);
+    }
+    stage = "cleaning_context"; started = Date.now();
+    result = await supabaseServer.rpc("tables_cleaning_context_v1", { p_scope: scope, p_day: day }).abortSignal(budget.signal());
   }
-  if (result.error) throw Error("CLEANING_UNAVAILABLE");
+  if (result.error) throw cleaningReadError(stage, logTablesReadFailure(stage, result.error, started));
   if (result.data?.enabled === false) return null;
   const context = result.data as Context;
-  if (!context || !context.enabled || !Array.isArray(context.receipts) || !Array.isArray(context.cleanedTableIds) || !context.keys || !context.snapshot) throw Error("CLEANING_UNAVAILABLE");
+  if (!context || !context.enabled || !Array.isArray(context.receipts) || !Array.isArray(context.cleanedTableIds) || !context.keys || !context.snapshot) {
+    throw cleaningReadError(stage, logTablesReadFailure(stage, Error("CONTEXT_INVALID"), started));
+  }
   const orders = Array.isArray(context.snapshot.orders) ? context.snapshot.orders.map(o => ({ ...o, raw: {}, totalAmount: detailNumber(o.totalAmount) ?? NaN })) : null;
-  if (!validOrders(orders)) throw Error("CLEANING_UNAVAILABLE");
+  if (!validOrders(orders)) throw cleaningReadError(stage, logTablesReadFailure(stage, Error("SNAPSHOT_INVALID"), started));
   const sync = context.snapshot.sync;
   if (sync !== null && (!sync || sync.businessDate !== day || ![sync.lastSuccessAt, sync.lastAttemptAt].every(v => v === null || typeof v === "string" && Number.isFinite(Date.parse(v)))
     || !(sync.lastErrorCode === null || typeof sync.lastErrorCode === "string"))) throw Error("CLEANING_UNAVAILABLE");

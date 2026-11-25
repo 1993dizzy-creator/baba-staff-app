@@ -7,6 +7,7 @@ import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyn
 import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
 import { buildTableOverview, type TableReceipt } from "./table-overview";
+import { logTablesReadFailure, tablesReadBudget } from "./table-read-diagnostics";
 
 export function validOrders(orders: unknown): orders is CollectedOrder[] {
   if (!Array.isArray(orders)) return false;
@@ -22,14 +23,23 @@ export function validOrders(orders: unknown): orders is CollectedOrder[] {
       && finite(line.quantity) && finite(line.price) && finite(line.amount))));
 }
 
-/** Only central read RPC + receipt evidence. No Cron invocation or order transport. */
+/** Only central read RPC + receipt evidence. No Cron invocation or order transport.
+ * One request budget (12 s, inside the board's 20 s limit) covers every stage; a timed-out stage
+ * is not repeated by a fallback read. A failed read returns the existing read_failed overview,
+ * which the board shows as a delayed refresh of its last good view (never as current facts). */
 export async function readTableOverview(now = new Date()) {
+  const budget = tablesReadBudget();
+  let skipRead = false;
   if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true" || process.env.BABA_TABLE_AUTO_NORMAL_ENABLED?.trim() === "true") {
     try {
       const { readCleaningState } = await import("./table-cleaning-server");
-      const state = await readCleaningState(now);
+      const state = await readCleaningState(now, budget.remaining(), budget);
       if (state) return state.overview;
-    } catch { /* Conservative fallback to the original paid/unknown snapshot, never fake idle. */ }
+    } catch (error) {
+      // Conservative fallback to the original paid/unknown snapshot, never fake idle. Not after a
+      // timeout (the snapshot read inside the context would time out again) or without budget.
+      skipRead = (error as { timedOut?: unknown })?.timedOut === true || !budget.allows();
+    }
   }
   const businessTime = await loadBusinessTimeAdapter(now);
   const businessDate = businessTime.databaseBusinessDate;
@@ -40,12 +50,15 @@ export async function readTableOverview(now = new Date()) {
   let receipts: TableReceipt[] = [];
   let receiptVersions: Record<number, string> = {};
   let readFailed = false;
-  if (enabled) {
+  let stage: "snapshot" | "receipts" = "snapshot", started = Date.now();
+  if (enabled && skipRead) readFailed = true;
+  else if (enabled) {
     try {
       const result = await supabaseServer.rpc(OPEN_ORDERS_RPC.read, {
         p_scope: openOrdersScope(), p_business_date: businessDate,
-      }).abortSignal(AbortSignal.timeout(15_000));
-      if (result.error || !result.data) throw Error("SNAPSHOT_UNAVAILABLE");
+      }).abortSignal(budget.signal());
+      if (result.error) throw result.error;
+      if (!result.data) throw Error("SNAPSHOT_UNAVAILABLE");
       const payload = result.data as { sync: OpenOrderSyncState | null; orders: unknown };
       const timestampOrNull = (value: unknown) => value === null || typeof value === "string" && Number.isFinite(Date.parse(value));
       if (payload.sync !== null && (!payload.sync || typeof payload.sync !== "object"
@@ -60,17 +73,20 @@ export async function readTableOverview(now = new Date()) {
       if (!validOrders(rows)) throw Error("SNAPSHOT_INVALID");
       // Keep already-read facts as unverified history if receipt reads fail below.
       orders = rows;
+      stage = "receipts"; started = Date.now();
       type Row = { id: number; payment_status: number | null; is_canceled: boolean | null; order_id: string | null; business_date: string; table_name: string | null; ref_date: string | null;
         final_amount: number | string | null; ref_no: string | null; status_changed_at: string | null };
       const evidence = await fetchAllExactPages<Row>((from, to) => supabaseServer.from("pos_sales_receipts")
         .select("id,payment_status,is_canceled,order_id:raw_json->>OrderId,business_date,table_name:raw_json->>TableName,ref_date,final_amount,ref_no,status_changed_at", { count: "exact" })
         .eq("source", "cukcuk").in("business_date", [businessDate, addStoreDays(businessDate, 1)])
-        .order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to));
-      if (evidence.error || !evidence.data) throw Error("RECEIPTS_UNAVAILABLE");
+        .order("id", { ascending: true }).abortSignal(budget.signal()).range(from, to));
+      if (evidence.error) throw evidence.error;
+      if (!evidence.data) throw Error("RECEIPTS_UNAVAILABLE");
       receipts = evidence.data.map(row => ({ orderId: row.order_id ?? "", receiptId: row.id, paymentStatus: row.payment_status,
         isCanceled: row.is_canceled, businessDate: row.business_date, tableName: row.table_name, paidAt: row.ref_date }));
       receiptVersions = Object.fromEntries(evidence.data.map(row => [row.id, JSON.stringify([row.final_amount, row.ref_no, row.status_changed_at])]));
-    } catch {
+    } catch (error) {
+      logTablesReadFailure(stage, error, started);
       // Retain the last successful timestamp for the operator, but never certify old rows as current.
       readFailed = true;
       sync = sync ? { ...sync, lastErrorCode: "read_failed" } : null;

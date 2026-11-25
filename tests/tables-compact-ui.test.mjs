@@ -16,12 +16,16 @@ import { overview, order } from './helpers/table-overview-fixture.mjs';
 import {beforeOpeningScene} from './helpers/tables-before-opening-fixture.mjs';
 import {createFallbackBusinessTimeSnapshot} from '../lib/store-settings/business-time-adapter-core.ts';
 
-function render(data, lang, { failed=false, loading=false, selected=null, detail=null, detailFailed=false, failure }={}) {
+function render(data, lang, { failed=false, loading=false, selected=null, detail=null, detailFailed=false, failure, held=null }={}) {
   // These static presentation scenarios start from a coherent list/detail tile pair.
   // Cross-response mismatches and races are tested in tables-detail-refresh/production-fixes.
   if(detail)data={...data,tables:data.tables.map(tile=>tile.id===detail.table.id?detail.table:tile)};
   let hook=0;
-  const states=[data,loading,failed,selected,detail||detailFailed?{key:refreshDisplay.tableDetailEvidenceKey(data,selected.id),detail,failed:detailFailed,failure}:null], mod={exports:{}};
+  // Page state order: last good overview (+ arrival time), loading, refresh failure, hold clock, selection, detail.
+  // failed=true: a failure long past the 10-minute validity (every table unknown, as before the hold).
+  // held={elapsedMs}: a refresh failure that long after the last good overview arrived.
+  const refreshFailure=held?{at:held.elapsedMs,incoming:held.incoming??null}:failed?{at:Number.MAX_SAFE_INTEGER,incoming:null}:null;
+  const states=[data?{overview:data,receivedAt:0}:null,loading,refreshFailure,0,selected,detail||detailFailed?{key:refreshDisplay.tableDetailEvidenceKey(data,selected.id),detail,failed:detailFailed,failure}:null], mod={exports:{}};
   const deps={
     react:{...React,useState:()=>[states[hook++],()=>{}],useEffect(){},useCallback:fn=>fn,useRef:()=>({current:null})},
     'react/jsx-runtime':jsx,'next/navigation':{useRouter:()=>({replace(){}})},
@@ -391,4 +395,31 @@ for(const lang of ['ko','vi'])test(`${lang}: reception and first-collection grac
  }
  const {view,table,detail}=beforeOpeningScene('17:07');const delayed=render(view,lang,{selected:{kind:'table',id:table.id},detail});
  assert.ok(delayed.includes(t.collectionErrors.delayed));assert.ok(delayed.includes('class="compactWarning"'));
+});
+
+for(const lang of ['ko','vi'])test(`${lang}: a failed refresh keeps the last good board with its last good time; expired or first failures stay unknown`,()=>{
+ const t=tablesText[lang],data=overview({catalog:babaTableCatalog(),orders:[order('live','BAR1')]});
+ assert.equal(data.snapshotStatus,'ok');
+ const live=html=>html.match(/class="tile occupied/g)?.length??0;
+ const normal=render(data,lang);
+ const held=render(data,lang,{held:{elapsedMs:60_000}});
+ assert.equal(live(held),live(normal));assert.ok(live(held)>0);
+ assert.ok(held.includes(t.refreshDelayed.split('{time}')[0]));assert.ok(!held.includes(t.failed));
+ // A server HTTP 200 read failure for the same day is held the same way.
+ const failedRead=overview({catalog:babaTableCatalog(),readFailed:true});
+ assert.equal(live(render(data,lang,{held:{elapsedMs:60_000,incoming:failedRead}})),live(normal));
+ // Past the 10-minute validity: every table unknown, no delayed notice.
+ const expired=render(data,lang,{held:{elapsedMs:10*60_000}});
+ assert.equal(live(expired),0);assert.ok(expired.includes(t.failed));assert.ok(!expired.includes(t.refreshDelayed.split('{time}')[0]));
+
+});
+
+for(const lang of ['ko','vi'])test(`${lang}: no cleaning action while a refresh is failing, even on a held paid tile`,()=>{
+ const {view,table,detail}=beforeOpeningScene(),selected={kind:'table',id:table.id},t=tablesText[lang];
+ const v={...view,snapshotStatus:'ok',snapshotAt:view.serverNow};
+ const d={...detail,snapshotStatus:'ok',snapshotAt:view.serverNow,table:{...table,state:'paid',lastPaidAt:view.serverNow},
+  cleaning:{enabled:true,reason:'ready',token:{businessDate:view.businessDate,receiptId:1,evidenceKey:'a'.repeat(32)}}};
+ const button=html=>html.match(new RegExp(`<button[^>]*aria-label="${t.cleanAction}"[^>]*>`))?.[0]??'';
+ const held=button(render(v,lang,{selected,detail:d,held:{elapsedMs:60_000}}));
+ assert.ok(held.includes('disabled'));assert.ok(held.includes(`title="${t.cleaningDelayed}"`));
 });

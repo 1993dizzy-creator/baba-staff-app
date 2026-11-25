@@ -60,3 +60,30 @@ export function unavailableTableOverview(overview: TableOverview): TableOverview
     summary: { ...overview.summary, occupied: null, occupiedConfirmed: null, occupiedPartial: false, paid: null, paidCumulative: null,
       unknown: overview.tables.length, paidCumulativeEvidence: { ...overview.summary.paidCumulativeEvidence, count: null, status: "unavailable", reason: "snapshot_unhealthy" } } };
 }
+
+/** Same validity as a central collection (10 minutes): older facts never look current. */
+export const OVERVIEW_HOLD_MAX_SNAPSHOT_AGE_MS = 10 * 60 * 1000;
+/** The last overview the server built from a successful read, and the browser time it arrived. */
+export type OverviewHold = { overview: TableOverview; receivedAt: number };
+/** The server answered, but its own snapshot/receipt read failed (HTTP 200, every table unknown). */
+export const overviewReadFailed = (overview: TableOverview | null | undefined) => overview?.collection?.health === "read_failed";
+
+/**
+ * Board after a refresh failure (transport error, non-OK response, or a server "read_failed"
+ * overview). The last good overview is kept exactly as it was (its own unknown tiles included)
+ * only while its central snapshot is still inside the 10-minute collection validity, measured as
+ * the snapshot age the server reported plus browser time elapsed since it arrived, and only for
+ * the same business date. Otherwise the existing unavailable projection (every table unknown).
+ * `delayed` marks a held board: it is display-only and never authorizes cleaning.
+ */
+export function heldTableOverview(last: OverviewHold | null, now: number, incoming?: TableOverview | null) {
+  if (!last) return { overview: incoming ?? null, delayed: null };
+  if (incoming && incoming.businessDate !== last.overview.businessDate) return { overview: incoming, delayed: null };
+  const snapshot = Date.parse(last.overview.snapshotAt ?? ""), served = Date.parse(last.overview.serverNow);
+  const elapsed = now - last.receivedAt, age = served - snapshot + elapsed;
+  const valid = last.overview.snapshotStatus === "ok" && !overviewReadFailed(last.overview) && Number.isFinite(age)
+    && elapsed >= 0 && served >= snapshot && age < OVERVIEW_HOLD_MAX_SNAPSHOT_AGE_MS;
+  if (!valid) return { overview: unavailableTableOverview(last.overview), delayed: null };
+  return { overview: last.overview,
+    delayed: { lastSuccessAt: last.overview.serverNow, expiresInMs: OVERVIEW_HOLD_MAX_SNAPSHOT_AGE_MS - age } };
+}

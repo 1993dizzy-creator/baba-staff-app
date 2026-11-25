@@ -12,7 +12,7 @@ import * as core from '../lib/pos/cukcuk/open-orders-core.ts';
 import { buildTableOverview } from '../lib/sales/table-overview.ts';
 import { babaTableCatalog, BABA_TABLES } from '../lib/sales/baba-table-catalog.ts';
 import { applyPaymentObservations } from '../lib/sales/table-auto-normal.ts';
-import { installCleaningFixture, context, confirm, scope, tableId as BAR4 } from './helpers/tables-cleaning-fixture.mjs';
+import { installCleaningFixture, context, confirm, addOrder, scope, tableId as BAR4 } from './helpers/tables-cleaning-fixture.mjs';
 import { AUTO_NORMAL, enableAuto, autoContext, observe } from './helpers/tables-auto-normal-fixture.mjs';
 
 const sql = name => readFileSync(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8');
@@ -246,4 +246,22 @@ test('migration scope: only evidence_v1 replaced plus one private helper; no POS
   assert.deepEqual([...code.matchAll(/create (?:or replace )?function (\S+)\(/g)].map(m => m[1]),
     ['table_operations_private.merge_link_receipt_v1', 'table_operations_private.evidence_v1']);
   assert.match(code, /revoke all on function table_operations_private\.merge_link_receipt_v1\(text,date,bigint,text\) from public,anon,authenticated,service_role/);
+});
+
+test('an earlier ordinary payment never keeps a key once a new in-progress order spans the table ("BAR9, 2"): DB and board', async () => {
+  const { db, day } = await setup();
+  try {
+    await addReceipt(db, day, { id: 300, orderId: 'own-bar9', tableName: 'BAR9', amount: 99000, paidAgo: 5 });
+    let ctx = await context(db, day);
+    const before = ctx.keys[BAR9];
+    assert.equal(before.receiptId, 300); // ordinary single-table key
+    await addOrder(db, day, { name: 'BAR9, 2', id: 'combo-new' });
+    ctx = await context(db, day);
+    assert.deepEqual([ctx.keys[BAR9], ctx.keys[T2]], [undefined, undefined]); // DB blocks regardless of the earlier receipt type
+    const overview = board(ctx, day);
+    for (const id of [BAR9, T2]) assert.notEqual(tileOf(overview, id).state, 'paid');
+    const activation = await enableAuto(db);
+    const auto = await autoContext(db, day, activation);
+    assert.equal(auto.keys[BAR9], undefined);
+  } finally { await db.close(); }
 });
