@@ -18,14 +18,14 @@ export function applyPaymentObservations(overview: TableOverview, observations: 
     if (table.state !== "paid") continue;
     const key = eligible[table.id], observation = observations[table.id];
     // Independent DB evidence is stricter than the display projection (e.g. merge conflicts).
-    // A verified merged payment stays paid for display only: merge membership has no cleaning
-    // key, so it never gets a timer, an automatic return to normal or a cleaning action.
-    if (!key) { if (!table.merge?.paid) table.state = "unknown"; continue; }
+    // A merged payment linked before payment has its own per-table DB key (20261125134901);
+    // without a key every paid table, merged or not, is unknown.
+    if (!key) { table.state = "unknown"; continue; }
     if (!observation || observation.receiptId !== key.receiptId) continue;
     const start = Date.parse(observation.firstVerifiedAt), end = Date.parse(observation.expiresAt), now = Date.parse(overview.serverNow);
     if (!Number.isFinite(start) || end - start !== 30 * 60_000 || start > now) continue;
     table.paymentObservation = observation;
-    if (observation.expired && now >= end) table.state = "idle";
+    if (observation.expired && now >= end) { table.state = "idle"; delete table.merge; }
   }
   if (overview.summary.paid !== null) overview.summary.paid = overview.tables.filter(t => t.state === "paid").length;
   overview.summary.unknown = overview.tables.filter(t => t.state === "unknown").length;

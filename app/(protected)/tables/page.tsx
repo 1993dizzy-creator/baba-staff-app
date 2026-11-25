@@ -158,7 +158,7 @@ export default function TablesPage() {
   // Still unknown (no cleaning/paid/idle); only the label says which payment it waits for.
   const detailConfirming = !detailWaiting && snapshotStatus === "ok" && tile?.state === "unknown" && !!tile.paymentPending;
   // Merge relation label only: the tile keeps its own state color (occupied / paid / unknown).
-  const mergeText = (item: TableTile, status: string | undefined) => !item.merge || status !== "ok" ? null
+  const mergeText = (item: TableTile, status: string | undefined) => !item.merge || status !== "ok" || item.merge.paid && item.state !== "paid" ? null
     : item.merge.paid ? t.mergedPaid
     : item.merge.role === "member" ? t.mergedInto.replace("{table}", item.merge.targetTable ?? item.merge.tables.join(", "))
     : t.mergedWith.replace("{tables}", item.merge.tables.join(", "));

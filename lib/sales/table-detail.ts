@@ -23,7 +23,8 @@ export type TableDetail = {
   historyFrom: string; current: DetailReceipt[]; previous: DetailReceipt[]; latest: DetailReceipt | null;
   usage: DailyTableUsage;
   paidUsage?: PaidOrderUsage | null;
-  merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean }[];
+  /** linked: every member was linked to the target before payment (contract 6), i.e. an ordinary payment of these tables. */
+  merges: { receiptId: number; tables: string[]; receiptTable: string | null; verified: boolean; linked?: boolean }[];
   cleaning: { enabled: boolean; reason: "active_orders" | "snapshot_unhealthy" | "merge_review" | "no_payment" | "storage_not_approved" | "state_changed" | "ready";
     token?: { businessDate: string; receiptId: number; evidenceKey: string } };
   // Only persisted server verification can provide a deadline. Receipt timestamps cannot.
@@ -34,6 +35,8 @@ const key = (value: string | null | undefined) => value?.normalize("NFC").trim()
 const idKey = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
 export const detailNumber = (value: unknown): number | null =>
   (typeof value === "number" || typeof value === "string" && value.trim() !== "") && Number.isFinite(Number(value)) ? Number(value) : null;
+/** A verified merge linked before payment needs no table-relation review (cleaning like any payment). */
+export const mergeSettled = (merge: TableDetail["merges"][number]) => merge.verified && merge.linked === true;
 const validTime = (value: string | null, now: Date) => value && Number.isFinite(Date.parse(value)) && Date.parse(value) <= now.getTime() ? value : null;
 
 /** Uses central v3 merge closures, never receipt TableName to infer physical movement. */
@@ -82,7 +85,8 @@ export function projectTableDetail(input: {
       && singlePaidOrderReceipt(receipt.order_id ?? "", overview.businessDate, links)?.receiptId === receipt.id;
     if (names.some(n => key(n) === key(table.name))) {
       related.set(receipt.id, verified ? "verified_merge" : "merge_review");
-      merges.push({ receiptId: receipt.id, tables: names, receiptTable: receipt.table_name, verified });
+      const linked = members.every(o => !!idKey(o.mergeTargetOrderId) && idKey(o.mergeTargetOrderId) === idKey(o.closureMergedIntoOrderId));
+      merges.push({ receiptId: receipt.id, tables: names, receiptTable: receipt.table_name, verified, ...(linked ? { linked } : {}) });
     }
   }
   const relevant = receipts.filter(r => related.has(r.id) || !mergedReceiptIds.has(r.id) && exactName(r.table_name) === table.name);
@@ -106,7 +110,7 @@ export function projectTableDetail(input: {
   for (const receipt of current) receipt.orderUsage = projectReceiptOrderUsage({ ...input, receipts, receipt });
   const reason = table.state === "occupied" || table.orders.some(o => o.verifiedOpen) ? "active_orders"
     : overview.snapshotStatus !== "ok" || table.state === "unknown" ? "snapshot_unhealthy"
-    : merges.length ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
+    : merges.some(m => !mergeSettled(m)) ? "merge_review" : table.state !== "paid" || !latest ? "no_payment" : "storage_not_approved";
   return { table, businessDate: overview.businessDate, snapshotAt: overview.snapshotAt, snapshotStatus: overview.snapshotStatus,
     collection: overview.collection,
     usage: projectDailyTableUsage({ ...input, receipts, merges }),

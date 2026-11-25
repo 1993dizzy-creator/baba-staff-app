@@ -6,7 +6,7 @@ import type { CollectedOrder, OpenOrderSyncState } from "@/lib/pos/cukcuk/open-o
 import { babaTableCatalog } from "./baba-table-catalog";
 import { buildTableOverview } from "./table-overview";
 import { validOrders } from "./table-overview-server";
-import { detailNumber, type DetailReceiptRow, type TableDetail } from "./table-detail";
+import { detailNumber, mergeSettled, type DetailReceiptRow, type TableDetail } from "./table-detail";
 import { projectReceiptOrderUsage } from "./table-paid-usage";
 import { autoNormalActivation, applyPaymentObservations, type PaymentObservation } from "./table-auto-normal";
 
@@ -47,7 +47,7 @@ export async function readCleaningState(now = new Date(), timeoutMs = 15_000) {
     receiptVersions: Object.fromEntries(context.receipts.map(r => [r.id, JSON.stringify([r.final_amount, r.ref_no, r.status_changed_at, r.version])])) });
   const overview = structuredClone(base);
   for (const table of overview.tables) if (cleaningFeatureEnabled() && context.manualEnabled !== false
-    && table.state === "paid" && context.cleanedTableIds.includes(table.id) && context.keys[table.id]) table.state = "idle";
+    && table.state === "paid" && context.cleanedTableIds.includes(table.id) && context.keys[table.id]) { table.state = "idle"; delete table.merge; }
   if (activation && context.observations) applyPaymentObservations(overview, context.observations, context.keys, context.reviewTableIds);
   if (overview.summary.paid !== null) overview.summary.paid = overview.tables.filter(t => t.state === "paid").length;
   return { scope, day, context, base, overview };
@@ -58,7 +58,7 @@ export async function decorateCleaningDetail(detail: TableDetail) {
   if (!state || state.day !== detail.businessDate) return detail;
   const table = state.overview.tables.find(t => t.id === detail.table.id)!;
   const key = state.context.keys[table.id];
-  const enabled = cleaningFeatureEnabled() && state.context.manualEnabled !== false && table.state === "paid" && !!key && key.receiptId === detail.latest?.id && detail.merges.length === 0;
+  const enabled = cleaningFeatureEnabled() && state.context.manualEnabled !== false && table.state === "paid" && !!key && key.receiptId === detail.latest?.id && detail.merges.every(mergeSettled);
   // Rebind display-only timing to the already-read atomic context. A newer
   // snapshot must not silently drop otherwise valid order/receipt duration.
   const current = detail.current.map(receipt => ({ ...receipt, orderUsage: projectReceiptOrderUsage({
@@ -75,7 +75,7 @@ export async function decorateCleaningDetail(detail: TableDetail) {
     timer: table.paymentObservation ? { enabled: true as const, firstVerifiedAt: table.paymentObservation.firstVerifiedAt,
       expiresAt: table.paymentObservation.expiresAt, expired: table.paymentObservation.expired } : detail.timer,
     cleaning: { enabled, reason: table.state === "occupied" ? "active_orders" as const : table.state === "unknown" ? "snapshot_unhealthy" as const
-      : detail.merges.length ? "merge_review" as const : !enabled ? "state_changed" as const : "ready" as const,
+      : !detail.merges.every(mergeSettled) ? "merge_review" as const : !enabled ? "state_changed" as const : "ready" as const,
       ...(enabled ? { token: { businessDate: state.day, ...key } } : {}) } };
 }
 

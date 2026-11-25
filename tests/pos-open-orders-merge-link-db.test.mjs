@@ -73,6 +73,7 @@ assert.equal(receipt9081.reduce((s, d) => s + d.Amount, 0), 2139000);
 async function database(migrations = UPGRADED) {
   const db = new PGlite();
   await db.exec(PREREQUISITES);
+  await db.exec('alter table public.pos_sales_receipts add column ref_date timestamptz'); // production column (payment time)
   await db.exec(base);
   for (const m of migrations) await db.exec(m);
   return db;
@@ -102,10 +103,11 @@ async function rejectedCommit(db, rows, manifest = {}) {
   catch (error) { await rpc(db, 'pos_open_orders_fail', { ...run, p_code: error.message }); return error; }
   throw new Error('commit unexpectedly accepted');
 }
-async function addReceipt(db, { id = 9081, orderId = 'order-bar9', status = 3, canceled = false, details = receipt9081, tableName = 'BAR9, 2', header = {} } = {}) {
-  await db.query('insert into public.pos_sales_receipts values($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, 'cukcuk', branchId, date, status, canceled,
+async function addReceipt(db, { id = 9081, orderId = 'order-bar9', status = 3, canceled = false, details = receipt9081, tableName = 'BAR9, 2', header = {},
+  paidAt = new Date(Date.now() - 1000).toISOString() } = {}) {
+  await db.query('insert into public.pos_sales_receipts(id,source,branch_id,business_date,payment_status,is_canceled,total_amount,discount_amount,raw_json,ref_date) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, 'cukcuk', branchId, date, status, canceled,
     details.reduce((s, d) => s + d.Amount, 0), 0, JSON.stringify({ OrderId: orderId, TableName: tableName, CustomerName: 'never-read',
-      DiscountAmount: 0, PromotionAmount: 0, PromotionItemsAmount: 0, SAInvoiceDetails: details, ...header })]);
+      DiscountAmount: 0, PromotionAmount: 0, PromotionItemsAmount: 0, SAInvoiceDetails: details, ...header }), paidAt]);
 }
 // Same columns as lib/pos/cukcuk/open-orders-sync-server.ts and lib/sales/table-overview-server.ts.
 async function links(db) {
@@ -116,11 +118,11 @@ async function links(db) {
 async function mergeEvidence(db) {
   return (await db.query(`select id, branch_id, business_date::text bd, payment_status, is_canceled, total_amount, discount_amount,
     raw_json->>'OrderId' oid, raw_json->'DiscountAmount' d1, raw_json->'PromotionAmount' d2, raw_json->'PromotionItemsAmount' d3,
-    raw_json->'SAInvoiceDetails' details, raw_json->>'TableName' tn
+    raw_json->'SAInvoiceDetails' details, raw_json->>'TableName' tn, ref_date
     from public.pos_sales_receipts where source='cukcuk' and business_date in ($1::date, $1::date + 1) order by id`, [date])).rows
     .map(r => ({ orderId: r.oid ?? '', receiptId: Number(r.id), paymentStatus: r.payment_status, isCanceled: r.is_canceled, businessDate: r.bd,
       branchId: r.branch_id, totalAmount: Number(r.total_amount), discountAmount: Number(r.discount_amount), headerDiscounts: [r.d1, r.d2, r.d3],
-      details: r.details, tableName: typeof r.tn === 'string' ? r.tn : null }));
+      details: r.details, tableName: typeof r.tn === 'string' ? r.tn : null, refDate: r.ref_date ? new Date(r.ref_date).toISOString() : null }));
 }
 
 const header = (o, extra = {}) => ({ Id: o.orderId, No: o.orderNo, Date: o.orderDate, Status: o.status, TotalAmount: o.totalAmount, TableName: o.tableName, ...extra });
@@ -544,19 +546,14 @@ test('03:00 boundary: links never carry into the next business date; the linked 
   } finally { await db.close(); }
 });
 
-test('auto-normal display: a verified merged payment stays paid without a cleaning key (no timer, no return to normal)', async () => {
+test('auto-normal display: without a DB key a merged paid table is unknown like any paid table (keys come from 20261125134901)', async () => {
   const { db } = await mergedAt2212();
   try {
     await addReceipt(db);
     await committed(db, transport({ listed: [t5], paid: [bar9Merged] }));
     const overview = await overviewOf(db);
     applyPaymentObservations(overview, {}, {});
-    assert.deepEqual(['2', 'BAR9'].map(name => [tile(overview, name).state, tile(overview, name).paymentObservation]), [['paid', undefined], ['paid', undefined]]);
-    // A plain paid table without a DB key is still made unknown (unchanged).
-    const plain = structuredClone(overview);
-    delete tile(plain, '2').merge;
-    applyPaymentObservations(plain, {}, {});
-    assert.equal(tile(plain, '2').state, 'unknown');
+    assert.deepEqual(['2', 'BAR9'].map(name => tile(overview, name).state), ['unknown', 'unknown']);
   } finally { await db.close(); }
 });
 
@@ -612,4 +609,102 @@ test('item-only merge proofs keep the same evidence hash on contract 6, and a mi
     } finally { await db.close(); }
   }
   assert.equal(hashes[0], hashes[1]);
+});
+
+// ---- BABA-TABLE-MERGE-02 final: group revalidation and payment protection ----
+const s2 = order('order-s2', '2', 1, [ln('s2-l1', null, SEX, 1, 190000)]);
+const s3 = order('order-s3', '3', 1, [ln('s3-l1', null, SEX, 1, 190000)]);
+const bar9Both = merged(bar9, 'BAR9, 2, 3', s2, s3);
+// One of the two merged "Sex on the beach" was later removed from BAR9: each member alone still
+// fits inside BAR9 (1 <= 1), the two together (2) do not.
+const bar9Reduced = (() => { const lines = bar9Both.lines.filter(l => l.detailId !== 'm-s3-l1');
+  return { ...bar9Both, lines, totalAmount: lines.reduce((s, l) => s + l.amount, 0) }; })();
+const stripRow = ({ quarantinedAt, quarantineReason, lastTableName, lastTableObservedAt, providerObservedAt, closureConfirmedAt,
+  mergeLinkedAt, mergeTargetTable, mergeTargetOrderId, ...o }) => o;
+
+test('two members with the same menu: the link group is revalidated as a whole; a reduced target releases both (app + DB)', async () => {
+  const db = await database();
+  try {
+    await commit(db, [bar9, s2, s3, t5]);
+    await committed(db, transport({ listed: [bar9Both, t5] }));
+    let snap = await read(db);
+    assert.deepEqual(['order-s2', 'order-s3'].map(id => byId(snap, id).mergeTargetOrderId), ['order-bar9', 'order-bar9']);
+    // Individually each member is still "inside" the reduced target; together they are not.
+    assert.equal(core.mergeLinkStillValid(s2, bar9Reduced), true);
+    assert.equal(core.mergeLinksStillValid([s2, s3], bar9Reduced), false);
+    assert.equal(core.mergeLinksStillValid([s2, s3], bar9Both), true);
+    // DB: a forged payload carrying both links against the reduced target is rejected atomically.
+    const before = await read(db);
+    const forged = [stripRow(bar9Reduced), stripRow(t5), ...['order-s2', 'order-s3'].map(id => ({ ...stripRow(byId(before, id)), mergeTargetOrderId: 'order-bar9' }))];
+    const error = await rejectedCommit(db, forged);
+    assert.deepEqual([error.message, error.detail], ['open_orders_vanished', 'merge_link_invalid']);
+    assert.deepEqual((await read(db)).orders, before.orders);
+    // App: neither member is picked by guess; both links are released to the quarantine rules.
+    const result = await committed(db, transport({ listed: [bar9Reduced, t5] }));
+    assert.equal(result.quarantined, 2);
+    snap = await read(db);
+    assert.deepEqual(['order-s2', 'order-s3'].map(id => linkOf(byId(snap, id))),
+      [[null, null, null, null, 'vanished_unconfirmed'], [null, null, null, null, 'vanished_unconfirmed']]);
+  } finally { await db.close(); }
+});
+
+test('payment protection: a receipt paid before the merged orders started never closes the link (app + DB)', async () => {
+  const { db } = await mergedAt2212();
+  try {
+    await addReceipt(db, { paidAt: new Date(Date.parse(t2.orderDate) - 60_000).toISOString() });
+    const result = await committed(db, transport({ listed: [t5], paid: [bar9Merged] }));
+    assert.equal(result.quarantined, undefined);
+    assert.deepEqual(linkOf(byId(await read(db), 'order-t2')), ['order-bar9', 'BAR9, 2', null, null, null]); // still payment confirmation
+    const before = await read(db);
+    const forged = [stripRow(t5), stripRow(byId(before, 'order-bar9')),
+      { ...stripRow(byId(before, 'order-t2')), closureReceiptId: 9081, closureMergedIntoOrderId: 'order-bar9' }];
+    const error = await rejectedCommit(db, forged);
+    assert.deepEqual([error.message, error.detail], ['open_orders_vanished', 'merged_link_receipt_invalid']);
+    assert.deepEqual((await read(db)).orders, before.orders);
+  } finally { await db.close(); }
+});
+
+test('receipt canceled after closure: a reissued single paid receipt closes the same link again; no reissue -> payment confirmation, never a payment', async () => {
+  for (const reissue of [true, false]) {
+    const { db } = await mergedAt2212();
+    try {
+      await addReceipt(db);
+      await committed(db, transport({ listed: [t5], paid: [bar9Merged] }));
+      assert.equal(byId(await read(db), 'order-t2').closureReceiptId, 9081);
+      await db.query('update public.pos_sales_receipts set payment_status=4, is_canceled=true where id=9081');
+      if (reissue) await addReceipt(db, { id: 9082 });
+      const result = await committed(db, transport({ listed: [t5], paid: [bar9Merged] }));
+      const row = byId(await read(db), 'order-t2');
+      if (reissue) {
+        assert.equal(result.quarantined, undefined);
+        assert.deepEqual(linkOf(row), ['order-bar9', 'BAR9, 2', 9082, 'order-bar9', null]);
+        assert.equal((await classify(db)).merged, 1);
+      } else {
+        assert.equal(result.quarantined, undefined);
+        assert.deepEqual(linkOf(row), ['order-bar9', 'BAR9, 2', null, null, null]);
+        const classified = await classify(db);
+        assert.deepEqual([classified.merged, classified.mergedPending], [0, 1]); // like a delayed receipt
+        const overview = await overviewOf(db);
+        // Same existing policy as a plain Status 4 order whose receipt was canceled (revoked): never paid,
+        // and table 2 follows its target instead of getting a state of its own.
+        assert.equal(tile(overview, '2').state, tile(overview, 'BAR9').state);
+        for (const name of ['2', 'BAR9']) assert.notEqual(tile(overview, name).state, 'paid', name);
+        assert.equal(tile(overview, '2').merge?.paid, undefined);
+      }
+    } finally { await db.close(); }
+  }
+});
+
+test('DB: a closed link cannot be reopened while its receipt is still the single paid receipt', async () => {
+  const { db } = await mergedAt2212();
+  try {
+    await addReceipt(db);
+    await committed(db, transport({ listed: [t5], paid: [bar9Merged] }));
+    const before = await read(db);
+    const forged = [stripRow(t5), stripRow(byId(before, 'order-bar9')),
+      { ...stripRow(byId(before, 'order-t2')), closureReceiptId: null, closureMergedIntoOrderId: null, mergeTargetOrderId: 'order-bar9' }];
+    const error = await rejectedCommit(db, forged);
+    assert.deepEqual([error.message, error.detail], ['open_orders_vanished', 'merge_member_invalid']);
+    assert.deepEqual((await read(db)).orders, before.orders);
+  } finally { await db.close(); }
 });

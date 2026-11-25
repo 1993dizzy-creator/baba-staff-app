@@ -16,19 +16,23 @@
 --         T started no earlier than any member.
 --     M keeps its last provider facts (status, lines, amount, observed_at) plus
 --     merge_target_order_id / merge_linked_at / merge_target_table.
---   * A stored link is carried only while T is listed and still open with M's table in its
---     TableName and M's menu inside its menu, or T is Status 4 (POS dropped its lines).
+--   * Stored links of one T are carried only together: T listed and still open with every M's
+--     table in its TableName and the members' summed menu inside its menu, or T is Status 4 (POS
+--     dropped its lines).
 --     Otherwise the collector releases it and M follows the unchanged quarantine rules.
---   * Payment: T's single active paid receipt (same/next day, same branch) that names M's table
---     and is at least M's amount closes M as merged into T (existing closure columns; link kept
---     as history). The menu was proven when the link was made, so T's lines are not needed
+--   * Payment: T's single active paid receipt (same/next day, same branch) that names M's table,
+--     is at least the members' amount and was paid (RefDate) after T and every M started and not
+--     in the future closes M as merged into T (existing closure columns; link kept as history).
+--     A canceled receipt is never a payment: a reissued single paid receipt closes the same link
+--     again; otherwise the link returns to payment confirmation (pending) while T stays valid. The menu was proven when the link was made, so T's lines are not needed
 --     (receipt saved after T reached Status 4).
 --   * Exact manual lines also count for the existing "surviving + merged = receipt" proof.
 --
 -- Unchanged: the lease/writer fence, replay, single-order receipt proof, the SHARE lock, the
 -- carried-proof rule, quarantine and last-table layers (renamed below without body changes),
--- retention, roles and grants, every cleaning/auto-normal function (merge membership still
--- blocks cleaning). No receipt, ledger, inventory or payroll DML.
+-- retention, roles and grants, every cleaning/auto-normal function (cleaning/auto-normal evidence
+-- for linked merges is the separate follow-up 20261125134901). No receipt, ledger, inventory or
+-- payroll DML.
 
 -- DDL wait budget for this migration transaction only.
 set local lock_timeout = '5s';
@@ -281,7 +285,11 @@ begin
         or exists (select 1 from jsonb_array_elements(v_member_orders) m
           where coalesce(cardinality(pos_open_orders_private.merge_table_tokens_v1(m->>'tableName')), 0) <> 1
             or not ((pos_open_orders_private.merge_table_tokens_v1(m->>'tableName'))[1] = any(v_tables)))
-        or v_receipt.total_amount < (select sum((m->>'totalAmount')::numeric) from jsonb_array_elements(v_member_orders) m) then
+        or v_receipt.total_amount < (select sum((m->>'totalAmount')::numeric) from jsonb_array_elements(v_member_orders) m)
+        -- Payment time: after the target and every merged order started, never in the future.
+        or v_receipt.ref_date is null or v_receipt.ref_date > clock_timestamp()
+        or v_receipt.ref_date < (v_target_old->>'orderDate')::timestamptz
+        or exists (select 1 from jsonb_array_elements(v_member_orders) m where v_receipt.ref_date < (m->>'orderDate')::timestamptz) then
         raise exception 'open_orders_vanished' using errcode = '55000', detail = 'merged_link_receipt_invalid';
       end if;
       v_hash := md5(concat_ws('|', 'link', v_receipt_id::text, v_group.target, r.branch_id, v_receipt.business_date::text,
@@ -453,7 +461,16 @@ begin
     if exists (select 1 from jsonb_array_elements_text(v_group.members) id where not exists (
         select 1 from jsonb_array_elements(v_previous) o where o->>'orderId' = id
           and o->>'statusClass' in ('open', 'unknown') and o->>'status' is distinct from '5'
-          and o->>'closureReceiptId' is null and o->>'quarantinedAt' is null and jsonb_typeof(o->'lines') = 'array'
+          and o->>'quarantinedAt' is null and jsonb_typeof(o->'lines') = 'array'
+          -- A link closed by this target's receipt reopens only when that receipt is no longer the
+          -- target's single active paid receipt (canceled, unpaid or duplicated): payment confirmation.
+          and (o->>'closureReceiptId' is null or (o->>'mergeTargetOrderId' is not null
+            and lower(btrim(o->>'closureMergedIntoOrderId')) = v_group.target
+            and not exists (select 1 from public.pos_sales_receipts x where x.id = (o->>'closureReceiptId')::bigint
+              and x.payment_status = 3 and x.is_canceled = false
+              and (select count(*) from public.pos_sales_receipts y where y.source = 'cukcuk'
+                and y.business_date in (r.business_date, r.business_date + 1) and lower(btrim(y.raw_json->>'OrderId')) = v_group.target
+                and y.is_canceled is not true and (y.payment_status is null or y.payment_status not in (4, 5))) = 1)))
           and cardinality(pos_open_orders_private.merge_table_tokens_v1(o->>'tableName')) = 1
           and (o->>'mergeTargetOrderId' is null or lower(btrim(o->>'mergeTargetOrderId')) = v_group.target))) then
       raise exception 'open_orders_vanished' using errcode = '55000', detail = 'merge_member_invalid';
@@ -462,18 +479,19 @@ begin
         coalesce(jsonb_agg(o) filter (where o->>'mergeTargetOrderId' is not null), '[]'::jsonb)
       into v_new, v_carried
       from jsonb_array_elements(v_previous) o where v_group.members ? (o->>'orderId');
-    -- Carried links: target still open with the member's table and menu, or a payment candidate.
-    for v_m in select value from jsonb_array_elements(v_carried) loop
-      if not coalesce(case when jsonb_typeof(v_target->'lines') = 'array' then
-          v_target->>'statusClass' in ('open', 'unknown') and v_target->>'status' is distinct from '5'
-          and (pos_open_orders_private.merge_table_tokens_v1(v_m->>'tableName'))[1]
-            = any(coalesce(pos_open_orders_private.merge_table_tokens_v1(v_target->>'tableName'), '{}'::text[]))
-          and pos_open_orders_private.merge_menu_within_v1(pos_open_orders_private.merge_order_menu_v2(jsonb_build_array(v_m)),
-            pos_open_orders_private.merge_order_menu_v2(jsonb_build_array(v_target)))
-        else v_target->>'status' = '4' end, false) then
-        raise exception 'open_orders_vanished' using errcode = '55000', detail = 'merge_link_invalid';
-      end if;
-    end loop;
+    -- Carried links, as ONE group per target: target still open with every member's table and the
+    -- members' SUMMED menu inside its menu (two members with the same item need both quantities),
+    -- or a payment candidate. Never checked member by member.
+    if jsonb_array_length(v_carried) > 0 and not coalesce(case when jsonb_typeof(v_target->'lines') = 'array' then
+        v_target->>'statusClass' in ('open', 'unknown') and v_target->>'status' is distinct from '5'
+        and not exists (select 1 from jsonb_array_elements(v_carried) m
+          where not ((pos_open_orders_private.merge_table_tokens_v1(m->>'tableName'))[1]
+            = any(coalesce(pos_open_orders_private.merge_table_tokens_v1(v_target->>'tableName'), '{}'::text[]))))
+        and pos_open_orders_private.merge_menu_within_v1(pos_open_orders_private.merge_order_menu_v2(v_carried),
+          pos_open_orders_private.merge_order_menu_v2(jsonb_build_array(v_target)))
+      else v_target->>'status' = '4' end, false) then
+      raise exception 'open_orders_vanished' using errcode = '55000', detail = 'merge_link_invalid';
+    end if;
     -- New links: re-verified from the previous snapshot and this payload only.
     if jsonb_array_length(v_new) > 0 then
       v_tables := pos_open_orders_private.merge_table_tokens_v1(v_target->>'tableName');
@@ -535,7 +553,8 @@ begin
     if v_order ? 'mergeTargetOrderId' then
       select value into v_old from jsonb_array_elements(v_previous) where value->>'orderId' = v_order->>'orderId';
       -- Preserved provider facts only: caller-supplied header/status/lines are never stored.
-      v_order := v_old - 'mergeTargetOrderId' - 'mergeLinkedAt' - 'mergeTargetTable' - 'quarantinedAt' - 'quarantineReason';
+      v_order := v_old - 'mergeTargetOrderId' - 'mergeLinkedAt' - 'mergeTargetTable' - 'quarantinedAt' - 'quarantineReason'
+        || jsonb_build_object('closureReceiptId', null, 'closureMergedIntoOrderId', null, 'closureConfirmedAt', null);
     end if;
     v_payload := v_payload || jsonb_build_array(v_order);
   end loop;

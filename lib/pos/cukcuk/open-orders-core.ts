@@ -590,6 +590,8 @@ export type MergeReceiptEvidence = ReceiptLink & {
   details: unknown;
   /** Raw header TableName (contract 6 only: a merge link's receipt must name the merged table). */
   tableName?: string | null;
+  /** Receipt RefDate (contract 6 only: a merge link's payment cannot predate the merged orders). */
+  refDate?: string | null;
 };
 
 /**
@@ -757,22 +759,26 @@ export function detectMergeLinks(input: { businessDate: string; candidates: Coll
 }
 
 /**
- * A stored link stays valid while the target is listed and either still open with the
- * member's table in its TableName and the member's menu inside its menu, or already a
- * payment candidate (Status 4, no lines: the POS dropped them). Anything else -> the link is
- * released and the order follows the quarantine rules (re-split, cancel, re-change).
+ * Stored links of ONE target stay valid only together: the target is listed and either still
+ * open with every member's table in its TableName and ALL members' menus summed inside its menu
+ * (two members with the same item need the target to hold both quantities), or already a
+ * payment candidate (Status 4, no lines: the POS dropped them). Anything else releases every
+ * member of that target (no member is picked by guess) and each follows the quarantine rules
+ * (re-split, cancel, quantity change, re-change). Mirrors the DB commit_v1 carried-link check.
  */
-export function mergeLinkStillValid(member: CollectedOrder, target: CollectedOrder | undefined) {
-  if (!target || target.businessDate !== member.businessDate || target.closureMergedIntoOrderId || target.mergeTargetOrderId
-    || target.quarantineReason) return false;
-  const table = singleTable(member);
-  if (!table) return false;
+export function mergeLinksStillValid(members: CollectedOrder[], target: CollectedOrder | undefined) {
+  if (!members.length || !target || target.closureMergedIntoOrderId || target.mergeTargetOrderId || target.quarantineReason
+    || members.some((member) => target.businessDate !== member.businessDate || !singleTable(member))) return false;
   if (Array.isArray(target.lines)) {
-    const own = mergeOrderMenu([member], 2), whole = mergeOrderMenu([target], 2);
-    return plainOpen(target) && !!mergeTableTokens(target.tableName)?.includes(table) && !!own && !!whole && menuWithin(own, whole);
+    const tables = mergeTableTokens(target.tableName);
+    const own = mergeOrderMenu(members, 2), whole = mergeOrderMenu([target], 2);
+    return plainOpen(target) && !!tables && members.every((member) => tables.includes(singleTable(member)!))
+      && !!own && !!whole && menuWithin(own, whole);
   }
   return target.status === ORDER_STATUS_PAID_CANDIDATE;
 }
+/** One member alone (kept for callers comparing a single link). */
+export const mergeLinkStillValid = (member: CollectedOrder, target: CollectedOrder | undefined) => mergeLinksStillValid([member], target);
 
 /**
  * Payment of a linked merge: the target's single paid receipt (same/next business day, same
@@ -781,10 +787,16 @@ export function mergeLinkStillValid(member: CollectedOrder, target: CollectedOrd
  * target's lines are not needed (receipt saved after the order reached Status 4).
  */
 export function linkedMergeReceipt(input: { businessDate: string; branchId: string; targetOrderId: string; members: CollectedOrder[];
-  receipts: MergeReceiptEvidence[] }) {
+  receipts: MergeReceiptEvidence[]; target?: CollectedOrder; now?: number }) {
   const receipt = singlePaidOrderReceipt(input.targetOrderId, input.businessDate, input.receipts);
   const evidence = receipt && input.receipts.find((row) => row.receiptId === receipt.receiptId);
   const tables = mergeTableTokens(evidence?.tableName);
+  // Same target identity (listed with this id and date) and a payment time after every merged
+  // order started and not in the future (the DB rechecks with its own clock, later than ours).
+  const paidAt = typeof evidence?.refDate === "string" ? Date.parse(evidence.refDate) : NaN;
+  const starts = [...input.members, ...(input.target ? [input.target] : [])].map((order) => Date.parse(order.orderDate));
+  if (!input.target || toId(input.target.orderId) !== toId(input.targetOrderId) || input.target.businessDate !== input.businessDate
+    || !Number.isFinite(paidAt) || paidAt > (input.now ?? Date.now()) || starts.some((start) => !Number.isFinite(start) || paidAt < start)) return null;
   if (!evidence || evidence.branchId !== input.branchId || !tables || !finite(evidence.totalAmount)
     || input.members.some((member) => !tables.includes(singleTable(member) ?? "\u0000"))
     || evidence.totalAmount < input.members.reduce((sum, member) => sum + member.totalAmount, 0) - 0.005
@@ -1043,17 +1055,23 @@ export async function collectOpenOrderSnapshot(
     if (input.mergeProofVersion === 2) {
       const listed = orders.filter((order) => listedIds.has(order.orderId));
       const listedById = new Map(listed.map((order) => [toId(order.orderId), order]));
-      // 1. Stored links: revalidated against the latest listing, closed by the target's receipt.
+      // 1. Stored links: revalidated per target as one group against the latest listing, closed by
+      //    the target's receipt. A link already closed by a receipt that was since canceled or
+      //    reissued is rechecked here too: closed again by the new single paid receipt, otherwise
+      //    back to payment confirmation (pending link), never a payment and never a quarantine of
+      //    a once-closed order (which the DB rejects for the whole run).
       const byTarget = new Map<string, CollectedOrder[]>();
       for (const { previous } of mergeCandidates) {
-        if (!previous.mergeTargetOrderId || previous.closureReceiptId) continue;
+        if (!previous.mergeTargetOrderId || (previous.closureReceiptId
+          && toId(previous.closureMergedIntoOrderId ?? "") !== toId(previous.mergeTargetOrderId))) continue;
         const targetId = toId(previous.mergeTargetOrderId);
-        if (!mergeLinkStillValid(previous, listedById.get(targetId))) continue; // released: quarantine rules below
         byTarget.set(targetId, [...(byTarget.get(targetId) ?? []), previous]);
       }
       for (const [targetId, members] of byTarget) {
+        const target = listedById.get(targetId);
+        if (!mergeLinksStillValid(members, target)) continue; // all released: quarantine rules below
         const receiptId = evidenceRead ? linkedMergeReceipt({ businessDate: input.businessDate, branchId: input.branchId,
-          targetOrderId: targetId, members, receipts }) : null;
+          targetOrderId: targetId, members, receipts, target }) : null;
         for (const member of members) {
           settled.add(toId(member.orderId));
           orders.push(receiptId
