@@ -657,3 +657,16 @@ API `summary`는 계속 POS 결제완료 전용이며 `openOrders`의 기존 분
   - `merge_closure`·`receipt_closure`·`quarantined`: 이번 실행에서 새로 생긴 종료·격리의 주문 ID와 기존 증거 키(`receiptClosures`·`quarantinedOrders`) 연결만 남긴다. 증거 본문은 복사하지 않으며, 합산은 DB가 검증해 commit한 경우에만 manifest에 남는다.
 - 헤더: `version`, `runId`, `detectedAt`, `eventCount`, `droppedCount`. 이벤트는 실행당 최대 40건, 문자열 40자로 자르며 초과 건수는 `droppedCount`에 남긴다.
 - 실패한 실행은 manifest를 쓰지 않으므로 변경 이력으로 남지 않는다. 기록 생성 오류는 `{ version, error: "build_failed" }`만 남기고 수집 결과를 바꾸지 않는다. 고객명·전화·원본 응답은 저장하지 않는다.
+
+## 합산결제 격리 주문 종료 증명 v2 (2026-11-25, BABA-TABLE-MERGE-02)
+
+- 운영 사례(11/24): 2번 주문(수기 칵테일 2종, 820,000₫)이 22:12 BAR9에 합쳐져(`BAR9, 2`, 새 detail ID) 격리됐고, 22:36 영수증 #9081(세전 2,139,000₫, RefDetailType 3·ItemID 없는 수기 4종)로 결제됐지만 03:00까지 격리가 유지됐다.
+- 원인: (1) v1 메뉴 함수가 ItemID 없는 수기 품목을 일괄 거부. (2) 합친 뒤 결제 전 실행에서 BAR9 스냅샷이 이미 2번 메뉴를 포함하므로 "남은 주문 + 합쳐진 주문 = 영수증"이 이중 합산되어 불일치. POS는 합칠 때 detail ID를 새로 만들어 품목 ID 연결 증거가 없다.
+- 개선(앱 `proveMergedOrders` version 2 ↔ DB `commit_merge_v1`, 계약 5에서만 사용):
+  - 수기 품목: 주문 라인 itemId 없음 / 영수증 RefDetailType 3·ItemID 없음일 때 앞뒤 공백만 제거한 메뉴명 전체 + 단가 + 수량 + 금액이 정확히 같아야 한다. 부분일치·대소문자 변환 없음. 옵션·추가·부모·라인 할인/프로모션·기타 RefDetailType은 계속 거부한다. 품목 ID 메뉴는 v1과 출력이 같아 기존 증거 해시가 유지된다.
+  - 이미 합쳐진 주문(absorbed): 남은 주문의 직전 스냅샷 메뉴·헤더 = 영수증 정확 일치, 직전 TableName과 영수증 TableName이 같은 2개 이상 테이블 집합, 합쳐진 주문은 이전 실행에서 이미 격리됐고 단일 테이블명이 그 집합에 포함, 같은 테이블들의 다른 격리 주문 없음, 합쳐진 메뉴 ⊆ 남은 주문 메뉴(품목별), 합쳐진 금액 < 남은 주문 금액. 하나라도 어긋나면 기존처럼 격리 유지(전체 수집은 계속 성공).
+- 증명된 주문은 `closure_merged_into_order_id`·`closure_receipt_id`로 종료되고 격리 필드는 비워진다. 매출은 영수증 1건으로만 계산되고, 이후 실행은 같은 영수증 해시로 carried 된다.
+- 앱 수정: 격리됐던 주문이 증명으로 종료될 때 저장된 `quarantineReason`을 payload로 다시 보내던 잠재 결함(DB manifest 수 검사로 전체 실행 거부)을 제거했다.
+- 정식 Migration: `supabase/migrations/20261125115152_pos_open_orders_absorbed_merge_manual_items.sql`(운영 미적용). 미적용 DB(계약 4)에서는 앱이 version 1 증명만 사용하므로 기존 동작과 같다.
+- 한계: 결제 영수증이 DB에 저장되기 전에 남은 주문이 Status 4(라인 없음)로 한 번 더 수집되면 비교할 메뉴가 사라져 증명할 수 없고 격리가 유지된다. 11/24 당일 행은 수집 대상 영업일이 지나 자동으로 다시 평가되지 않는다.
+- 테스트: `tests/pos-open-orders-absorbed-merge-db.test.mjs`(PGlite 실제 Migration 체인 + 실제 수집기).

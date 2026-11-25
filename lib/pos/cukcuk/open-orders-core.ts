@@ -569,15 +569,40 @@ export type MergeReceiptEvidence = ReceiptLink & {
   headerDiscounts: unknown[];
   /** Raw SAInvoiceDetails. */
   details: unknown;
+  /** Raw header TableName (merge proof contract 2 only: absorbed-merge table evidence). */
+  tableName?: string | null;
 };
 
+/**
+ * Merge proof contract. 1 (DB read contract 3/4): item-ID lines only, surviving order +
+ * merged orders = receipt. 2 (DB read contract >= 5, migration 20261125115152): also exact
+ * manual (no item ID) lines by name and the "already absorbed" merge. Mirrors the DB.
+ */
+export type MergeProofVersion = 1 | 2;
+
 type MenuEntry = { item: string; price: number; quantity: number; amount: number };
+type MenuMap = Map<string, MenuEntry>;
 const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
 const isZeroOrAbsent = (value: unknown) => value === undefined || value === null || value === 0;
 const blank = (value: unknown) => value === undefined || value === null || (typeof value === "string" && !value.trim());
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+/** Same as the DB btrim(x, E' \t\r\n'): no case folding or inner-space changes. */
+const plainText = (value: unknown) => typeof value === "string" ? value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "") : "";
+/** Manual menu key (contract 2). Item IDs are lowercase GUIDs, so the prefix cannot collide. */
+const manualKey = (name: unknown) => { const text = plainText(name); return text ? `name:${text}` : null; };
 
-function addMenu(menu: Map<string, MenuEntry>, item: string, price: number, quantity: number, amount: number) {
+/**
+ * Sorted distinct table names of a POS TableName ("BAR9, 2" -> ["2", "BAR9"]), or null when
+ * absent or when any part is empty or repeated. Mirrors the DB merge_table_tokens_v1.
+ */
+export function mergeTableTokens(name: unknown) {
+  if (typeof name !== "string") return null;
+  const tokens = name.split(",").map(plainText);
+  if (tokens.some((token) => !token) || new Set(tokens).size !== tokens.length) return null;
+  return tokens.sort();
+}
+
+function addMenu(menu: MenuMap, item: string, price: number, quantity: number, amount: number) {
   const key = `${item}|${round(price, 2)}`;
   const entry = menu.get(key) ?? { item, price: round(price, 2), quantity: 0, amount: 0 };
   entry.quantity = round(entry.quantity + quantity, 4);
@@ -588,19 +613,21 @@ function addMenu(menu: Map<string, MenuEntry>, item: string, price: number, quan
 /**
  * Menu of preserved snapshot orders by item and unit price, or null when any order lacks
  * lines, its header differs from its lines, or a non-canceled line is an option/addition/
- * child or malformed. Mirrors the DB merge_order_menu_v1 helper.
+ * child or malformed. Mirrors the DB merge_order_menu_v1 helper; with version 2 (DB
+ * merge_order_menu_v2) a line without an item ID is keyed by its exact menu name instead.
  */
-export function mergeOrderMenu(orders: CollectedOrder[]) {
-  const menu = new Map<string, MenuEntry>();
+export function mergeOrderMenu(orders: CollectedOrder[], version: MergeProofVersion = 1) {
+  const menu: MenuMap = new Map();
   for (const order of orders) {
     if (!Array.isArray(order.lines) || !finite(order.totalAmount)) return null;
     let sum = 0;
     for (const line of order.lines) {
       if (line.isCanceled === true) continue;
-      if (line.isOption || line.isOrphanOption || !blank(line.additionId) || !blank(line.parentDetailId) || blank(line.itemId)
+      const key = !blank(line.itemId) ? String(line.itemId).trim().toLowerCase() : version === 2 ? manualKey(line.itemName) : null;
+      if (line.isOption || line.isOrphanOption || !blank(line.additionId) || !blank(line.parentDetailId) || !key
         || !finite(line.quantity) || !finite(line.price) || !finite(line.amount) || line.quantity <= 0 || line.price < 0
         || Math.abs(line.amount - line.quantity * line.price) > 0.005) return null;
-      addMenu(menu, String(line.itemId).trim().toLowerCase(), line.price, line.quantity, line.amount);
+      addMenu(menu, key, line.price, line.quantity, line.amount);
       sum += line.amount;
     }
     if (Math.abs(round(sum, 2) - order.totalAmount) > 0.005) return null;
@@ -608,19 +635,67 @@ export function mergeOrderMenu(orders: CollectedOrder[]) {
   return orders.length ? menu : null;
 }
 
-/** Plain item-only receipt menu, or null. Mirrors the DB merge_receipt_menu_v1 helper. */
-export function mergeReceiptMenu(details: unknown) {
+/**
+ * Plain receipt menu, or null. Version 1 (DB merge_receipt_menu_v1): item lines only
+ * (RefDetailType 1 with an ItemID). Version 2 (DB merge_receipt_menu_v2) also accepts a
+ * manual line (RefDetailType 3, no ItemID, named) keyed by its exact name. Options,
+ * additions, children, line promotions/discounts and any other line type stay rejected.
+ */
+export function mergeReceiptMenu(details: unknown, version: MergeProofVersion = 1) {
   if (!Array.isArray(details) || !details.length) return null;
-  const menu = new Map<string, MenuEntry>();
+  const menu: MenuMap = new Map();
   for (const line of details) {
-    if (!isObject(line) || line.RefDetailType !== 1 || !blank(line.ParentID) || !blank(line.InventoryItemAdditionID) || blank(line.ItemID)
-      || typeof line.ItemID !== "string"
+    if (!isObject(line)) return null;
+    const key = line.RefDetailType === 1 && typeof line.ItemID === "string" && !blank(line.ItemID) ? line.ItemID.trim().toLowerCase()
+      : version === 2 && line.RefDetailType === 3 && blank(line.ItemID) ? manualKey(line.ItemName) : null;
+    if (!key || !blank(line.ParentID) || !blank(line.InventoryItemAdditionID)
       || ![line.PromotionAmount, line.PromotionRate, line.DiscountRate, line.SAInvoicePromotionAmount].every(isZeroOrAbsent)
       || !finite(line.Quantity) || !finite(line.UnitPrice) || !finite(line.Amount) || line.Quantity <= 0 || line.UnitPrice < 0
       || Math.abs(line.Amount - line.Quantity * line.UnitPrice) > 0.005) return null;
-    addMenu(menu, line.ItemID.trim().toLowerCase(), line.UnitPrice, line.Quantity, line.Amount);
+    addMenu(menu, key, line.UnitPrice, line.Quantity, line.Amount);
   }
   return menu;
+}
+
+const menuWithin = (part: MenuMap, whole: MenuMap) => [...part].every(([key, entry]) => {
+  const own = whole.get(key);
+  return own && own.quantity >= entry.quantity && own.amount >= entry.amount;
+});
+const menuEqual = (a: MenuMap, b: MenuMap) => a.size === b.size
+  && [...a].every(([key, entry]) => { const own = b.get(key); return own && own.quantity === entry.quantity && own.amount === entry.amount; });
+
+/**
+ * "Already absorbed" merge (contract 2, production 2026-11-24 #9081). CUKCUK moved a
+ * quarantined order's lines into the surviving order (new detail IDs, TableName "BAR9, 2")
+ * one or more runs before payment, so the surviving order's previous snapshot already holds
+ * them and "surviving + merged = receipt" would count them twice. Proven only when:
+ * - the surviving order's previous menu and header equal the receipt exactly;
+ * - its previous TableName and the receipt TableName name the same >= 2 distinct tables;
+ * - every vanished candidate previously quarantined on one of those tables (and only those)
+ *   is in the group, each with a single table name, and no other quarantined order of the
+ *   date names one of those tables;
+ * - the group's combined menu is contained in the surviving menu, item by item, and is less
+ *   than its whole amount.
+ * Mirrors the DB commit (20261125115152).
+ */
+function absorbedMergeGroup(input: { target: CollectedOrder; receipt: MergeReceiptEvidence; receiptMenu: MenuMap; targetMenu: MenuMap;
+  pool: CollectedOrder[]; previousOrders: CollectedOrder[] }) {
+  const { target, receipt, receiptMenu, targetMenu } = input;
+  const tables = mergeTableTokens(target.tableName);
+  const receiptTables = mergeTableTokens(receipt.tableName);
+  if (!tables || tables.length < 2 || !receiptTables || receiptTables.join("\u0000") !== tables.join("\u0000")) return null;
+  if (!menuEqual(targetMenu, receiptMenu) || !finite(receipt.totalAmount) || Math.abs(target.totalAmount - receipt.totalAmount) > 0.005) return null;
+  const onTables = (order: CollectedOrder) => (mergeTableTokens(order.tableName) ?? []).some((token) => tables.includes(token));
+  const targetId = toId(target.orderId);
+  const members = input.pool.filter((order) => order.quarantinedAt && onTables(order));
+  const memberIds = new Set(members.map((order) => toId(order.orderId)));
+  if (!members.length || members.some((order) => mergeTableTokens(order.tableName)?.length !== 1)) return null;
+  if (input.previousOrders.some((order) => order.quarantinedAt && onTables(order)
+    && toId(order.orderId) !== targetId && !memberIds.has(toId(order.orderId)))) return null;
+  const memberMenu = mergeOrderMenu(members, 2);
+  const memberTotal = members.reduce((sum, order) => sum + order.totalAmount, 0);
+  if (!memberMenu || !menuWithin(memberMenu, targetMenu) || !(memberTotal < target.totalAmount - 0.005)) return null;
+  return members;
 }
 
 const activeReceipt = (receipt: ReceiptLink) => !(receipt.isCanceled === true || receipt.paymentStatus === 4 || receipt.paymentStatus === 5);
@@ -631,11 +706,13 @@ const activeReceipt = (receipt: ReceiptLink) => !(receipt.isCanceled === true ||
  * surviving order (previous snapshot, still listed) equals, item by item, the single paid
  * receipt of that surviving order. Amount-only matches, discounts, options, unpaid or
  * duplicated receipts, other days/branches and any ambiguity stay unconfirmed.
+ * Version 2 adds exact manual lines and the already-absorbed merge (absorbedMergeGroup).
  */
 export function proveMergedOrders(input: {
   businessDate: string; branchId: string; candidates: CollectedOrder[]; previousOrders: CollectedOrder[];
-  listedIds: Set<string>; receipts: MergeReceiptEvidence[];
+  listedIds: Set<string>; receipts: MergeReceiptEvidence[]; version?: MergeProofVersion;
 }) {
+  const version = input.version ?? 1;
   const days = [input.businessDate, addStoreDays(input.businessDate, 1)];
   const candidateIds = new Set(input.candidates.map((order) => toId(order.orderId)));
   const ownReceipt = new Set(input.receipts.filter(activeReceipt).map((receipt) => toId(receipt.orderId)));
@@ -649,8 +726,8 @@ export function proveMergedOrders(input: {
       || receipt.paymentStatus !== 3 || receipt.isCanceled === true || !days.includes(receipt.businessDate ?? "")
       || receipt.branchId !== input.branchId || !isZeroOrAbsent(receipt.discountAmount) || !receipt.headerDiscounts.every(isZeroOrAbsent)
       || singlePaidOrderReceipt(targetId, input.businessDate, input.receipts)?.receiptId !== receipt.receiptId) continue;
-    const receiptMenu = mergeReceiptMenu(receipt.details);
-    const targetMenu = mergeOrderMenu([target]);
+    const receiptMenu = mergeReceiptMenu(receipt.details, version);
+    const targetMenu = mergeOrderMenu([target], version);
     if (!receiptMenu || !targetMenu || !finite(receipt.totalAmount)
       || Math.abs([...receiptMenu.values()].reduce((sum, entry) => sum + entry.amount, 0) - receipt.totalAmount) > 0.005) continue;
     // What the surviving order alone does not explain; nothing may be left negative.
@@ -662,8 +739,15 @@ export function proveMergedOrders(input: {
       const rest = { ...left, quantity: round(left.quantity - entry.quantity, 4), amount: round(left.amount - entry.amount, 2) };
       if (rest.quantity === 0 && rest.amount === 0) needed.delete(key); else needed.set(key, rest);
     }
-    if (!explainable || !needed.size) continue;
-    const fits = pool.map((order) => ({ order, menu: mergeOrderMenu([order]) })).filter((entry) => entry.menu
+    if (!explainable) continue;
+    if (!needed.size) {
+      // The surviving order alone already equals the receipt: only an absorbed merge can apply.
+      const absorbed = version === 2
+        ? absorbedMergeGroup({ target, receipt, receiptMenu, targetMenu, pool, previousOrders: input.previousOrders }) : null;
+      if (absorbed) groups.push({ receiptId: receipt.receiptId, targetOrderId: targetId, members: absorbed.map((order) => toId(order.orderId)) });
+      continue;
+    }
+    const fits = pool.map((order) => ({ order, menu: mergeOrderMenu([order], version) })).filter((entry) => entry.menu
       && [...entry.menu].every(([key, part]) => { const left = needed.get(key); return left && left.quantity >= part.quantity && left.amount >= part.amount; }));
     if (fits.length > 12) { // Too many look-alikes to rule out ambiguity: stay unconfirmed.
       for (const entry of fits) ambiguous.add(toId(entry.order.orderId));
@@ -672,9 +756,8 @@ export function proveMergedOrders(input: {
     const solutions: CollectedOrder[][] = [];
     for (let mask = 1; mask < 1 << fits.length; mask++) {
       const group = fits.filter((_, index) => mask & (1 << index)).map((entry) => entry.order);
-      const menu = mergeOrderMenu([target, ...group]);
-      if (!menu || menu.size !== receiptMenu.size) continue;
-      if (![...receiptMenu].every(([key, entry]) => { const own = menu.get(key); return own && own.quantity === entry.quantity && own.amount === entry.amount; })) continue;
+      const menu = mergeOrderMenu([target, ...group], version);
+      if (!menu || !menuEqual(menu, receiptMenu)) continue;
       if (Math.abs([target, ...group].reduce((sum, order) => sum + order.totalAmount, 0) - receipt.totalAmount) > 0.005) continue;
       solutions.push(group);
     }
@@ -696,6 +779,7 @@ export function proveMergedOrders(input: {
 }
 
 export const MAX_VANISHED_CONFIRMATIONS = 20;
+const CLEARED_QUARANTINE = { quarantinedAt: null, quarantineReason: null } as const;
 
 /**
  * FULL collection of one business date — the only mode used. Incremental collection
@@ -721,6 +805,8 @@ export async function collectOpenOrderSnapshot(
     loadMergeReceiptEvidence?: () => Promise<MergeReceiptEvidence[]>;
     /** Only with a DB that verifies and preserves quarantined orders (read contract >= 4). */
     quarantineUnproven?: boolean;
+    /** 2 only with a DB that verifies the same proof (read contract >= 5). */
+    mergeProofVersion?: MergeProofVersion;
     deadlineAt?: number; now?: () => number }
 ) {
   const windowStart = Date.parse(input.windowFrom);
@@ -814,7 +900,8 @@ export async function collectOpenOrderSnapshot(
           const receipt = singlePaidOrderReceipt(orderId, input.businessDate, await receiptEvidence);
           assertWithinDeadline(state, 0, "receipt_evidence");
           if (receipt) {
-            orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId, closureMergedIntoOrderId: null });
+            // A proof ends a previous quarantine: never resend its stored quarantine fields.
+            orders.push({ ...previous, raw: {}, closureReceiptId: receipt.receiptId, closureMergedIntoOrderId: null, ...CLEARED_QUARANTINE });
             confirmedCount++;
             continue;
           }
@@ -856,7 +943,8 @@ export async function collectOpenOrderSnapshot(
       assertWithinDeadline(state, 0, "merge_evidence");
       evidenceRead = true;
       proven = proveMergedOrders({ businessDate: input.businessDate, branchId: input.branchId,
-        candidates: mergeCandidates.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts });
+        candidates: mergeCandidates.map((candidate) => candidate.previous), previousOrders: input.previousOrders ?? [], listedIds, receipts,
+        version: input.mergeProofVersion ?? 1 });
     } catch (error) {
       if (error instanceof OpenOrderSyncError && error.code === "run_deadline_exceeded") throw error;
       // An unavailable receipt read is not evidence. Keep the original vanished failure.
@@ -877,7 +965,10 @@ export async function collectOpenOrderSnapshot(
         throw new OpenOrderSyncError("orders_vanished_unconfirmed", undefined, { ...candidate.context, confirmedCount });
       }
       // Preserved provider facts plus independent evidence; never a synthesized Status 4.
-      orders.push({ ...candidate.previous, raw: {}, closureReceiptId: proof.receiptId, closureMergedIntoOrderId: proof.targetOrderId });
+      // A previously quarantined order (2026-11-24) must not carry its stored quarantine fields
+      // into the payload: the DB counts quarantineReason against the manifest.
+      orders.push({ ...candidate.previous, raw: {}, closureReceiptId: proof.receiptId, closureMergedIntoOrderId: proof.targetOrderId,
+        ...CLEARED_QUARANTINE });
       confirmedCount++;
     }
   }
@@ -973,6 +1064,9 @@ export async function runOpenOrderSync(
         ? () => deps.loadReceiptEvidence!(input.businessDate) : undefined,
       loadMergeReceiptEvidence: mergeEvidence ? () => deps.loadMergeReceiptEvidence!(input.businessDate) : undefined,
       quarantineUnproven: Boolean(mergeEvidence) && typeof contract === "number" && contract >= 4,
+      // Contract 5 commits verify manual lines and absorbed merges; an older DB would reject
+      // such a proof and fail the whole run, so it keeps the version 1 proof only.
+      mergeProofVersion: mergeEvidence && typeof contract === "number" && contract >= 5 ? 2 : 1,
     });
     // Raw provider rows (customer names/phones) are not persisted.
     const payload = orders.map((order) => ({
