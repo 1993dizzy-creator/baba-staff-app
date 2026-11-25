@@ -52,6 +52,20 @@ function monthCutoffs(days: readonly number[], year: number, month: number) {
   return [...new Set(days.map(day => (day === 0 || day >= last ? last : day)))].sort((a, b) => a - b);
 }
 
+// Settlement-period position date (P0-2 final). It only places periods (open / settling /
+// reference_passed); the ledger as-of (purchases, allocations, month totals) is separate and
+// unchanged. A past month uses its month end. The current month and any later month use today's
+// BABA business date (Asia/Ho_Chi_Minh, 03:00 boundary), so no reference date is "passed" before
+// it is reached. An explicit asOf (already validated against month) is used unchanged. The view
+// month is returned separately so a 02:59 read on the 1st never relabels the selected month.
+export function settlementViewDates({ month, asOfDate, businessDate }: { month: string | null; asOfDate?: string | null; businessDate: string }): { asOf: string; month: string } {
+  if (asOfDate) return { asOf: asOfDate, month: month ?? asOfDate.slice(0, 7) };
+  if (!month) return { asOf: businessDate, month: businessDate.slice(0, 7) };
+  const [year, monthNumber] = month.split("-").map(Number);
+  const monthEnd = ymd(year, monthNumber, lastDayOfMonth(year, monthNumber));
+  return { asOf: monthEnd < businessDate ? monthEnd : businessDate, month };
+}
+
 // Returns the settlement period containing businessDate, or null when the policy
 // cannot be computed safely from the stored terms alone (ad hoc, net days, unset,
 // immediate/unspecified, or missing/invalid days).

@@ -3,7 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { withInventoryDisplay } from "@/lib/ledger/inventory-display";
 import { calculatePayableBalances, calculatePurchaseSettlement, confirmedAllocationsThroughMonth, payableAllocationsForBalanceAnchors, payableDisplayAsOf, payableMonthBounds, sumPayableAmounts, type PayablePayment } from "@/lib/ledger/payables";
 import { buildPaymentVerificationItems, isPaymentVerification } from "@/lib/ledger/payment-verification";
-import { buildSettlementPeriods, type SettlementPolicyValue } from "@/lib/ledger/settlement-periods";
+import { buildSettlementPeriods, settlementViewDates, type SettlementPolicyValue } from "@/lib/ledger/settlement-periods";
 import { getBusinessDate } from "@/lib/common/business-time";
 import { loadPayableBalanceAnchors } from "@/lib/ledger/payable-balance-anchor-data";
 
@@ -90,7 +90,9 @@ async function getPayables(request: Request) {
   // ordinary payables by 정산 기준 period, with the same as-of allocations as above. Payment
   // verification items stay excluded; nothing is written and due_date is never derived.
   const policyByBusinessPartner=new Map((partnerResult.data??[]).map(row=>[Number(row.id),{paymentMode:row.payment_mode,settlementMode:row.settlement_mode??null,settlementRule:row.settlement_rule??null,settlementDays:Array.isArray(row.settlement_days)?row.settlement_days.map(Number):null,defaultPaymentTermDays:row.default_payment_term_days==null?null:Number(row.default_payment_term_days)} satisfies SettlementPolicyValue]));
-  const settlementAsOf=asOfDate??(bounds?new Date(Date.parse(bounds.nextMonthStart+"T00:00:00Z")-86400000).toISOString().slice(0,10):getBusinessDate());
+  // Period position only (not the ledger as-of above): past month = month end; current/later
+  // month = today's BABA business date. settlementMonth is the selected month for display.
+  const {asOf:settlementAsOf,month:settlementMonth}=settlementViewDates({month,asOfDate,businessDate:getBusinessDate()});
   const allocationsByPayable=new Map<number,typeof asOfAllocations>();
   for(const allocation of asOfAllocations){const list=allocationsByPayable.get(Number(allocation.payable_id))??[];list.push(allocation);allocationsByPayable.set(Number(allocation.payable_id),list)}
   const sourcesByParty=new Map<number,typeof ordinarySources>();
@@ -103,7 +105,7 @@ async function getPayables(request: Request) {
       const ownerSettlement=row.expense?.type==="owner_payable_settlement";
       return {id:row.id,businessDate:row.expense?.business_date??null,originalAmount:ownerSettlement?0:row.original_amount,settlement:ownerSettlement?{...settlement,adjustmentAmount:Number(row.original_amount)}:settlement};
     }),settlementAsOf);
-    return {...party,settlementPolicy,settlementPeriods,settlementAsOf,balanceAnchors:(balances.balanceAnchors??[]).filter(a=>a.party_id===party.partyId)};
+    return {...party,settlementPolicy,settlementPeriods,settlementAsOf,settlementMonth,balanceAnchors:(balances.balanceAnchors??[]).filter(a=>a.party_id===party.partyId)};
   });
   return ledgerJson({ok:true,totalOutstanding:balances.totalOutstanding,verification,...(month!==null?{month,summary:balances.summary}:{}),payables,parties:withSettlement.sort((a,b)=>b.outstandingAmount-a.outstandingAmount)});
 }

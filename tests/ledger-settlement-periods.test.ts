@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import ts from "typescript";
+import { getBusinessDate } from "../lib/common/business-time.ts";
 import * as partnerTextModule from "../lib/partners/text.ts";
 import * as settlementPeriodsModule from "../lib/ledger/settlement-periods.ts";
 import { calculatePurchaseSettlement } from "../lib/ledger/payables.ts";
-import { buildSettlementPeriods, groupDatesBySettlementPeriod, periodSelectionState, setDatesSelected, settlementPeriodFor, type SettlementPolicyValue } from "../lib/ledger/settlement-periods.ts";
+import { buildSettlementPeriods, groupDatesBySettlementPeriod, settlementViewDates, periodSelectionState, setDatesSelected, settlementPeriodFor, type SettlementPolicyValue } from "../lib/ledger/settlement-periods.ts";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const policy = (settlementRule: string, settlementDays: number[] | null): SettlementPolicyValue =>
@@ -178,15 +179,17 @@ test("compact summary: non-period terms show the term only; non-postpaid renders
   assert.equal(renderSummary({ lang: "ko", policy: { ...adHoc, paymentMode: "immediate", settlementMode: null }, periods: null }), "");
 });
 
-test("Phương 11/15 showed 기준일 지남 on 11/5: the month view passes the month end as the as-of date", () => {
-  // The entries page always loads ?month=YYYY-MM, so the API as-of is the month end (11/30), not today.
-  assert.match(read("app/api/admin/ledger/payables/route.ts"), /const asOfDate=bounds\?new Date\(Date\.parse\(bounds\.nextMonthStart\+"T00:00:00Z"\)-86400000\)/);
+test("Phương 11/15 showed 기준일 지남 on 11/5: fixed -- the current month no longer passes the month end as the as-of date", () => {
+  // The entries page always loads ?month=YYYY-MM; the route now places periods with settlementViewDates
+  // (today's business date for the current month) instead of the month end.
+  const route = read("app/api/admin/ledger/payables/route.ts");
+  assert.doesNotMatch(route, /nextMonthStart\+"T00:00:00Z"\)-86400000/);
+  assert.match(route, /settlementViewDates\(\{month,asOfDate,businessDate:getBusinessDate\(\)\}\)/);
   assert.match(read("app/(protected)/admin/ledger/entries/page.tsx"), /fetch\(`\/api\/admin\/ledger\/payables\?month=\$\{requestedMonth\}`/);
-  const asOfMonthEnd = buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 1)], "2026-11-30")![0];
-  assert.equal(asOfMonthEnd.position, "reference_passed");
-  // The period dates themselves are correct; only the as-of date differs.
-  assert.deepEqual([asOfMonthEnd.start, asOfMonthEnd.end, asOfMonthEnd.referenceDate], ["2026-11-01", "2026-11-15", "2026-11-15"]);
-  assert.equal(buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 1)], "2026-11-05")![0].position, "open");
+  const asOf = settlementViewDates({ month: "2026-11", businessDate: "2026-11-05" }).asOf;
+  const period = buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 1)], asOf)![0];
+  assert.deepEqual([asOf, period.position], ["2026-11-05", "open"]);
+  assert.deepEqual([period.start, period.end, period.referenceDate], ["2026-11-01", "2026-11-15", "2026-11-15"]);
   // The compact UI no longer renders any position badge.
   assert.doesNotMatch(read("components/ledger/SettlementPeriodSummary.tsx"), /position/);
 });
@@ -291,8 +294,35 @@ test("selected-date list renders period headers only for 정기정산, with sele
   assert.match(page, /document\.getElementById\(`payable-period-\$\{key\}`\)\?\.scrollIntoView\(\{block:"start"/);
   assert.match(page, /onSelectPeriod=\{focusPeriod\}/);
   // the historical (read-only) sheet gets no grouping or jump
-  assert.match(page, /viewMonth=\{\(party\.settlementAsOf\?\?""\)\.slice\(0,7\)\}\/>/);
+  assert.match(page, /viewMonth=\{party\.settlementMonth\?\?\(party\.settlementAsOf\?\?""\)\.slice\(0,7\)\}\/>/);
   // payment paths unchanged
   assert.match(page, /allocations:selectedPayables\.map\(row=>\(\{payableId:row\.id,allocatedAmount:row\.outstandingAmount\}\)\)/);
   assert.match(page, /planPartialPayablePayment\(partialRows,parseLedgerAmount\(partialAmount\)\?\?0\)/);
+});
+
+// P0-2 final: period position date. Current month = BABA business date (Asia/Ho_Chi_Minh, 03:00).
+test("settlement position date: 02:59/03:00 business-day boundary, month start, past and future months", () => {
+  const at = (iso: string) => getBusinessDate(new Date(iso));
+  assert.equal(at("2026-11-16T02:59:00+07:00"), "2026-11-15");
+  assert.equal(at("2026-11-16T03:00:00+07:00"), "2026-11-16");
+  const view = (month: string | null, isoNow: string, asOfDate?: string) => settlementViewDates({ month, asOfDate, businessDate: at(isoNow) });
+  // Phương 11/1~15 at 11/16 02:59 is still the 11/15 business day: open, not passed.
+  const nov = [payable(1, "2026-11-03", 1000)];
+  const pos = (asOf: string) => buildSettlementPeriods(phuong, nov, asOf)!.map(p => p.position);
+  assert.deepEqual(pos(view("2026-11", "2026-11-16T02:59:00+07:00").asOf), ["open"]);
+  assert.deepEqual(pos(view("2026-11", "2026-11-16T03:00:00+07:00").asOf), ["reference_passed"]);
+  assert.deepEqual(pos(view("2026-11", "2026-11-05T12:00:00+07:00").asOf), ["open"]);
+  // Month start: 12/1 02:59 is still business day 11/30. November stays November (month end);
+  // a December view keeps its month label while placing periods as of 11/30.
+  assert.deepEqual(view("2026-11", "2026-12-01T02:59:00+07:00"), { asOf: "2026-11-30", month: "2026-11" });
+  assert.deepEqual(view("2026-12", "2026-12-01T02:59:00+07:00"), { asOf: "2026-11-30", month: "2026-12" });
+  assert.deepEqual(view("2026-12", "2026-12-01T03:00:00+07:00"), { asOf: "2026-12-01", month: "2026-12" });
+  assert.deepEqual(view("2026-11", "2026-12-01T03:00:00+07:00"), { asOf: "2026-11-30", month: "2026-11" });
+  // Past month end (including February), future month, no month, explicit asOf.
+  assert.deepEqual(view("2026-02", "2026-11-25T12:00:00+07:00"), { asOf: "2026-02-28", month: "2026-02" });
+  assert.deepEqual(view("2027-01", "2026-11-25T12:00:00+07:00"), { asOf: "2026-11-25", month: "2027-01" });
+  assert.deepEqual(view(null, "2026-11-25T12:00:00+07:00"), { asOf: "2026-11-25", month: "2026-11" });
+  assert.deepEqual(view("2026-11", "2026-11-25T12:00:00+07:00", "2026-11-10"), { asOf: "2026-11-10", month: "2026-11" });
+  // A future month never reports a passed reference for upcoming purchases.
+  assert.deepEqual(buildSettlementPeriods(okMart, [payable(2, "2026-11-24", 500)], view("2027-01", "2026-11-25T12:00:00+07:00").asOf)!.map(p => p.position), ["open"]);
 });

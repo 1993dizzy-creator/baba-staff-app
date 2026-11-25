@@ -202,7 +202,7 @@ type DateGroup = {
   // Prepaid allocations listed that day: monthly P&L only, never in 지출.
   allocation: number;
 };
-type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null; settlementAsOf?:string };
+type PayableParty = PayablePeriodSummary & { partyId:number; partyName:string; partnerType:string|null; outstandingAmount:number; partialPaidAmount:number; totalOpenAmount:number; openCount:number; oldestDate?:string; nearestDueDate?:string|null; recentPaymentDate?:string|null; settlementPolicy?:SettlementPolicyValue|null; settlementPeriods?:SettlementPeriod[]|null; settlementAsOf?:string; settlementMonth?:string };
 type PayablesSummary = { month:string; summary:PayablePeriodSummary; totalOutstanding:number; parties:PayableParty[]; payables:PayableRow[]; verification?:Verification };
 type PayableRow = { id:number; party_id:number; original_amount:number; paidAmount?:number; outstandingAmount:number; settlementStatus?:"paid"|"partial"|"unpaid"; expense:{business_date:string;source_snapshot?:Record<string,unknown>|null;display_snapshot?:Record<string,unknown>|null;memo?:string|null}|null };
 type PayableHistoryRow = PayableRow & { paidAmount:number; settlementStatus:"paid"|"partial"|"unpaid" };
@@ -2181,7 +2181,7 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={(party.settlementAsOf??"").slice(0,7)}/>
+    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={party.settlementMonth??(party.settlementAsOf??"").slice(0,7)}/>
     {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
       :rows===null?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải…":"불러오는 중…"} />
       :<><PayableMonthGroups rows={rows} lang={lang}/>{!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}</>}
@@ -2200,7 +2200,7 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
   const [paymentInfoOpen,setPaymentInfoOpen]=useState(false);
   // 정산기간 groups in the date list: all open by default; the summary rows jump to a group.
   const [collapsedPeriods,setCollapsedPeriods]=useState<Set<string>>(()=>new Set());
-  const viewMonth=(party.settlementAsOf??"").slice(0,7);
+  const viewMonth=party.settlementMonth??(party.settlementAsOf??"").slice(0,7);
   const settlementGrouping=useMemo<PayableSettlementGrouping>(()=>({policy:party.settlementPolicy,periods:party.settlementPeriods,viewMonth,collapsed:collapsedPeriods,
     onToggle:key=>setCollapsedPeriods(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next}),
     onSetDates:(dates,checked)=>setSelectedDates(current=>setDatesSelected(current,dates,checked))}),[party.settlementPolicy,party.settlementPeriods,viewMonth,collapsedPeriods]);
