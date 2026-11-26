@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Container from "@/components/Container";
+import NotificationSettingsTab from "@/components/notifications/NotificationSettingsTab";
+import { getUser } from "@/lib/supabase/auth";
+import { isOwnerOrMasterRole } from "@/lib/common/roles";
+import { notificationSettingsText } from "@/lib/text/notifications";
 import { useLanguage } from "@/lib/language-context";
 import { getVietnamDateParts } from "@/lib/common/business-time";
 import {
@@ -32,6 +36,8 @@ import {
 } from "@/lib/store-settings/vietnam-holiday-calendar";
 
 type Tab = "hours" | "attendance" | "holidays";
+// The notification settings tab is owner/master only (the API enforces it again).
+type PageTab = Tab | "notifications";
 type ApiData = {
   overview: StoreSettingsOverview;
   capabilities: {
@@ -276,7 +282,11 @@ function requireFreshServerSession(response: Response) {
 export default function StoreSettingsPage() {
   const { lang } = useLanguage();
   const t = copy[lang];
-  const [tab, setTab] = useState<Tab>("hours");
+  const [tab, setTab] = useState<PageTab>("hours");
+  const [canManageNotifications, setCanManageNotifications] = useState(false);
+  useEffect(() => {
+    queueMicrotask(() => setCanManageNotifications(isOwnerOrMasterRole(String(getUser()?.role ?? "").trim().toLowerCase())));
+  }, []);
   const [data, setData] = useState<ApiData | null>(null);
   const [hours, setHours] = useState<StoreBusinessHour[]>(
     DEFAULT_STORE_HOURS.map((item) => ({ ...item }))
@@ -481,6 +491,18 @@ export default function StoreSettingsPage() {
               {t.tabs[value]}
             </button>
           ))}
+          {canManageNotifications ? (
+            <button
+              type="button"
+              onClick={() => setTab("notifications")}
+              style={{
+                ...styles.subNavTab,
+                ...(tab === "notifications" ? styles.subNavTabActive : null),
+              }}
+            >
+              {notificationSettingsText[lang].tab}
+            </button>
+          ) : null}
         </div>
       </nav>
 
@@ -520,6 +542,8 @@ export default function StoreSettingsPage() {
       ) : null}
 
       {tab === "holidays" ? <HolidaysTab lang={lang} /> : null}
+
+      {tab === "notifications" && canManageNotifications ? <NotificationSettingsTab lang={lang} /> : null}
 
       {confirmOpen ? (
         <ConfirmScheduleModal

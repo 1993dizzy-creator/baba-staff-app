@@ -8,6 +8,8 @@ import { useLanguage } from "@/lib/language-context";
 import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
 import UserSessionRefresher from "@/components/UserSessionRefresher";
+import NotificationBell from "@/components/notifications/NotificationBell";
+import { resetNotificationSummary } from "@/lib/notifications/client";
 
 function ProtectedLayoutContent({
   children,
@@ -172,6 +174,7 @@ function ProtectedLayoutContent({
       console.warn("Failed to clear server session", error);
     }
     localStorage.removeItem("baba_user");
+    resetNotificationSummary();
     alert(t.logoutDone);
     router.push("/login");
   };
@@ -282,6 +285,8 @@ function ProtectedLayoutContent({
             >
               {lang === "ko" ? "🇰🇷" : "🇻🇳"}
             </span>
+
+            <NotificationBell />
 
             <div ref={menuRef} style={{ position: "relative" }}>
               <div
