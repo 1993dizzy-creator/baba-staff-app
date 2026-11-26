@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import Container from "@/components/Container";
@@ -12,9 +12,35 @@ import {
   type NotificationFilter,
   type NotificationItem,
 } from "@/lib/notifications/types";
-import { announceNotificationsChanged, readCachedUserKey } from "@/lib/notifications/client";
+import {
+  announceNotificationsChanged,
+  getNotificationSummary,
+  getServerNotificationSummary,
+  readCachedUserKey,
+  refreshNotificationSummary,
+  subscribeNotificationSummary,
+} from "@/lib/notifications/client";
 
-type LoadState = "loading" | "ready" | "error" | "unavailable";
+type LoadState = "loading" | "ready" | "error" | "unavailable" | "denied";
+type PageResult =
+  | { kind: "ok"; items: NotificationItem[]; nextBeforeId: number | null }
+  | { kind: "unavailable" | "denied" | "error" };
+
+// A periodic refresh re-reads at most this many loaded pages; anything older is dropped and can be
+// loaded again with "more". Keeps one refresh bounded while preserving the visible list and scroll.
+const MAX_REFRESH_PAGES = 5;
+const PAGE_SIZE = 30;
+
+async function fetchPage(filter: NotificationFilter, before: number | null, signal: AbortSignal): Promise<PageResult> {
+  const query = new URLSearchParams({ filter });
+  if (before) query.set("before", String(before));
+  const response = await fetch(`/api/notifications?${query}`, { cache: "no-store", signal });
+  const json = await response.json().catch(() => null);
+  if (response.status === 401 || response.status === 403) return { kind: "denied" };
+  if (response.ok && json?.ok === true && json.available === false) return { kind: "unavailable" };
+  if (!response.ok || json?.ok !== true || json.available !== true || !Array.isArray(json.items)) return { kind: "error" };
+  return { kind: "ok", items: json.items as NotificationItem[], nextBeforeId: (json.nextBeforeId as number | null) ?? null };
+}
 
 const SEVERITY_STYLE: Record<string, CSSProperties> = {
   urgent: { background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" },
@@ -41,82 +67,135 @@ export default function NotificationsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [busyId, setBusyId] = useState<number | "all" | null>(null);
   const [actionError, setActionError] = useState("");
-  const requestRef = useRef<AbortController | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const controllerRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
   const userKeyRef = useRef<string | null>(null);
+  const itemsRef = useRef<NotificationItem[]>([]);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const summary = useSyncExternalStore(subscribeNotificationSummary, getNotificationSummary, getServerNotificationSummary);
 
-  const fetchPage = useCallback(async (nextFilter: NotificationFilter, before: number | null) => {
-    requestRef.current?.abort();
+  /** Starts a new read; any older read (and its late answer) is discarded. */
+  const begin = useCallback(() => {
+    controllerRef.current?.abort();
     const controller = new AbortController();
-    requestRef.current = controller;
-    const query = new URLSearchParams({ filter: nextFilter });
-    if (before) query.set("before", String(before));
-    try {
-      const response = await fetch(`/api/notifications?${query}`, { cache: "no-store", signal: controller.signal });
-      const json = await response.json().catch(() => null);
-      if (controller.signal.aborted) return null;
-      if (response.ok && json?.ok === true && json.available === false) return { unavailable: true as const };
-      if (!response.ok || json?.ok !== true || !Array.isArray(json.items)) return { error: true as const };
-      return { items: json.items as NotificationItem[], nextBeforeId: (json.nextBeforeId as number | null) ?? null };
-    } catch {
-      return controller.signal.aborted ? null : { error: true as const };
-    } finally {
-      if (requestRef.current === controller) requestRef.current = null;
-    }
+    controllerRef.current = controller;
+    const generation = ++generationRef.current;
+    const userKey = readCachedUserKey();
+    userKeyRef.current = userKey;
+    const current = () => generation === generationRef.current && !controller.signal.aborted && readCachedUserKey() === userKey;
+    return { signal: controller.signal, current };
+  }, []);
+
+  /** Denied (logged out / permission changed): never keep showing earlier notifications. */
+  const deny = useCallback(() => {
+    setItems([]);
+    setNextBeforeId(null);
+    setRefreshing(false);
+    setActionError("");
+    setState("denied");
   }, []);
 
   const loadFirst = useCallback(async (nextFilter: NotificationFilter) => {
-    userKeyRef.current = readCachedUserKey();
+    const { signal, current } = begin();
     setState("loading");
     setActionError("");
-    const result = await fetchPage(nextFilter, null);
-    if (!result) return;
-    if ("unavailable" in result) { setItems([]); setState("unavailable"); return; }
-    if ("error" in result) { setState("error"); return; }
+    let result: PageResult;
+    try { result = await fetchPage(nextFilter, null, signal); } catch { result = { kind: "error" }; }
+    if (!current()) return;
+    if (result.kind !== "ok") {
+      if (result.kind === "denied") deny();
+      else { setItems([]); setState(result.kind === "unavailable" ? "unavailable" : "error"); }
+      return;
+    }
     setItems(result.items);
     setNextBeforeId(result.nextBeforeId);
     setState("ready");
-  }, [fetchPage]);
+  }, [begin, deny]);
+
+  /** Re-reads the pages already on screen (new events, read/resolve changes, permission changes). */
+  const reloadLoaded = useCallback(async (nextFilter: NotificationFilter) => {
+    const pages = Math.min(MAX_REFRESH_PAGES, Math.max(1, Math.ceil(itemsRef.current.length / PAGE_SIZE)));
+    const { signal, current } = begin();
+    setRefreshing(true);
+    const collected: NotificationItem[] = [];
+    let cursor: number | null = null;
+    let outcome: PageResult = { kind: "error" };
+    try {
+      for (let page = 0; page < pages; page++) {
+        const result: PageResult = await fetchPage(nextFilter, cursor, signal);
+        outcome = result;
+        if (result.kind !== "ok") break;
+        collected.push(...result.items);
+        cursor = result.nextBeforeId;
+        if (!cursor) break;
+      }
+    } catch { outcome = { kind: "error" }; }
+    if (!current()) return;
+    setRefreshing(false);
+    if (outcome.kind === "denied") return deny();
+    if (outcome.kind === "unavailable") { setItems([]); setState("unavailable"); return; }
+    if (outcome.kind === "error") { setActionError(t.refreshFailed); return; }
+    setItems(collected);
+    setNextBeforeId(cursor);
+    setState("ready");
+    setActionError("");
+  }, [begin, deny, t.refreshFailed]);
 
   useEffect(() => {
     void loadFirst(filter);
     announceNotificationsChanged();
   }, [filter, loadFirst]);
 
+  // Follow the bell: every poll (120 s, visible only), app re-entry and manual refresh re-reads the list.
+  const lastTickRef = useRef(summary.tick);
+  useEffect(() => {
+    if (summary.tick === lastTickRef.current) return;
+    lastTickRef.current = summary.tick;
+    if (summary.userKey !== userKeyRef.current) { setItems([]); void loadFirst(filter); return; }
+    void reloadLoaded(filter);
+  }, [summary.tick, summary.userKey, filter, loadFirst, reloadLoaded]);
+
   useEffect(() => {
     // Another user on this device: never show the previous user's list.
     const onUser = () => {
       if (readCachedUserKey() !== userKeyRef.current) { setItems([]); void loadFirst(filter); }
     };
-    const onVisible = () => { if (document.visibilityState === "visible") onUser(); };
     window.addEventListener("baba_user_updated", onUser);
-    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("storage", onUser);
     return () => {
       window.removeEventListener("baba_user_updated", onUser);
-      document.removeEventListener("visibilitychange", onVisible);
-      requestRef.current?.abort();
+      window.removeEventListener("storage", onUser);
+      controllerRef.current?.abort();
     };
   }, [filter, loadFirst]);
 
   async function loadMore() {
     if (!nextBeforeId || loadingMore) return;
     setLoadingMore(true);
-    const result = await fetchPage(filter, nextBeforeId);
+    const { signal, current } = begin();
+    let result: PageResult;
+    try { result = await fetchPage(filter, nextBeforeId, signal); } catch { result = { kind: "error" }; }
     setLoadingMore(false);
-    if (!result) return;
-    if ("error" in result || "unavailable" in result) { setActionError(t.error); return; }
-    setItems((current) => {
-      const seen = new Set(current.map((item) => item.id));
-      return [...current, ...result.items.filter((item) => !seen.has(item.id))];
+    if (!current()) return;
+    if (result.kind === "denied") return deny();
+    if (result.kind !== "ok") { setActionError(t.error); return; }
+    const loaded = result;
+    setItems((existing) => {
+      const seen = new Set(existing.map((item) => item.id));
+      return [...existing, ...loaded.items.filter((item) => !seen.has(item.id))];
     });
-    setNextBeforeId(result.nextBeforeId);
+    setNextBeforeId(loaded.nextBeforeId);
   }
 
+  /** Success only when the RPC really ran (available: true); not-installed is not a success. */
   async function postRead(body: Record<string, unknown>) {
     const response = await fetch("/api/notifications/read", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store",
     });
     const json = await response.json().catch(() => null);
-    return response.ok && json?.ok === true ? json : null;
+    if (response.status === 401 || response.status === 403) { deny(); return null; }
+    return response.ok && json?.ok === true && json.available === true ? json : null;
   }
 
   async function markRead(item: NotificationItem) {
@@ -149,7 +228,7 @@ export default function NotificationsPage() {
       const json = await postRead({ all: true, upToId });
       if (!json) { setActionError(t.actionFailed); return; }
       announceNotificationsChanged();
-      await loadFirst(filter);
+      await reloadLoaded(filter);
     } catch {
       setActionError(t.actionFailed);
     } finally {
@@ -169,11 +248,23 @@ export default function NotificationsPage() {
     <Container>
       <div style={styles.headerRow}>
         <h1 style={styles.title}>{t.title}</h1>
-        {state === "ready" && hasUnread ? (
-          <button type="button" style={styles.secondaryButton} disabled={busyId !== null} onClick={markAll}>
-            {t.markAllRead}
-          </button>
-        ) : null}
+        <div style={styles.headerActions}>
+          {state === "ready" || state === "error" ? (
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              disabled={refreshing || busyId !== null}
+              onClick={() => void refreshNotificationSummary("manual")}
+            >
+              {refreshing ? t.loading : t.refresh}
+            </button>
+          ) : null}
+          {state === "ready" && hasUnread ? (
+            <button type="button" style={styles.secondaryButton} disabled={busyId !== null} onClick={markAll}>
+              {t.markAllRead}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <nav style={styles.filters} aria-label={t.title}>
@@ -194,6 +285,7 @@ export default function NotificationsPage() {
 
       {state === "loading" ? <p style={styles.status}>{t.loading}</p> : null}
       {state === "unavailable" ? <p style={styles.status}>{t.notInstalled}</p> : null}
+      {state === "denied" ? <p role="alert" style={styles.status}>{t.denied}</p> : null}
       {state === "error" ? (
         <div style={styles.errorBox} role="alert">
           <span>{t.error}</span>
@@ -253,6 +345,7 @@ export default function NotificationsPage() {
 
 const styles = {
   headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 },
+  headerActions: { display: "flex", gap: 8, flexShrink: 0 },
   title: { margin: 0, fontSize: 20, fontWeight: 800, color: "#111827" },
   filters: { display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 12 },
   filter: {

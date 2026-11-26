@@ -3,7 +3,7 @@
 -- * Everything lives in the private schema notification_private. Tables have RLS enabled and NO
 --   policies, and every privilege is revoked from public/anon/authenticated/service_role. The app
 --   (service_role) reaches the data only through the security-definer public.notification_*_v1
---   RPCs. Actor RPCs re-derive role/position/part from public.users (active + app login enabled);
+--   RPCs. Actor RPCs re-derive role/part from public.users (active + app login enabled);
 --   the caller never supplies them.
 -- * Business state (notifications.status open/resolved) and per-user read state
 --   (recipients.read_at) are separate facts. Reading never resolves; resolving never reads.
@@ -17,13 +17,20 @@
 --   never back-fills older events to new recipients, and someone who lost access stops seeing
 --   older events and their unread count.
 -- * Recipient rules (policies.rules):
---     {"groups":[{"roles":[..],"positions":[..],"parts":[..]}, ..], "userIds":[..]}
+--     {"groups":[{"roles":[..],"parts":[..]}, ..], "userIds":[..]}
 --   Inside one group the attributes are ANDed; groups are ORed; userIds are an extra allow list.
+--   "roles" is the staff rank (직급). users.role is the single source of rank and permission
+--   (lib/common/roles.ts); the legacy users.position mirror is deliberately not used.
 --   An empty/missing attribute list means "any value, NULL included". A non-empty list never
 --   matches NULL. A group with every list empty means "every active staff member". Everything is
 --   still intersected with types.access_roles, so a rule can never widen business access.
 -- * Inactive (is_active=false) or login-disabled (app_login_enabled=false) accounts never receive
 --   and never see notifications.
+-- * Event ids follow commit order: every first observation takes one transaction-scoped advisory
+--   lock before its INSERT, so an uncommitted event can never hold a lower id than a committed one.
+--   "Mark all read up to id N" therefore never reaches an event the user could not have seen.
+-- * Resolution names the occurrence (notification id + type + key), so a duplicate or delayed
+--   resolution of an earlier occurrence can never resolve a recurrence with the same key.
 -- * No retention cron, no realtime publication, no push delivery (01-B adds push tables/columns).
 -- * Writes no existing table. Does not touch any existing function, role or row.
 
@@ -150,9 +157,9 @@ $$;
 
 -- Active, login-enabled staff member; no row otherwise.
 create function notification_private.actor(p_user_id bigint)
-returns table (id bigint, role text, position_value text, part text)
+returns table (id bigint, role text, part text)
 language sql stable security definer set search_path = pg_catalog, public as $$
-  select u.id::bigint, notification_private.norm(u.role), notification_private.norm(u.position), notification_private.norm(u.part)
+  select u.id::bigint, notification_private.norm(u.role), notification_private.norm(u.part)
   from public.users u
   where u.id = p_user_id and u.is_active is true and u.app_login_enabled is true
 $$;
@@ -172,7 +179,7 @@ language sql immutable set search_path = pg_catalog as $$
 $$;
 
 create function notification_private.rules_match(
-  p_rules jsonb, p_user_id bigint, p_role text, p_position text, p_part text
+  p_rules jsonb, p_user_id bigint, p_role text, p_part text
 ) returns boolean language sql immutable set search_path = pg_catalog as $$
   select coalesce(
     (jsonb_typeof(p_rules -> 'userIds') = 'array' and (p_rules -> 'userIds') @> to_jsonb(p_user_id))
@@ -181,7 +188,6 @@ create function notification_private.rules_match(
         then p_rules -> 'groups' else '[]'::jsonb end) g
       where jsonb_typeof(g) = 'object'
         and notification_private.attr_match(g -> 'roles', p_role)
-        and notification_private.attr_match(g -> 'positions', p_position)
         and notification_private.attr_match(g -> 'parts', p_part)),
     false)
 $$;
@@ -189,10 +195,10 @@ $$;
 -- Display gate shared by list/count/read: current account state x access ceiling x current policy.
 create function notification_private.can_see(
   p_access_roles text[], p_enabled boolean, p_in_app boolean, p_rules jsonb,
-  p_user_id bigint, p_role text, p_position text, p_part text
+  p_user_id bigint, p_role text, p_part text
 ) returns boolean language sql immutable set search_path = pg_catalog as $$
   select coalesce(p_enabled and p_in_app and p_role = any(p_access_roles)
-    and notification_private.rules_match(p_rules, p_user_id, p_role, p_position, p_part), false)
+    and notification_private.rules_match(p_rules, p_user_id, p_role, p_part), false)
 $$;
 
 -- Normalizes and validates a rules object; null when invalid.
@@ -208,12 +214,11 @@ begin
     if jsonb_typeof(p_rules -> 'groups') <> 'array' or jsonb_array_length(p_rules -> 'groups') > 20 then return null; end if;
     for v_group in select value from jsonb_array_elements(p_rules -> 'groups') loop
       if jsonb_typeof(v_group) <> 'object' then return null; end if;
-      if exists (select 1 from jsonb_object_keys(v_group) k where k not in ('roles', 'positions', 'parts')) then return null; end if;
+      if exists (select 1 from jsonb_object_keys(v_group) k where k not in ('roles', 'parts')) then return null; end if;
       v_out := '{}'::jsonb;
-      foreach v_key in array array['roles', 'positions', 'parts'] loop
+      foreach v_key in array array['roles', 'parts'] loop
         v_allowed := case v_key
           when 'roles' then array['owner', 'master', 'manager', 'leader', 'staff']
-          when 'positions' then array['owner', 'manager', 'leader', 'staff']
           else array['owner', 'hall', 'bar', 'kitchen', 'cleaning', 'etc'] end;
         v_list := coalesce(v_group -> v_key, '[]'::jsonb);
         if jsonb_typeof(v_list) <> 'array' then return null; end if;
@@ -287,6 +292,8 @@ begin
     if not found or not v_policy.enabled then return jsonb_build_object('status', 'disabled'); end if;
 
     -- 2) Atomic first observation; a concurrent winner turns this into an observation.
+    --    The advisory lock (held until commit) serializes id allocation with commit order.
+    perform pg_advisory_xact_lock(20261126, 1);
     insert into notification_private.notifications as n (type_code, domain, dedupe_key, severity, title_ko, title_vi,
       body_ko, body_vi, subject_type, subject_id, href, policy_revision)
     values (p_type_code, v_type.domain, p_dedupe_key, v_severity, p_payload ->> 'titleKo', p_payload ->> 'titleVi',
@@ -307,27 +314,38 @@ begin
   select v_id, a.id from public.users u
   cross join lateral notification_private.actor(u.id) a
   where notification_private.can_see(v_type.access_roles, true, true, v_policy.rules,
-    a.id, a.role, a.position_value, a.part);
+    a.id, a.role, a.part);
   get diagnostics v_count = row_count;
   update notification_private.notifications set recipient_count = v_count where id = v_id;
   return jsonb_build_object('status', 'created', 'id', v_id, 'recipientCount', v_count);
 end $$;
 
--- Marks the open event resolved (business fact). Never changes anyone's read state.
-create function public.notification_resolve_v1(p_type_code text, p_dedupe_key text, p_reason text, p_evidence jsonb)
-returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_id bigint;
+-- Resolves ONE occurrence (business fact). The caller names the occurrence it verified
+-- (notification id returned by notification_upsert_v1) together with its type and key, after
+-- re-checking the source business state. A duplicate or delayed request for an earlier occurrence
+-- returns already_resolved and never touches a recurrence that reuses the same dedupe_key.
+-- Never changes anyone's read state.
+create function public.notification_resolve_v1(
+  p_notification_id bigint, p_type_code text, p_dedupe_key text, p_reason text, p_evidence jsonb
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_row notification_private.notifications;
 begin
-  if p_reason is null or p_reason !~ '^[a-z][a-z0-9_]{0,59}$'
+  if p_notification_id is null or p_notification_id < 1 or p_reason is null or p_reason !~ '^[a-z][a-z0-9_]{0,59}$'
     or (p_evidence is not null and (jsonb_typeof(p_evidence) <> 'object' or char_length(p_evidence::text) > 2000)) then
     return jsonb_build_object('status', 'invalid_input');
   end if;
+  -- Row lock: concurrent resolutions of the same occurrence serialize; the loser sees 'resolved'.
+  select * into v_row from notification_private.notifications
+  where id = p_notification_id and type_code = p_type_code and dedupe_key = p_dedupe_key
+  for update;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if v_row.status = 'resolved' then
+    return jsonb_build_object('status', 'already_resolved', 'id', v_row.id, 'resolvedAt', v_row.resolved_at);
+  end if;
   update notification_private.notifications set status = 'resolved', resolved_at = now(),
     resolution_reason = p_reason, resolution_evidence = p_evidence
-  where type_code = p_type_code and dedupe_key = p_dedupe_key and status = 'open'
-  returning id into v_id;
-  if v_id is null then return jsonb_build_object('status', 'not_open'); end if;
-  return jsonb_build_object('status', 'resolved', 'id', v_id);
+  where id = v_row.id;
+  return jsonb_build_object('status', 'resolved', 'id', v_row.id);
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -358,7 +376,7 @@ begin
       and (p_filter <> 'unread' or r.read_at is null)
       and (p_filter not in ('open', 'resolved') or n.status = p_filter)
       and notification_private.can_see(t.access_roles, p.enabled, p.in_app_enabled, p.rules,
-        v_actor.id, v_actor.role, v_actor.position_value, v_actor.part)
+        v_actor.id, v_actor.role, v_actor.part)
     order by r.notification_id desc
     limit v_limit + 1
   )
@@ -388,7 +406,7 @@ begin
     join notification_private.policies p on p.type_code = n.type_code
     where r.user_id = v_actor.id and r.read_at is null
       and notification_private.can_see(t.access_roles, p.enabled, p.in_app_enabled, p.rules,
-        v_actor.id, v_actor.role, v_actor.position_value, v_actor.part)
+        v_actor.id, v_actor.role, v_actor.part)
     limit 100) s;
   return jsonb_build_object('status', 'ok', 'unreadCount', v_count, 'capped', v_count >= 100);
 end $$;
@@ -402,7 +420,7 @@ begin
   if not found then return jsonb_build_object('status', 'forbidden'); end if;
   if p_notification_id is null or p_notification_id < 1 then return jsonb_build_object('status', 'invalid_input'); end if;
   select notification_private.can_see(t.access_roles, p.enabled, p.in_app_enabled, p.rules,
-      v_actor.id, v_actor.role, v_actor.position_value, v_actor.part)
+      v_actor.id, v_actor.role, v_actor.part)
   into v_visible
   from notification_private.recipients r
   join notification_private.notifications n on n.id = r.notification_id
@@ -429,7 +447,7 @@ begin
   where r.user_id = v_actor.id and r.read_at is null and r.notification_id <= p_up_to_id
     and n.id = r.notification_id and t.code = n.type_code and p.type_code = n.type_code
     and notification_private.can_see(t.access_roles, p.enabled, p.in_app_enabled, p.rules,
-      v_actor.id, v_actor.role, v_actor.position_value, v_actor.part);
+      v_actor.id, v_actor.role, v_actor.part);
   get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'updated', v_count);
 end $$;
@@ -450,12 +468,12 @@ begin
         'updatedByName', (select coalesce(nullif(u.name, ''), nullif(u.full_name, ''), u.username) from public.users u where u.id = p.updated_by),
         'matchedUserIds', coalesce((select jsonb_agg(a.id order by a.id) from public.users u
             cross join lateral notification_private.actor(u.id) a
-            where notification_private.can_see(t.access_roles, true, true, p.rules, a.id, a.role, a.position_value, a.part)), '[]'::jsonb))
+            where notification_private.can_see(t.access_roles, true, true, p.rules, a.id, a.role, a.part)), '[]'::jsonb))
         order by t.domain, t.code)
       from notification_private.types t join notification_private.policies p on p.type_code = t.code), '[]'::jsonb),
     'staff', coalesce((select jsonb_agg(jsonb_build_object('id', a.id,
         'name', coalesce(nullif(u.name, ''), nullif(u.full_name, ''), u.username),
-        'role', a.role, 'position', a.position_value, 'part', a.part) order by a.id)
+        'role', a.role, 'part', a.part) order by a.id)
       from public.users u cross join lateral notification_private.actor(u.id) a), '[]'::jsonb),
     'audit', coalesce((select jsonb_agg(x order by (x ->> 'id')::bigint desc) from (
         select jsonb_build_object('id', l.id, 'typeCode', l.type_code, 'revision', l.revision, 'changedAt', l.changed_at,
@@ -508,7 +526,7 @@ insert into notification_private.types (code, domain, access_roles, default_seve
   ('inventory.pos_deduction_pending', 'inventory', array['owner', 'master', 'manager', 'leader'], 'warning');
 
 insert into notification_private.policies (type_code, enabled, in_app_enabled, rules)
-select code, false, true, '{"groups":[{"roles":["owner","master"],"positions":[],"parts":[]}],"userIds":[]}'::jsonb
+select code, false, true, '{"groups":[{"roles":["owner","master"],"parts":[]}],"userIds":[]}'::jsonb
 from notification_private.types;
 
 -- ---------------------------------------------------------------------------------------------
@@ -520,7 +538,7 @@ revoke all on all sequences in schema notification_private from public, anon, au
 revoke all on all functions in schema notification_private from public, anon, authenticated, service_role;
 
 revoke all on function public.notification_upsert_v1(text, text, jsonb) from public, anon, authenticated;
-revoke all on function public.notification_resolve_v1(text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.notification_resolve_v1(bigint, text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.notification_list_v1(bigint, text, bigint, integer) from public, anon, authenticated;
 revoke all on function public.notification_unread_count_v1(bigint) from public, anon, authenticated;
 revoke all on function public.notification_mark_read_v1(bigint, bigint) from public, anon, authenticated;
@@ -529,7 +547,7 @@ revoke all on function public.notification_policy_list_v1(bigint) from public, a
 revoke all on function public.notification_policy_update_v1(bigint, text, integer, jsonb) from public, anon, authenticated;
 
 grant execute on function public.notification_upsert_v1(text, text, jsonb) to service_role;
-grant execute on function public.notification_resolve_v1(text, text, text, jsonb) to service_role;
+grant execute on function public.notification_resolve_v1(bigint, text, text, text, jsonb) to service_role;
 grant execute on function public.notification_list_v1(bigint, text, bigint, integer) to service_role;
 grant execute on function public.notification_unread_count_v1(bigint) to service_role;
 grant execute on function public.notification_mark_read_v1(bigint, bigint) to service_role;

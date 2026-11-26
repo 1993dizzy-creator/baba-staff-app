@@ -7,7 +7,6 @@ import { getPartMeta } from "@/lib/common/parts";
 import { notificationSettingsText } from "@/lib/text/notifications";
 import {
   NOTIFICATION_RULE_PARTS,
-  NOTIFICATION_RULE_POSITIONS,
   NOTIFICATION_RULE_ROLES,
   previewRecipients,
 } from "@/lib/notifications/rules";
@@ -18,7 +17,7 @@ import type {
 } from "@/lib/notifications/types";
 
 type Lang = "ko" | "vi";
-type Group = { roles: string[]; positions: string[]; parts: string[] };
+type Group = { roles: string[]; parts: string[] };
 type Draft = { enabled: boolean; inAppEnabled: boolean; groups: Group[]; userIds: number[] };
 type LoadState = "loading" | "ready" | "error" | "unavailable" | "forbidden";
 
@@ -26,7 +25,7 @@ const toDraft = (type: NotificationTypePolicy): Draft => ({
   enabled: type.enabled,
   inAppEnabled: type.inAppEnabled,
   groups: (type.rules.groups ?? []).map((group) => ({
-    roles: [...(group.roles ?? [])], positions: [...(group.positions ?? [])], parts: [...(group.parts ?? [])],
+    roles: [...(group.roles ?? [])], parts: [...(group.parts ?? [])],
   })),
   userIds: [...(type.rules.userIds ?? [])],
 });
@@ -174,7 +173,6 @@ export default function NotificationSettingsTab({ lang }: { lang: Lang }) {
                 </div>
                 {([
                   ["roles", t.roles, NOTIFICATION_RULE_ROLES, (v: string) => getEmployeeRoleLabel(v, lang)],
-                  ["positions", t.positions, NOTIFICATION_RULE_POSITIONS, (v: string) => getEmployeeRoleLabel(v, lang)],
                   ["parts", t.parts, NOTIFICATION_RULE_PARTS, (v: string) => partLabel(v)],
                 ] as const).map(([key, label, values, display]) => (
                   <div key={key} style={styles.attrRow} data-testid={`rule-${key}`}>
@@ -204,7 +202,7 @@ export default function NotificationSettingsTab({ lang }: { lang: Lang }) {
               type="button"
               style={styles.secondary}
               disabled={draft.groups.length >= 20}
-              onClick={() => update(type.code, (d) => ({ ...d, groups: [...d.groups, { roles: [], positions: [], parts: [] }] }))}
+              onClick={() => update(type.code, (d) => ({ ...d, groups: [...d.groups, { roles: [], parts: [] }] }))}
             >
               + {t.addGroup}
             </button>

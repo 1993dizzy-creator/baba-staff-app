@@ -20,7 +20,7 @@ const ORDER = {
   notification_policy_list_v1: ['p_actor_user_id'],
   notification_policy_update_v1: ['p_actor_user_id', 'p_type_code', 'p_expected_revision', 'p_policy'],
   notification_upsert_v1: ['p_type_code', 'p_dedupe_key', 'p_payload'],
-  notification_resolve_v1: ['p_type_code', 'p_dedupe_key', 'p_reason', 'p_evidence'],
+  notification_resolve_v1: ['p_notification_id', 'p_type_code', 'p_dedupe_key', 'p_reason', 'p_evidence'],
 };
 const JSONB = new Set(['p_policy', 'p_payload', 'p_evidence']);
 
@@ -162,6 +162,7 @@ test('settings: owner/master only; validation; revision conflict; staff never re
     const body = { typeCode: 'inventory.pos_deduction_pending', expectedRevision: 1, enabled: true, inAppEnabled: true,
       rules: { groups: [{ roles: ['leader'], parts: ['bar'] }, { roles: ['manager'] }], userIds: [U.owner] } };
     for (const bad of [{ ...body, pushEnabled: true }, { ...body, rules: { groups: [{ parts: ['garden'] }] } }, { ...body, expectedRevision: 0 },
+      { ...body, rules: { groups: [{ positions: ['owner'] }] } },
       { ...body, typeCode: 'Bad Code' }, { ...body, rules: { groups: [], userIds: ['1'] } }, { ...body, enabled: 'true' }]) {
       assert.equal((await a.send('settings', 'PUT', { body: bad })).status, 400, JSON.stringify(bad));
     }
@@ -211,10 +212,17 @@ test('server-internal writer validates before the DB; no browser route can creat
     const created = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'writer:1', titleKo: '알림', titleVi: 'TB', href: '/admin/sales' });
     assert.equal(created.status, 'created');
     assert.equal((await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'writer:1', titleKo: '알림', titleVi: 'TB' })).status, 'observed');
-    assert.deepEqual(await a.server.resolveNotification({ typeCode: 'system.test_all', dedupeKey: 'writer:1', reason: 'business_resolved' }), { status: 'resolved', id: created.id });
+    assert.deepEqual(await a.server.resolveNotification({ notificationId: created.id, typeCode: 'system.test_all', dedupeKey: 'writer:1', reason: 'business_resolved' }), { status: 'resolved', id: created.id });
+    const recur = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'writer:1', titleKo: '알림', titleVi: 'TB' });
+    assert.equal(recur.status, 'created');
+    const late = await a.server.resolveNotification({ notificationId: created.id, typeCode: 'system.test_all', dedupeKey: 'writer:1', reason: 'business_resolved' });
+    assert.equal(late.status, 'already_resolved', 'late call for the first occurrence leaves the recurrence open');
+    const callsBefore = a.calls.length;
+    assert.deepEqual(await a.server.resolveNotification({ typeCode: 'system.test_all', dedupeKey: 'writer:1', reason: 'business_resolved' }), { status: 'invalid_input' });
+    assert.equal(a.calls.length, callsBefore, 'an occurrence id is required before reaching the DB');
     // No route file references the writer RPCs or helpers.
     const files = [];
-    const walk = dir => { for (const name of readdirSync(dir)) { const p = path.join(dir, name); statSync(p).isDirectory() ? walk(p) : files.push(p); } };
+    const walk = dir => { for (const name of readdirSync(dir)) { const p = path.join(dir, name); if (statSync(p).isDirectory()) walk(p); else files.push(p); } };
     walk('app');
     const offenders = files.filter(f => /\.(ts|tsx)$/.test(f) && /notification_upsert_v1|notification_resolve_v1|upsertNotification|resolveNotification/.test(readFileSync(f, 'utf8')));
     assert.deepEqual(offenders, []);

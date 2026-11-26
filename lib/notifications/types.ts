@@ -41,7 +41,7 @@ export type NotificationTypePolicy = {
   defaultSeverity: NotificationSeverity;
   enabled: boolean;
   inAppEnabled: boolean;
-  rules: { groups: Array<{ roles: string[]; positions: string[]; parts: string[] }>; userIds: number[] };
+  rules: { groups: Array<{ roles: string[]; parts: string[] }>; userIds: number[] };
   revision: number;
   updatedAt: string;
   updatedByName: string | null;
@@ -52,7 +52,6 @@ export type NotificationStaff = {
   id: number;
   name: string;
   role: string | null;
-  position: string | null;
   part: string | null;
 };
 

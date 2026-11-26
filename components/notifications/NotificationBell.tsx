@@ -27,10 +27,10 @@ function Bell() {
     const start = () => {
       stop();
       if (!visible()) return;
-      timer = setInterval(() => { if (visible()) void refreshNotificationSummary(); }, NOTIFICATION_POLL_MS);
+      timer = setInterval(() => { if (visible()) void refreshNotificationSummary("poll"); }, NOTIFICATION_POLL_MS);
     };
     const onVisibility = () => {
-      if (visible()) { void refreshNotificationSummary(); start(); } else stop();
+      if (visible()) { void refreshNotificationSummary("resume"); start(); } else stop();
     };
     const onUserChange = () => { syncNotificationUser(); void refreshNotificationSummary(); };
     const onChanged = () => { void refreshNotificationSummary(); };

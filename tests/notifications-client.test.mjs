@@ -32,18 +32,33 @@ test('summary store: one request in flight, failure keeps unknown, user switch a
   assert.equal(calls, 1, 'concurrent refreshes share one request');
   pending.resolve(reply(200, { ok: true, available: true, unreadCount: 3 }));
   await Promise.all([a, b]);
-  assert.deepEqual(client.getNotificationSummary(), { userKey: '8', available: true, unreadCount: 3, failed: false });
+  assert.deepEqual(client.getNotificationSummary(), { userKey: '8', available: true, unreadCount: 3, failed: false, tick: 0 },
+    'a change-triggered refresh does not advance the center tick');
 
-  const failing = client.refreshNotificationSummary();
+  const failing = client.refreshNotificationSummary('poll');
   pending.resolve(reply(503, { ok: false, code: 'NOTIFICATIONS_UNAVAILABLE' }));
   await failing;
-  assert.deepEqual(client.getNotificationSummary(), { userKey: '8', available: true, unreadCount: 3, failed: true },
-    'a failure keeps the last known count and flags it; never 0');
+  assert.deepEqual(client.getNotificationSummary(), { userKey: '8', available: true, unreadCount: 3, failed: true, tick: 1 },
+    'a transient failure keeps the last known count and flags it; never 0; poll still advances the tick');
+
+  // A poll joining an in-flight change refresh shares the request but still advances the tick.
+  const change = client.refreshNotificationSummary('change');
+  const joined = client.refreshNotificationSummary('resume');
+  assert.equal(calls, 3);
+  pending.resolve(reply(200, { ok: true, available: true, unreadCount: 4 }));
+  await Promise.all([change, joined]);
+  assert.deepEqual([client.getNotificationSummary().unreadCount, client.getNotificationSummary().tick], [4, 2]);
+
+  // Denied (session revoked / permission changed): the cached count is dropped, not kept.
+  const denied = client.refreshNotificationSummary('manual');
+  pending.resolve(reply(401, { ok: false, code: 'RELOGIN_REQUIRED' }));
+  await denied;
+  assert.deepEqual(client.getNotificationSummary(), { userKey: '8', available: true, unreadCount: null, failed: true, tick: 3 });
 
   // Another user logs in on the device: the previous count disappears before any response.
   login(9);
   const switching = client.refreshNotificationSummary();
-  assert.deepEqual(client.getNotificationSummary(), { userKey: '9', available: null, unreadCount: null, failed: false });
+  assert.deepEqual(client.getNotificationSummary(), { userKey: '9', available: null, unreadCount: null, failed: false, tick: 0 });
   pending.resolve(reply(500, null));
   await switching;
   assert.equal(client.getNotificationSummary().unreadCount, null, 'first-ever failure stays unknown, not 0');
@@ -102,12 +117,19 @@ test('static UI contracts: header kept, bell isolated, center safe, leave popup 
   // Bell: 120 s polling only while visible, error boundary, hidden until available.
   assert.match(client, /NOTIFICATION_POLL_MS = 120_000/);
   assert.match(bell, /document\.visibilityState === "visible"/);
-  assert.match(bell, /if \(visible\(\)\) void refreshNotificationSummary\(\)/);
+  assert.match(bell, /if \(visible\(\)\) void refreshNotificationSummary\("poll"\)/);
+  assert.match(bell, /void refreshNotificationSummary\("resume"\); start\(\);/);
   assert.match(bell, /class BellBoundary/);
   assert.match(bell, /if \(summary\.available !== true\) return null;/);
   assert.ok(!/Audio|vibrate|Notification\.requestPermission|serviceWorker|PushManager/.test(bell + center + client), 'no sound, vibration or push in 01-A');
   // Center: validated internal navigation only.
   assert.match(center, /if \(!isSafeInternalHref\(item\.href\)\) return;/);
+  // Center follows the bell's poll/resume/manual tick, drops late answers, and clears on denial.
+  assert.match(center, /if \(summary\.tick === lastTickRef\.current\) return;/);
+  assert.match(center, /generation === generationRef\.current && !controller\.signal\.aborted && readCachedUserKey\(\) === userKey/);
+  assert.match(center, /if \(response\.status === 401 \|\| response\.status === 403\) return \{ kind: "denied" \};/);
+  assert.match(center, /json\.available === true \? json : null/, 'read success requires the RPC to have run');
+  assert.match(center, /refreshNotificationSummary\("manual"\)/);
   assert.ok(!/dangerouslySetInnerHTML|window\.open|location\.href\s*=/.test(center));
   for (const filter of ['all', 'unread', 'open', 'resolved']) assert.match(readFileSync('lib/text/notifications.ts', 'utf8'), new RegExp(`${filter}: "`));
 });

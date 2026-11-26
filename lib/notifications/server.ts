@@ -6,6 +6,7 @@ import {
   NOTIFICATION_PAGE_SIZE,
   NOTIFICATION_SEVERITIES,
   isNotificationDedupeKey,
+  isNotificationId,
   isNotificationTypeCode,
   isSafeInternalHref,
   type NotificationSeverity,
@@ -123,14 +124,25 @@ export async function upsertNotification(input: NotificationWriteInput): Promise
   return outcome.data as NotificationWriteResult;
 }
 
-export async function resolveNotification(input: { typeCode: string; dedupeKey: string; reason: string; evidence?: Record<string, unknown> | null }) {
-  if (!isNotificationTypeCode(input.typeCode) || !isNotificationDedupeKey(input.dedupeKey) || !/^[a-z][a-z0-9_]{0,59}$/.test(input.reason)) {
+/**
+ * Resolves ONE occurrence: pass the id returned by upsertNotification for the event whose source
+ * business state the caller has just re-checked. A late or duplicate call for an earlier
+ * occurrence returns already_resolved and never resolves a recurrence with the same key.
+ */
+export async function resolveNotification(input: {
+  notificationId: number; typeCode: string; dedupeKey: string; reason: string; evidence?: Record<string, unknown> | null;
+}) {
+  if (!isNotificationId(input.notificationId) || !isNotificationTypeCode(input.typeCode)
+    || !isNotificationDedupeKey(input.dedupeKey) || !/^[a-z][a-z0-9_]{0,59}$/.test(input.reason)) {
     return { status: "invalid_input" as const };
   }
   const outcome = await callRpc("notification_resolve_v1", {
-    p_type_code: input.typeCode, p_dedupe_key: input.dedupeKey, p_reason: input.reason, p_evidence: input.evidence ?? null,
+    p_notification_id: input.notificationId, p_type_code: input.typeCode, p_dedupe_key: input.dedupeKey, p_reason: input.reason, p_evidence: input.evidence ?? null,
   });
   if (outcome.kind === "missing") return { status: "not_installed" as const };
   if (outcome.kind === "failed") return { status: "failed" as const };
-  return outcome.data as { status: "resolved"; id: number } | { status: "not_open" | "invalid_input" };
+  return outcome.data as
+    | { status: "resolved"; id: number }
+    | { status: "already_resolved"; id: number; resolvedAt: string }
+    | { status: "not_found" | "invalid_input" };
 }

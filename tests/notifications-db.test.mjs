@@ -27,8 +27,8 @@ const call = async (db, fn, args) => (await asRole(db, 'service_role',
   args.map(a => (a?.cast ? a.v : a))))[0].r;
 const j = v => ({ v: v === null ? null : JSON.stringify(v), cast: '::jsonb' });
 const upsert = (db, type, key, extra) => call(db, 'notification_upsert_v1', [type, key, j(payload(extra))]);
-const resolve = (db, type, key, reason = 'business_resolved', evidence = { checkedBy: 'test' }) =>
-  call(db, 'notification_resolve_v1', [type, key, reason, j(evidence)]);
+const resolve = (db, id, type, key, reason = 'business_resolved', evidence = { checkedBy: 'test' }) =>
+  call(db, 'notification_resolve_v1', [id, type, key, reason, j(evidence)]);
 const list = (db, user, filter = 'all', before = null, limit = 30) => call(db, 'notification_list_v1', [user, filter, before, limit]);
 const count = async (db, user) => (await call(db, 'notification_unread_count_v1', [user])).unreadCount;
 const ids = r => r.items.map(i => i.id);
@@ -83,9 +83,9 @@ test('dedupe: first observation creates once; repeats keep read state; resolve t
     assert.equal((await rows(db, 'select count(*)::int n from notification_private.recipients'))[0].n, 10, 'no extra recipients');
 
     // Resolve is a business fact: read state unchanged, other users still unread.
-    const res = await resolve(db, 'system.test_all', 'evt:1');
+    const res = await resolve(db, first.id, 'system.test_all', 'evt:1');
     assert.deepEqual([res.status, res.id], ['resolved', first.id]);
-    assert.equal((await resolve(db, 'system.test_all', 'evt:1')).status, 'not_open');
+    assert.equal((await resolve(db, first.id, 'system.test_all', 'evt:1')).status, 'already_resolved');
     assert.equal(await count(db, U.staffHall), 1, 'resolving does not mark read');
     assert.equal(await count(db, U.staffBar), 0);
     const [r] = await rows(db, 'select status, resolved_at, resolution_reason, resolution_evidence from notification_private.notifications where id=$1', [first.id]);
@@ -96,6 +96,17 @@ test('dedupe: first observation creates once; repeats keep read state; resolve t
     const recur = await upsert(db, 'system.test_all', 'evt:1');
     assert.equal(recur.status, 'created'); assert.notEqual(recur.id, first.id);
     assert.equal(await count(db, U.staffBar), 1);
+    // A duplicate / delayed resolution of the FIRST occurrence never resolves the recurrence.
+    const late = await resolve(db, first.id, 'system.test_all', 'evt:1', 'late_retry', { attempt: 2 });
+    assert.equal(late.status, 'already_resolved');
+    const [again] = await rows(db, 'select status, resolution_reason from notification_private.notifications where id=$1', [recur.id]);
+    assert.deepEqual([again.status, again.resolution_reason], ['open', null]);
+    const [kept] = await rows(db, 'select resolution_reason from notification_private.notifications where id=$1', [first.id]);
+    assert.equal(kept.resolution_reason, 'business_resolved', 'original resolution evidence kept');
+    // The id must belong to the same type and key; any mismatch is not_found.
+    assert.equal((await resolve(db, recur.id, 'system.test_all', 'evt:other')).status, 'not_found');
+    assert.equal((await resolve(db, recur.id, 'sales.test_manager', 'evt:1')).status, 'not_found');
+    assert.equal((await resolve(db, null, 'system.test_all', 'evt:1')).status, 'invalid_input');
     // Direct duplicate open rows are impossible even outside the RPC.
     await assert.rejects(db.query(`insert into notification_private.notifications (type_code, domain, dedupe_key, severity, title_ko, title_vi, policy_revision)
       values ('system.test_all','system','evt:1','normal','a','b',1)`), /duplicate key/);
@@ -118,7 +129,7 @@ test('reading never resolves; mark-all is per user and bounded by the shown id',
     const statuses = await rows(db, 'select status from notification_private.notifications order by id');
     assert.ok(statuses.every(s => s.status === 'open'), 'mark read / mark all never resolves');
     assert.deepEqual(ids(await list(db, U.staffBar, 'open')), [c.id, b.id, a.id]);
-    await resolve(db, 'system.test_all', 'evt:a');
+    await resolve(db, a.id, 'system.test_all', 'evt:a');
     assert.deepEqual(ids(await list(db, U.staffBar, 'resolved')), [a.id]);
     assert.deepEqual(ids(await list(db, U.staffBar, 'open')), [c.id, b.id]);
     assert.equal((await call(db, 'notification_mark_all_read_v1', [U.staffBar, null])).status, 'invalid_input');
@@ -162,14 +173,15 @@ test('recipient rules: AND inside a group, OR across groups, personal allow list
       ['manager OR hall leader', { groups: [{ roles: ['manager'] }, { roles: ['leader'], parts: ['hall'] }] }, [U.managerHall, U.leaderHall]],
       ['one person', { groups: [], userIds: [U.staffBar] }, [U.staffBar]],
       ['all active staff', { groups: [{}] }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 12]],
-      ['position filter (legacy owner position)', { groups: [{ positions: ['owner'] }] }, [U.owner, U.master]],
+      ['rank is role: master with NULL legacy position/part is still a master', { groups: [{ roles: ['master'] }] }, [U.master, U.masterNull]],
+      ['rank AND part: owner part only (master without part excluded)', { groups: [{ roles: ['owner', 'master'], parts: ['owner'] }] }, [U.owner, U.master]],
       ['part list never matches NULL part', { groups: [{ parts: ['owner', 'hall', 'bar', 'kitchen', 'cleaning', 'etc'] }] }, [1, 2, 4, 5, 6, 7, 8, 9]],
       ['empty part list matches NULL part', { groups: [{ roles: ['staff'] }] }, [U.staffBar, U.staffHall, U.staffNullPart]],
       ['group OR personal', { groups: [{ roles: ['leader'], parts: ['bar'] }], userIds: [U.owner] }, [U.owner, U.leaderBar]],
       ['inactive/login-off personal ids never receive', { groups: [], userIds: [U.staffKitchenInactive, U.staffHallNoLogin] }, []],
       ['nobody', { groups: [], userIds: [] }, []],
     ];
-    const staff = await rows(db, `select a.id::int id, a.role, a.position_value position, a.part from public.users u
+    const staff = await rows(db, `select a.id::int id, a.role, a.part from public.users u
       cross join lateral notification_private.actor(u.id) a`);
     let k = 0;
     for (const [label, rules, expected] of cases) {
@@ -271,8 +283,9 @@ test('writer validation: internal paths only, bounded payload, unknown type, no 
     assert.equal((await call(db, 'notification_upsert_v1', ['system.test_all', 'extra', j({ ...payload(), userId: 1 })])).status, 'invalid_input');
     assert.equal((await call(db, 'notification_upsert_v1', ['system.test_all', 'num', j({ ...payload(), titleKo: 5 })])).status, 'invalid_input');
     assert.equal((await upsert(db, 'nope.missing', 'x')).status, 'unknown_type');
-    assert.equal((await resolve(db, 'system.test_all', 'ok-href', 'Bad Reason')).status, 'invalid_input');
-    assert.equal((await resolve(db, 'system.test_all', 'ok-href', 'ok', ['not-object'])).status, 'invalid_input');
+    const okHref = (await rows(db, "select id::int id from notification_private.notifications where dedupe_key='ok-href'"))[0].id;
+    assert.equal((await resolve(db, okHref, 'system.test_all', 'ok-href', 'Bad Reason')).status, 'invalid_input');
+    assert.equal((await resolve(db, okHref, 'system.test_all', 'ok-href', 'ok', ['not-object'])).status, 'invalid_input');
     const [{ n }] = await rows(db, "select count(*)::int n from notification_private.notifications where status='open'");
     assert.equal(n, 2, 'only the two valid events exist');
   } finally { await db.close(); }
@@ -316,13 +329,14 @@ test('policy administration: owner/master only, validation, optimistic revision,
       [['attendance.leave_request_pending', false, 1], ['inventory.pos_deduction_pending', false, 1]]);
     assert.deepEqual(listed.types[0].matchedUserIds, [U.owner, U.master, U.masterNull]);
     assert.deepEqual(listed.staff.map(s => s.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 12], 'only active login-enabled staff are selectable');
-    assert.deepEqual(listed.staff.find(s => s.id === U.staffHall), { id: 9, name: 'Staff Hall', role: 'staff', position: 'staff', part: 'hall' });
+    assert.deepEqual(listed.staff.find(s => s.id === U.staffHall), { id: 9, name: 'Staff Hall', role: 'staff', part: 'hall' });
     const type = 'inventory.pos_deduction_pending';
     for (const bad of [
       { enabled: 'yes', inAppEnabled: true, rules: { groups: [] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [{ parts: ['garden'] }] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [{ roles: ['Owner'] }] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [{ team: ['bar'] }] } },
+      { enabled: true, inAppEnabled: true, rules: { groups: [{ positions: ['owner'] }] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [], userIds: ['5'] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [], userIds: [U.unknown] } },
       { enabled: true, inAppEnabled: true, rules: { groups: Array.from({ length: 21 }, () => ({})) } },
@@ -330,7 +344,7 @@ test('policy administration: owner/master only, validation, optimistic revision,
     ]) assert.equal((await call(db, 'notification_policy_update_v1', [U.owner, type, 1, j(bad)])).status, 'invalid_input', JSON.stringify(bad));
     const ok = await call(db, 'notification_policy_update_v1', [U.owner, type, 1, j({ enabled: true, inAppEnabled: true,
       rules: { groups: [{ parts: ['bar', 'bar'], roles: ['leader'] }, { roles: ['leader'], parts: ['bar'] }], userIds: [8, 8, 4] } })]);
-    assert.deepEqual(ok, { status: 'ok', revision: 2, rules: { groups: [{ roles: ['leader'], positions: [], parts: ['bar'] }], userIds: [4, 8] } });
+    assert.deepEqual(ok, { status: 'ok', revision: 2, rules: { groups: [{ roles: ['leader'], parts: ['bar'] }], userIds: [4, 8] } });
     const stale = await call(db, 'notification_policy_update_v1', [U.master, type, 1, j({ enabled: false, inAppEnabled: true, rules: { groups: [] } })]);
     assert.deepEqual(stale, { status: 'version_conflict', latestRevision: 2 });
     assert.equal((await call(db, 'notification_policy_update_v1', [U.owner, 'nope.type', 1, j({ enabled: true, inAppEnabled: true, rules: { groups: [] } })])).status, 'not_found');

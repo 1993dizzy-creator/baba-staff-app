@@ -88,7 +88,7 @@ test('real PostgreSQL concurrency: one open event per key, resolve/recur, mark-a
       const bpid = await pidOf(b);
       await a.query('begin'); await b.query('begin');
       try {
-        assert.equal((await rpc(a, 'notification_resolve_v1', ['system.test_all', 'race:3', 'business_resolved', null])).status, 'resolved');
+        assert.equal((await rpc(a, 'notification_resolve_v1', [original.id, 'system.test_all', 'race:3', 'business_resolved', null])).status, 'resolved');
         const waiting = upsert(b, 'race:3'); waiting.catch(() => {});
         assert.ok(await waitsOnLock(bpid));
         await a.query('commit');
@@ -110,6 +110,44 @@ test('real PostgreSQL concurrency: one open event per key, resolve/recur, mark-a
       } finally { await a.query('rollback').catch(() => {}); }
       const unread = await rpc(b, 'notification_unread_count_v1', [U.staffBar]);
       assert.equal(unread.unreadCount, 1, 'only the event committed after mark-all is unread');
+    });
+
+    await t.test('commit order: an older-id event committed after the list was read is never marked by mark-all', async () => {
+      const c = pool[2];
+      const before = (await rpc(c, 'notification_list_v1', [U.staffBar, 'unread', null, 50])).items.map(i => i.id);
+      if (before.length) await rpc(c, 'notification_mark_all_read_v1', [U.staffBar, Math.max(...before)]);
+      const bpid = await pidOf(b);
+      await a.query('begin');
+      let x, waiting, bWaited = false;
+      try {
+        x = await upsert(a, 'order:x');                       // lower id, not committed yet
+        assert.equal(x.status, 'created');
+        waiting = upsert(b, 'order:y'); waiting.catch(() => {}); // another event on another connection
+        bWaited = await waitsOnLock(bpid);
+        const shown = (await rpc(c, 'notification_list_v1', [U.staffBar, 'unread', null, 50])).items.map(i => i.id);
+        await a.query('commit');
+        const y = await waiting;
+        assert.equal(y.status, 'created');
+        // The user marks "all" based on what the list actually showed.
+        if (shown.length) await rpc(c, 'notification_mark_all_read_v1', [U.staffBar, Math.max(...shown)]);
+        assert.ok(!shown.includes(x.id), 'x was not visible when the list was read');
+        const unread = (await rpc(c, 'notification_list_v1', [U.staffBar, 'unread', null, 50])).items.map(i => i.id);
+        assert.ok(unread.includes(x.id), 'an event the user never saw stays unread');
+        assert.ok(bWaited, 'event creation is serialized so ids follow commit order');
+        assert.ok(x.id < y.id);
+      } finally { await a.query('rollback').catch(() => {}); }
+    });
+
+    await t.test('late resolution of a resolved occurrence never resolves the recurrence', async () => {
+      const first = await upsert(admin, 'gen:1');
+      assert.equal((await rpc(a, 'notification_resolve_v1', [first.id, 'system.test_all', 'gen:1', 'business_resolved', null])).status, 'resolved');
+      const second = await upsert(admin, 'gen:1');
+      assert.equal(second.status, 'created');
+      // Duplicate / delayed requests for the first occurrence, also racing on two connections.
+      const late = await Promise.all([a, b, pool[2]].map(c => rpc(c, 'notification_resolve_v1', [first.id, 'system.test_all', 'gen:1', 'business_resolved', null])));
+      assert.ok(late.every(r => r.status === 'already_resolved'), JSON.stringify(late));
+      const rows = (await admin.query("select id, status from notification_private.notifications where dedupe_key='gen:1' order by id")).rows;
+      assert.deepEqual(rows.map(r => [Number(r.id), r.status]), [[first.id, 'resolved'], [second.id, 'open']]);
     });
 
     await t.test('two owners saving the same policy revision: one wins, the other gets version_conflict, one audit row', async () => {

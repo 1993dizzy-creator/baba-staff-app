@@ -1,6 +1,7 @@
 # BABA-NOTIFICATION-01A — Common notification foundation
 
-Status: code + formal migration on main. **Production DB not applied** (GPT review + Owner
+Status: code + formal migration on main (01-A-FINAL revision of the same, still unapplied migration
+version). **Production DB not applied** (GPT review + Owner
 approval → GPT applies `supabase/migrations/20261126124217_notification_center_foundation.sql`).
 Until then the app hides the bell and shows "not ready" in the center and settings tab.
 
@@ -22,7 +23,10 @@ partial `recipients (user_id, notification_id desc) where read_at is null`.
 Server-internal writer (no browser route calls them; `lib/notifications/server.ts` `upsertNotification` / `resolveNotification`):
 
 - `notification_upsert_v1(type, dedupe_key, payload)` → `created | observed | disabled | unknown_type | invalid_input`
-- `notification_resolve_v1(type, dedupe_key, reason, evidence)` → `resolved | not_open | invalid_input`
+- `notification_resolve_v1(notification_id, type, dedupe_key, reason, evidence)` →
+  `resolved | already_resolved | not_found | invalid_input`. The caller names the occurrence (id returned by
+  upsert) after re-checking the source business state; a late/duplicate call for an earlier occurrence returns
+  `already_resolved` and never resolves a recurrence with the same key.
 
 Actor RPCs (server passes the session user id; role/position/part/active are re-read from `users`):
 
@@ -41,15 +45,28 @@ Missing RPC (PGRST202/42883/3F000/42P01) → `{ ok: true, available: false }`. O
   on the partial unique index (verified with 60 concurrent calls on real PostgreSQL 18).
 - **Read ≠ resolve**: read/mark-all only touch `recipients.read_at`; resolution only touches `notifications`.
 - **Mark all**: marks visible unread rows with `id <= up_to_id` (newest id shown); later events stay unread.
-- **Rules**: `{"groups":[{"roles":[],"positions":[],"parts":[]}],"userIds":[]}`. AND inside a group, OR across
+  Safe because ids follow commit order: every first observation takes `pg_advisory_xact_lock(20261126, 1)`
+  before its INSERT (held to commit), so an uncommitted event can never own a lower id than a committed one.
+  Verified on real PostgreSQL 17.10 and 18.6 (older-id-commits-later case reproduced before the fix).
+- **Rules**: `{"groups":[{"roles":[],"parts":[]}],"userIds":[]}`. AND inside a group, OR across
   groups, `userIds` is an extra allow list. Empty list = any value including NULL; a non-empty list never matches
   NULL. A group with all lists empty = every active staff member. Always intersected with `types.access_roles`.
-  `position` is kept as a separate attribute; in current data it mirrors `role` (master → `owner`, see `lib/common/roles.ts`).
+  `roles` is the staff rank (직급): `users.role` is the single source of rank and permission (`lib/common/roles.ts`).
+  The legacy `users.position` mirror is not a rule attribute (master's legacy position is `owner` or NULL, which
+  would make a second "rank" filter misleading). `positions` in a rule is rejected.
 - **Policy change timing**: recipients are fixed when an event is created (policy revision stored). Display always
   re-checks current account state (active + app login), current role vs ceiling and the current policy. No back-fill
   to new recipients; people who no longer qualify stop seeing old events and their count.
 - **Disabled type**: no new events; existing events hidden. In-app off: events still recorded (for 01-B channels) but hidden.
 - **href**: internal path only (`^/[A-Za-z0-9/_.~%=&?#-]*$`, no `//`, no `..`, ≤ 300), checked in TS, DB, and again before navigation.
+
+## Client refresh
+
+- Bell polls the unread count every 120 s while visible, stops in the background, refreshes on return; one request
+  in flight. Poll / resume / manual refreshes advance a `tick` the center follows to re-read its loaded pages
+  (≤ 5 pages per refresh), so new events, role/part/policy changes and resolutions appear without navigation.
+- Late answers are dropped (request generation + cached user check). 401/403 clears the list and the cached count.
+- `{ ok: true, available: false }` from the read API is not a success (item stays unread, error shown).
 
 ## Seeded types (disabled, no writer yet)
 

@@ -62,7 +62,8 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       bodyKo: i === 33 ? '긴 본문 '.repeat(40) : `본문 ${i + 1}`, bodyVi: i === 33 ? 'Nội dung rất dài để kiểm tra xuống dòng '.repeat(8) : `Nội dung ${i + 1}`,
       href: i === 33 ? '/admin/settings/store' : '/work' });
   }
-  await exec('notification_resolve_v1', { p_type_code: 'system.test_all', p_dedupe_key: 'own:30', p_reason: 'business_resolved', p_evidence: null });
+  const own30 = (await db.query("select id::int id from notification_private.notifications where dedupe_key='own:30'")).rows[0].id;
+  await exec('notification_resolve_v1', { p_notification_id: own30, p_type_code: 'system.test_all', p_dedupe_key: 'own:30', p_reason: 'business_resolved', p_evidence: null });
   await seed('sales.test_manager', 'sales:1', { titleKo: '매출 확인 필요', titleVi: 'Cần kiểm tra doanh thu', href: '/work' });
   await policy('system.test_all', { groups: [], userIds: [U.leaderBar] });
   for (let i = 0; i < 105; i++) await seed('system.test_all', `bar:${i}`);
@@ -70,6 +71,8 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
   await policy('system.test_all', { groups: [], userIds: [U.owner, U.leaderBar] });
 
   let mode = 'db'; const rpcLog = []; let queue = Promise.resolve();
+  // Test-side DB writes share the transport's serial queue (one PGlite connection, role switching).
+  const inQueue = fn => { const run = queue.then(fn); queue = run.catch(() => {}); return run; };
   const transport = http.createServer((req, res) => {
     queue = queue.then(async () => {
       res.setHeader('Content-Type', 'application/json');
@@ -194,6 +197,49 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await context.close();
     });
 
+    await t.test('center follows the 120 s poll, manual refresh, role change and denial; read on missing DB is not success', async () => {
+      const copy = notificationText.ko;
+      const { page, context } = await open(U.master, { path: '/notifications', clock: true });
+      await page.locator('li').first().waitFor();
+      const titles = () => page.locator('li').evaluateAll(items => items.map(li => li.querySelector('div:nth-child(2)')?.textContent));
+      const before = await page.locator('li').count();
+      // New event arrives while the center is open: shown after the next poll without navigation.
+      await inQueue(() => seed('sales.test_manager', 'live:1', { titleKo: '실시간 신규 알림', titleVi: 'Thông báo mới', href: '/work' }));
+      await page.clock.runFor(121_000);
+      await page.getByText('실시간 신규 알림', { exact: true }).waitFor();
+      assert.equal((await titles())[0], '실시간 신규 알림');
+      assert.equal(await page.locator('li').count(), before + 1);
+      // Manual refresh.
+      await inQueue(() => seed('sales.test_manager', 'live:2', { titleKo: '수동 새로고침 알림', titleVi: 'Làm mới thủ công', href: '/work' }));
+      await page.getByRole('button', { name: copy.refresh, exact: true }).click();
+      await page.getByText('수동 새로고침 알림', { exact: true }).waitFor();
+      // Same user loses the manager-level ceiling (master -> leader): those items disappear on the next poll.
+      await inQueue(() => db.query("update public.users set role='leader' where id=$1", [U.master]));
+      await page.clock.runFor(121_000);
+      await page.waitForFunction(() => !document.body.textContent.includes('수동 새로고침 알림'));
+      assert.equal(await page.getByText('실시간 신규 알림', { exact: true }).count(), 0);
+      await inQueue(() => db.query("update public.users set role='master' where id=$1", [U.master]));
+      await page.getByRole('button', { name: copy.refresh, exact: true }).click();
+      await page.getByText('수동 새로고침 알림', { exact: true }).waitFor();
+      // Not-installed answer to "read" is not a success: item stays unread, error shown.
+      mode = 'missing';
+      const first = page.locator('li').first();
+      await first.getByRole('button', { name: copy.markRead, exact: true }).click();
+      await page.getByText(copy.actionFailed).waitFor();
+      assert.equal(await first.getByRole('button', { name: copy.markRead, exact: true }).count(), 1, 'still unread');
+      mode = 'db';
+      // Account deactivated: the next refresh is denied and the list is cleared, not kept.
+      await inQueue(() => db.query('update public.users set is_active=false where id=$1', [U.master]));
+      await page.clock.runFor(121_000);
+      await page.getByText(copy.denied).waitFor();
+      assert.equal(await page.locator('li').count(), 0, 'no earlier notifications remain on screen');
+      assert.equal(await page.getByText(copy.actionFailed).count(), 0, 'earlier action errors are cleared too');
+      assert.equal(await page.getByTestId('notification-badge').count(), 0, 'no stale badge');
+      await page.screenshot({ path: path.join(shots, 'center-denied-ko-390.png') });
+      await inQueue(() => db.query('update public.users set is_active=true where id=$1', [U.master]));
+      await context.close();
+    });
+
     await t.test('settings tab: owner/master edit BAR leader rule with preview; leader never sees the tab', async () => {
       for (const [lang, width] of [['ko', 390], ['vi', 1280]]) {
         const { page, context } = await open(U.master, { lang, width, path: '/admin/settings/store' });
@@ -220,7 +266,8 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await page.screenshot({ path: path.join(shots, 'settings-ko-390-saved.png'), fullPage: true });
       const [saved] = (await db.query("select enabled, rules from notification_private.policies where type_code='inventory.pos_deduction_pending'")).rows;
       assert.equal(saved.enabled, true);
-      assert.deepEqual(saved.rules, { groups: [{ roles: ['leader'], positions: [], parts: ['bar'] }], userIds: [] });
+      assert.deepEqual(saved.rules, { groups: [{ roles: ['leader'], parts: ['bar'] }], userIds: [] });
+      assert.equal(await card.getByTestId('rule-positions').count(), 0, 'rank is chosen once (role), no separate legacy position row');
       await context.close();
       const leader = await open(U.leaderBar, { path: '/admin/settings/store' });
       await leader.page.getByRole('button', { name: '공휴일', exact: true }).waitFor();
