@@ -96,7 +96,9 @@ const copy = {
     policyDescription: "기준 설명",
     policyDescriptionClose: "기준 설명 닫기",
     scheduled: "예약 설정",
-    scheduledNone: "없음",
+    scheduledNone: "예약 없음",
+    statusActive: "적용 중",
+    statusPending: "예약 대기",
     scheduledFrom: "{date}부터",
     newSetting: "운영시간 변경",
     newAttendanceSetting: "근태 기준 변경",
@@ -154,6 +156,8 @@ const copy = {
     operationPolicySaving: "저장 중…",
     dayCountSuffix: "일",
     selectedDays: "{n}일 적용",
+    holidayCount: "{n}일",
+    premiumLegend: "200% = BABA 수당 적용일",
     prevYear: "이전 연도",
     nextYear: "다음 연도",
 
@@ -192,7 +196,9 @@ const copy = {
     policyDescription: "Giải thích tiêu chuẩn",
     policyDescriptionClose: "Đóng phần giải thích",
     scheduled: "Cài đặt đã lên lịch",
-    scheduledNone: "Không có",
+    scheduledNone: "Chưa có lịch",
+    statusActive: "Đang áp dụng",
+    statusPending: "Chờ áp dụng",
     scheduledFrom: "Từ {date}",
     newSetting: "Thay đổi giờ mở cửa",
     newAttendanceSetting: "Thay đổi tiêu chuẩn chấm công",
@@ -254,6 +260,8 @@ const copy = {
     operationPolicySaving: "Đang lưu…",
     dayCountSuffix: "ngày",
     selectedDays: "Áp dụng {n} ngày",
+    holidayCount: "{n} ngày",
+    premiumLegend: "200% = ngày áp dụng phụ cấp BABA",
     prevYear: "Năm trước",
     nextYear: "Năm sau",
 
@@ -613,16 +621,14 @@ function HoursTab(props: {
 
       <section style={styles.card}>
         <div style={styles.cardHeader}>
-          <h2 style={styles.cardTitle}>{t.scheduled}</h2>
-          {scheduled ? (
-            props.data.capabilities.mutate ? (
+          <CardTitle icon="📅">{t.scheduled}</CardTitle>
+          <ScheduleStatus scheduled={Boolean(scheduled)} lang={props.lang}>
+            {scheduled && props.data.capabilities.mutate ? (
               <button type="button" style={styles.danger} onClick={props.onCancel}>
                 {t.cancel}
               </button>
-            ) : null
-          ) : (
-            <span style={styles.pill}>{t.scheduledNone}</span>
-          )}
+            ) : null}
+          </ScheduleStatus>
         </div>
         {scheduled ? (
           <div style={styles.cardBody}>
@@ -756,6 +762,7 @@ function HoursTab(props: {
         <section style={styles.card}>
           <Disclosure
             title={t.history}
+            icon="🗂️"
             open={Boolean(props.logs)}
             onToggle={props.onHistory}
             testId="history-toggle"
@@ -766,9 +773,9 @@ function HoursTab(props: {
               {props.logs.length === 0 ? <p style={styles.muted}>{t.historyEmpty}</p> : null}
               {props.logs.map((log) => (
                 <div key={log.id} style={styles.historyRow}>
-                  <strong>
+                  <span style={log.action === "created" ? styles.historyBadge : styles.historyBadgeMuted}>
                     {log.action === "created" ? t.created : t.cancelled}
-                  </strong>
+                  </span>
                   <span>#{log.setting_version_id}</span>
                   <span style={styles.historyMeta}>
                     {log.actorName ?? ""}
@@ -812,7 +819,8 @@ function AttendanceTab(props: {
     <>
       <section style={styles.card}>
         <div style={styles.cardHeader}>
-          <h2 style={styles.cardTitle}>{t.attendancePolicyTitle}</h2>
+          <CardTitle icon="⏱️">{t.attendancePolicyTitle}</CardTitle>
+          {currentSetting ? <StatusPill tone="active">{t.statusActive}</StatusPill> : null}
         </div>
         <MetaLine>
           <CompactMetric label={t.metaEffective} value={currentSetting ? shortDate(currentSetting.effectiveFromBusinessDate) : "-"} />
@@ -834,8 +842,8 @@ function AttendanceTab(props: {
 
       <section style={styles.card}>
         <div style={styles.cardHeader}>
-          <h2 style={styles.cardTitle}>{t.scheduled}</h2>
-          {scheduled ? null : <span style={styles.pill}>{t.scheduledNone}</span>}
+          <CardTitle icon="📅">{t.scheduled}</CardTitle>
+          <ScheduleStatus scheduled={Boolean(scheduled)} lang={props.lang} />
         </div>
         {scheduled ? (
           <div style={styles.cardBody}>
@@ -1089,7 +1097,12 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
 
       <section style={styles.card}>
         <div style={{ ...styles.cardHeader, marginBottom: 8 }}>
-          <h2 style={styles.cardTitle}>{t.holidaysTitle}</h2>
+          <CardTitle icon="📅">
+            {t.holidaysTitle}
+            {data?.calendar && !loading ? (
+              <span style={styles.countPill}>{t.holidayCount.replace("{n}", String(holidays.length))}</span>
+            ) : null}
+          </CardTitle>
           <div style={styles.yearStepper}>
             <button
               type="button"
@@ -1121,6 +1134,7 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
           <p style={styles.holidayLoading}>{t.loading}</p>
         ) : !data?.calendar ? (
           <div style={styles.holidayEmptyState}>
+            <span style={styles.emptyIcon} aria-hidden="true">🗓️</span>
             <p style={styles.muted}>
               {t.notPreparedPrefix}
               {year}
@@ -1155,12 +1169,16 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
             })}
           </ul>
         )}
+        {!loading && holidays.some((holiday) => isBabaPremiumHoliday(holiday, groupSizes.get(holiday.holidayGroup) ?? 0)) ? (
+          <p style={styles.legend}>{t.premiumLegend}</p>
+        ) : null}
       </section>
 
       {selectableGroups.length > 0 ? (
         <section style={styles.card}>
           <Disclosure
             title={t.operationPolicyTitle}
+            icon="✨"
             summary={<span style={styles.pill}>{t.selectedDays.replace("{n}", String(selectedCount))}</span>}
             open={policyOpen}
             onToggle={() => setPolicyOpen((value) => !value)}
@@ -1492,7 +1510,8 @@ function SettingCard(props: {
   return (
     <section style={styles.card}>
       <div style={styles.cardHeader}>
-        <h2 style={styles.cardTitle}>{props.title}</h2>
+        <CardTitle icon="🕒">{props.title}</CardTitle>
+        {props.setting ? <StatusPill tone="active">{copy[props.lang].statusActive}</StatusPill> : null}
       </div>
       {props.setting ? (
         <SettingBody setting={props.setting} lang={props.lang} />
@@ -1613,6 +1632,7 @@ function AttendanceScheduledBody(props: {
 // 가지므로 접어도 입력값(페이지 state)은 그대로 남는다.
 function Disclosure(props: {
   title: string;
+  icon?: string;
   summary?: React.ReactNode;
   open: boolean;
   onToggle: () => void;
@@ -1627,12 +1647,53 @@ function Disclosure(props: {
       data-testid={props.testId}
       onClick={props.onToggle}
     >
-      <span style={styles.disclosureTitle}>{props.title}</span>
+      <span style={{ ...styles.disclosureTitle, ...(props.icon ? styles.disclosureTitleCard : null) }}>
+        {props.icon ? <span style={styles.titleIcon} aria-hidden="true">{props.icon}</span> : null}
+        {props.title}
+      </span>
       <span style={styles.disclosureRight}>
         {props.summary}
         <ChevronIcon open={props.open} />
       </span>
     </button>
+  );
+}
+
+// 카드 제목: 기존 BABA 설정 화면처럼 작은 이모지 하나로 구분하고, 스크린리더에는 제목만 읽힌다.
+function CardTitle(props: { icon: string; children: React.ReactNode }) {
+  return (
+    <h2 style={styles.cardTitle}>
+      <span style={styles.titleIcon} aria-hidden="true">{props.icon}</span>
+      {props.children}
+    </h2>
+  );
+}
+
+function StatusPill(props: { tone: "active" | "pending" | "none"; children: React.ReactNode }) {
+  const tone = props.tone === "active" ? styles.pillActive : props.tone === "pending" ? styles.pillPending : null;
+  return (
+    <span style={{ ...styles.pill, ...tone }} data-status={props.tone}>
+      {props.tone === "none" ? null : (
+        <span
+          style={{ ...styles.pillDot, background: props.tone === "active" ? "#16a34a" : "#d97706" }}
+          aria-hidden="true"
+        />
+      )}
+      {props.children}
+    </span>
+  );
+}
+
+// 운영시간·근태 탭 공통 예약 상태: 예약 없음(회색) / 예약 대기(주황) + 선택적인 취소 버튼.
+function ScheduleStatus(props: { scheduled: boolean; lang: "ko" | "vi"; children?: React.ReactNode }) {
+  const t = copy[props.lang];
+  return (
+    <span style={styles.headerAside}>
+      <StatusPill tone={props.scheduled ? "pending" : "none"}>
+        {props.scheduled ? t.statusPending : t.scheduledNone}
+      </StatusPill>
+      {props.children}
+    </span>
   );
 }
 
@@ -1706,6 +1767,10 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 28,
   },
   cardTitle: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
     margin: 0,
     minWidth: 0,
     fontSize: 15,
@@ -1713,8 +1778,48 @@ const styles: Record<string, CSSProperties> = {
     color: "#111827",
     lineHeight: 1.3,
   },
+  titleIcon: { fontSize: 15, lineHeight: 1, flexShrink: 0 },
+  headerAside: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
+  pillActive: { background: "#ecfdf5", color: "#047857" },
+  pillPending: { background: "#fffbeb", color: "#b45309" },
+  pillDot: { width: 6, height: 6, borderRadius: 999, flexShrink: 0 },
+  countPill: {
+    padding: "0 7px",
+    borderRadius: 999,
+    background: "#f3f4f6",
+    color: "#6b7280",
+    fontSize: 11.5,
+    fontWeight: 800,
+    lineHeight: "18px",
+  },
+  historyBadge: {
+    justifySelf: "start",
+    padding: "0 7px",
+    borderRadius: 6,
+    background: "#111827",
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: 800,
+    lineHeight: "18px",
+  },
+  historyBadgeMuted: {
+    justifySelf: "start",
+    padding: "0 7px",
+    borderRadius: 6,
+    background: "#f3f4f6",
+    color: "#6b7280",
+    fontSize: 11,
+    fontWeight: 800,
+    lineHeight: "18px",
+  },
+  legend: { margin: "6px 2px 0", color: "#6b7280", fontSize: 11, textAlign: "right" },
+  emptyIcon: { fontSize: 22, lineHeight: 1 },
+  disclosureTitleCard: { display: "flex", alignItems: "center", gap: 6, fontSize: 15 },
   cardBody: { marginTop: 4 },
   pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
     padding: "2px 8px",
     borderRadius: 999,
     background: "#f3f4f6",
@@ -1746,10 +1851,11 @@ const styles: Record<string, CSSProperties> = {
     padding: "7px 2px",
     borderBottom: "1px solid #f1f2f4",
   },
-  summaryRowLast: { borderBottom: 0 },
+  // 영업일 마감은 영업일 경계(03:00)를 정하는 핵심 값이라 옅은 배경 한 줄로 구분한다.
+  summaryRowLast: { borderBottom: 0, marginTop: 4, padding: "6px 8px", borderRadius: 8, background: "#f9fafb" },
   summaryLabel: { fontSize: 13, fontWeight: 700, color: "#374151" },
   summaryValue: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: 800,
     color: "#111827",
     fontVariantNumeric: "tabular-nums",
@@ -1768,10 +1874,11 @@ const styles: Record<string, CSSProperties> = {
   metric: {
     display: "grid",
     alignContent: "space-between",
-    gap: 4,
-    padding: "8px",
+    gap: 6,
+    padding: "8px 9px",
     borderRadius: 10,
-    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    background: "#fff",
     minWidth: 0,
   },
   metricLabel: {
@@ -1783,13 +1890,16 @@ const styles: Record<string, CSSProperties> = {
     overflowWrap: "anywhere",
   },
   metricValue: {
-    fontSize: 17,
+    display: "flex",
+    alignItems: "baseline",
+    gap: 2,
+    fontSize: 20,
     fontWeight: 800,
     color: "#111827",
     lineHeight: 1.1,
     fontVariantNumeric: "tabular-nums",
   },
-  metricUnit: { marginLeft: 2, fontSize: 12, fontWeight: 700, color: "#6b7280" },
+  metricUnit: { fontSize: 11.5, fontWeight: 700, color: "#6b7280" },
   compactLabel: {
     display: "grid",
     gap: 4,
@@ -2205,8 +2315,11 @@ const styles: Record<string, CSSProperties> = {
   },
   holidayEmptyState: {
     display: "grid",
-    gap: 10,
-    padding: "12px 0 2px",
+    justifyItems: "center",
+    gap: 8,
+    padding: "14px 10px",
+    borderRadius: 10,
+    border: "1px dashed #d1d5db",
     textAlign: "center",
   },
   holidayLoading: { margin: 0, padding: "16px 0", textAlign: "center", color: "#6b7280", fontSize: 12.5 },

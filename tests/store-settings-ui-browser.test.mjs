@@ -360,7 +360,7 @@ test('store settings UI in a real browser: 4 tabs, KO/VI 320–1280 px, collapsi
       await context.close();
     });
 
-    await t.test('notifications: compact cards, details/people/history collapsed, unsaved draft kept across collapse, tab switch and other saves', async () => {
+    await t.test('notifications: compact cards, summary rows + checklists, people search, drafts kept, save lock, recipients match the DB', async () => {
       const copy = notificationSettingsText.ko;
       const { page, context } = await open(U.owner);
       await gotoTab(page, 'ko', 3);
@@ -369,39 +369,122 @@ test('store settings UI in a real browser: 4 tabs, KO/VI 320–1280 px, collapsi
       assert.equal(await page.getByText('attendance.leave_request_pending', { exact: true }).count(), 0, 'type code hidden');
       assert.equal(await page.getByTestId('rule-group-0').count(), 0, 'details collapsed by default');
       assert.equal(await page.getByText(copy.pushLater).count(), 0, 'Web Push note only inside details');
-      // Switch from the compact card: unsaved state is flagged, not shown as applied.
+      // Icon / title / switch on one row, both cards aligned.
+      const rows = await page.locator('[data-testid^="notification-type-"]').evaluateAll(cards => cards.map(card => {
+        const icon = card.querySelector('[data-testid="notification-details-toggle"] > span').getBoundingClientRect();
+        const sw = card.querySelector('[role="switch"]').getBoundingClientRect();
+        return { iconLeft: Math.round(icon.left), switchRight: Math.round(sw.right), centerGap: Math.abs((icon.top + icon.bottom) / 2 - (sw.top + sw.bottom) / 2) };
+      }));
+      assert.equal(new Set(rows.map(r => r.iconLeft)).size, 1, 'icons aligned');
+      assert.equal(new Set(rows.map(r => r.switchRight)).size, 1, 'switches aligned');
+      for (const r of rows) assert.ok(r.centerGap <= 8, 'icon and switch on one row');
+      // OFF state is told apart from the condition text.
+      assert.equal(await pos.getAttribute('data-enabled'), 'false');
+      await pos.getByText(copy.offNote, { exact: true }).waitFor();
       await pos.getByRole('switch', { name: copy.enabled }).click();
       await pos.getByText(copy.unsaved, { exact: true }).waitFor();
+      assert.equal(await pos.getByText(copy.offNote, { exact: true }).count(), 0);
+
       await pos.getByTestId('notification-details-toggle').click();
       await pos.getByText(copy.pushLater).waitFor();
-      await pos.getByRole('button', { name: copy.removeGroup }).click();
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-groups-summary.png'), fullPage: true });
+      await pos.getByRole('button', { name: copy.removeGroup }).first().click();
       await pos.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
       const group = pos.getByTestId('rule-group-0');
-      await group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }).click();
-      await group.getByTestId('rule-parts').getByRole('button', { name: 'Bar', exact: true }).click();
-      assert.equal(await pos.getByRole('button', { name: 'Leader Bar', exact: true }).count(), 0, 'people list collapsed by default');
+      const roles = group.getByTestId('rule-roles'); const parts = group.getByTestId('rule-parts');
+      assert.equal(await roles.getByTestId('rule-roles-summary').textContent(), copy.any, 'empty group = 전체');
+      assert.equal(await roles.getByRole('checkbox').count(), 0, 'checklist collapsed until its row is opened');
+      // Role checklist: select / deselect / 전체.
+      await roles.getByTestId('rule-roles-toggle').click();
+      const roleBoxes = await roles.locator('label').evaluateAll(labels => labels.slice(1).map(l => Math.round(l.getBoundingClientRect().top)));
+      assert.ok(roleBoxes[0] === roleBoxes[1], 'two columns');
+      assert.equal(await roles.getByRole('checkbox', { name: copy.selectAll }).isChecked(), true);
+      await roles.getByRole('checkbox', { name: '매니저', exact: true }).check();
+      await roles.getByRole('checkbox', { name: '리더', exact: true }).check();
+      assert.equal(await roles.getByRole('checkbox', { name: copy.selectAll }).isChecked(), false);
+      assert.equal(await roles.getByTestId('rule-roles-summary').textContent(), '매니저, 리더');
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-roles-checklist.png'), fullPage: true });
+      await roles.getByRole('checkbox', { name: copy.selectAll }).check();
+      assert.equal(await roles.getByTestId('rule-roles-summary').textContent(), copy.any, '전체 clears the list');
+      await roles.getByRole('checkbox', { name: '리더', exact: true }).check();
+      await roles.getByRole('checkbox', { name: '매니저', exact: true }).check();
+      await roles.getByRole('checkbox', { name: '매니저', exact: true }).uncheck();
+      assert.equal(await roles.getByTestId('rule-roles-summary').textContent(), '리더');
+      // Opening the part list closes the role list (one list at a time).
+      await parts.getByTestId('rule-parts-toggle').click();
+      assert.equal(await roles.getByRole('checkbox').count(), 0, 'only one checklist open');
+      await parts.getByRole('checkbox', { name: 'Bar', exact: true }).check();
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-parts-checklist.png'), fullPage: true });
+      // Second group (OR): manager × any part.
+      await pos.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
+      const group2 = pos.getByTestId('rule-group-1');
+      await group2.getByTestId('rule-roles-toggle').click();
+      await group2.getByTestId('rule-roles').getByRole('checkbox', { name: '매니저', exact: true }).check();
+
+      // People: collapsed summary, search filters the list only, selections kept.
+      assert.equal(await pos.getByTestId('notification-people-list').count(), 0, 'people list collapsed by default');
       await pos.getByTestId('notification-people-toggle').click();
-      await pos.getByRole('button', { name: 'Manager Hall', exact: true }).click();
+      const people = pos.getByTestId('notification-people-list');
+      assert.equal(await people.getByRole('checkbox', { name: /Staff Bar/ }).isDisabled(), true, 'no business access → cannot be picked');
+      await people.getByRole('checkbox', { name: /Leader Hall/ }).check();
+      const search = pos.getByRole('searchbox', { name: copy.searchPlaceholder });
+      await search.fill('kitchen');
+      assert.equal(await people.getByRole('checkbox', { name: /Leader Hall/ }).count(), 0, 'filtered out of the list');
+      await people.getByRole('checkbox', { name: /Leader Kitchen/ }).check();
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-people-search.png'), fullPage: true });
+      await search.fill('zzz');
+      await people.getByText(copy.noMatch).waitFor();
+      await search.fill('');
+      assert.equal(await people.getByRole('checkbox', { name: /Leader Hall/ }).isChecked(), true, 'search never unselects');
+      assert.match(await pos.getByTestId('notification-people-summary').textContent(), /2명 선택/);
+
+      // Draft kept across collapse, tab switch and another type's save.
       await pos.getByTestId('notification-details-toggle').click();
-      assert.match(await pos.getByTestId('notification-summary').textContent(), /리더 · Bar/);
+      assert.match(await pos.getByTestId('notification-summary').textContent(), /리더 · Bar \/ 매니저 \/ 개인 2명/);
       await pos.getByTestId('notification-details-toggle').click();
-      assert.equal(await group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }).getAttribute('aria-pressed'), 'true', 'kept across collapse');
       await gotoTab(page, 'ko', 0); await gotoTab(page, 'ko', 3);
       await pos.getByText(copy.unsaved, { exact: true }).waitFor();
-      // Saving another type reloads the list but must not wipe this unsaved draft.
       await leave.getByTestId('notification-details-toggle').click();
       await leave.getByRole('button', { name: copy.save, exact: true }).click();
       await leave.getByText(copy.saved).waitFor();
       await pos.getByText(copy.unsaved, { exact: true }).waitFor();
       if (await pos.getByTestId('notification-details-toggle').getAttribute('aria-expanded') === 'false') await pos.getByTestId('notification-details-toggle').click();
-      for (const name of ['Leader Bar', 'Manager Hall']) assert.match(await pos.getByTestId('recipient-preview').textContent(), new RegExp(name));
-      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-editing.png'), fullPage: true });
+      assert.equal(await pos.getByTestId('rule-group-0').getByTestId('rule-roles-summary').textContent(), '리더', 'kept after another save');
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-unsaved.png'), fullPage: true });
+
+      // Save in flight: the card is frozen; a failed save keeps the draft.
+      let release; const gate = new Promise(resolve => { release = resolve; });
+      await page.route('**/api/admin/notification-settings', async route => {
+        if (route.request().method() !== 'PUT') return route.continue();
+        await gate; return route.fulfill({ status: 500, contentType: 'application/json', body: '{"ok":false}' });
+      });
+      await pos.getByRole('button', { name: copy.save, exact: true }).click();
+      await pos.getByRole('button', { name: copy.saving, exact: true }).waitFor();
+      assert.equal(await pos.getByTestId('notification-body').evaluate(f => f.disabled), true, 'details frozen while saving');
+      assert.equal(await pos.getByRole('switch', { name: copy.enabled }).isDisabled(), true, 'switch frozen while saving');
+      assert.equal(await pos.getByRole('button', { name: copy.discard, exact: true }).isDisabled(), true, 'discard frozen while saving');
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-saving.png'), fullPage: true });
+      release();
+      await pos.getByText(copy.failed).waitFor();
+      await page.unroute('**/api/admin/notification-settings');
+      await pos.getByText(copy.unsaved, { exact: true }).waitFor();
+      assert.equal(await pos.getByTestId('notification-body').evaluate(f => f.disabled), false);
+      assert.match(await pos.getByTestId('notification-summary').textContent(), /리더 · Bar \/ 매니저 \/ 개인 2명/, 'draft kept after a failed save');
+
+      const previewNames = (await pos.getByTestId('recipient-preview').textContent()).split(', ').sort();
       await pos.getByRole('button', { name: copy.save, exact: true }).click();
       await pos.getByText(copy.saved).waitFor();
       assert.equal(await pos.getByText(copy.unsaved, { exact: true }).count(), 0);
+      await page.screenshot({ path: path.join(shots, 'notifications-ko-390-saved.png'), fullPage: true });
       const [saved] = (await inQueue(() => db.query("select enabled, rules from notification_private.policies where type_code='inventory.pos_deduction_pending'"))).rows;
       assert.equal(saved.enabled, true);
-      assert.deepEqual(saved.rules, { groups: [{ roles: ['leader'], parts: ['bar'] }], userIds: [U.managerHall] });
+      assert.deepEqual(saved.rules, { groups: [{ roles: ['leader'], parts: ['bar'] }, { roles: ['manager'], parts: [] }], userIds: [U.leaderKitchen, U.leaderHall] });
+      // The server-side recipient resolution for a new notification equals the preview shown before saving.
+      const created = await inQueue(() => exec('notification_upsert_v1', { p_type_code: 'inventory.pos_deduction_pending', p_dedupe_key: 'ui-refine-2-check', p_payload: { titleKo: 'x', titleVi: 'x' } }));
+      assert.equal(created.status, 'created');
+      const dbNames = (await inQueue(() => db.query('select u.name from notification_private.recipients r join public.users u on u.id = r.user_id where r.notification_id = $1 order by u.name', [created.id]))).rows.map(r => r.name).sort();
+      assert.deepEqual(dbNames, previewNames, 'DB recipients = UI preview');
+
       // Discard restores the saved state.
       await pos.getByRole('switch', { name: copy.enabled }).click();
       await pos.getByRole('button', { name: copy.discard, exact: true }).click();
@@ -409,11 +492,12 @@ test('store settings UI in a real browser: 4 tabs, KO/VI 320–1280 px, collapsi
       assert.equal(await page.getByTestId('notification-history-list').count(), 0, 'history collapsed by default');
       await page.getByTestId('notification-history-toggle').click();
       await page.getByTestId('notification-history-list').waitFor();
-      // Repeated chip toggles keep the selected/unselected look.
-      const chip = group.getByTestId('rule-parts').getByRole('button', { name: 'Hall', exact: true });
+      // Repeated checkbox toggles keep the selected/unselected look without style warnings.
+      await pos.getByTestId('rule-group-0').getByTestId('rule-parts-toggle').click();
+      const hall = pos.getByTestId('rule-group-0').getByTestId('rule-parts').locator('label').filter({ hasText: 'Hall' });
       for (let n = 0; n < 6; n++) {
-        await chip.click();
-        assert.equal(await chip.evaluate(b => getComputedStyle(b).borderTopColor), n % 2 === 0 ? 'rgb(17, 24, 39)' : 'rgb(209, 213, 219)');
+        await hall.click();
+        assert.equal(await hall.evaluate(l => getComputedStyle(l).borderTopColor), n % 2 === 0 ? 'rgb(17, 24, 39)' : 'rgb(229, 231, 235)');
       }
       await context.close();
     });

@@ -264,8 +264,10 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await card.getByRole('button', { name: copy.removeGroup }).click();
       await card.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
       const group = card.getByTestId('rule-group-0');
-      await group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }).click();
-      await group.getByTestId('rule-parts').getByRole('button', { name: 'Bar', exact: true }).click();
+      await group.getByTestId('rule-roles-toggle').click();
+      await group.getByTestId('rule-roles').getByRole('checkbox', { name: '리더', exact: true }).check();
+      await group.getByTestId('rule-parts-toggle').click();
+      await group.getByTestId('rule-parts').getByRole('checkbox', { name: 'Bar', exact: true }).check();
       await card.getByTestId('recipient-preview').getByText('Leader Bar', { exact: true }).waitFor();
       await card.getByRole('button', { name: copy.save, exact: true }).click();
       await page.getByText(copy.saved).waitFor();
@@ -281,7 +283,7 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await leader.context.close();
     });
 
-    await t.test('store settings tabs: KO/VI × 320–1280 px, 4 tabs (owner/master) / 3 tabs (leader) equal, unclipped, underline kept; chip toggles log no console errors', async () => {
+    await t.test('store settings tabs: KO/VI × 320–1280 px, 4 tabs (owner/master) / 3 tabs (leader) equal, unclipped, underline kept; checklist toggles log no console errors', async () => {
       const navTabs = page => page.locator('nav button').evaluateAll(buttons => buttons.map(b => {
         const r = b.getBoundingClientRect(); const cs = getComputedStyle(b);
         return { text: b.textContent, left: r.left, right: r.right, top: r.top, width: r.width,
@@ -328,18 +330,21 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await card.getByTestId('notification-people-toggle').click();
       await card.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
       const group = card.getByTestId('rule-group-1');
-      const chips = [group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }),
-        group.getByTestId('rule-parts').getByRole('button', { name: 'Bar', exact: true }),
-        card.getByRole('button', { name: 'Leader Bar', exact: true })];
-      for (const chip of chips) for (let n = 0; n < 6; n++) {
-        await chip.click();
-        assert.equal(await chip.getAttribute('aria-pressed'), String(n % 2 === 0));
-        const color = await chip.evaluate(b => getComputedStyle(b).borderTopColor);
-        assert.equal(color, n % 2 === 0 ? 'rgb(17, 24, 39)' : 'rgb(209, 213, 219)', 'selected / unselected border kept');
+      // Checklist items (role / part) and people rows; each toggled repeatedly.
+      const items = [['rule-roles', '리더'], ['rule-parts', 'Bar'], [null, 'Leader Bar']];
+      for (const [list, name] of items) {
+        if (list) await group.getByTestId(`${list}-toggle`).click();
+        const item = list ? group.getByTestId(list).locator('label').filter({ hasText: new RegExp(`^${name}$`) })
+          : card.getByTestId('notification-people-list').locator('label').filter({ hasText: name });
+        for (let n = 0; n < 6; n++) {
+          await item.click();
+          assert.equal(await item.locator('input').isChecked(), n % 2 === 0);
+          if (list) assert.equal(await item.evaluate(l => getComputedStyle(l).borderTopColor), n % 2 === 0 ? 'rgb(17, 24, 39)' : 'rgb(229, 231, 235)', 'selected / unselected border kept');
+        }
       }
-      await page.screenshot({ path: path.join(shots, 'settings-ko-390-chip-toggle.png'), fullPage: true });
+      await page.screenshot({ path: path.join(shots, 'settings-ko-390-checklist-toggle.png'), fullPage: true });
       await new Promise(r => setTimeout(r, 300));
-      assert.deepEqual(consoleErrors.slice(before), [], 'no console errors while toggling chips');
+      assert.deepEqual(consoleErrors.slice(before), [], 'no console errors while toggling checklists');
       await context.close();
     });
 
