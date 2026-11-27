@@ -301,7 +301,9 @@ const styles = {
   help: { fontSize: 12, color: "#6b7280", lineHeight: 1.5, margin: "4px 0 8px" },
   chips: { display: "flex", flexWrap: "wrap", gap: 6 },
   chip: {
-    border: "1px solid #d1d5db", borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 700,
+    // Longhand border properties only: chipOn changes borderColor, and mixing that with a `border`
+    // shorthand makes React report a style conflict on every select/deselect.
+    borderWidth: 1, borderStyle: "solid", borderColor: "#d1d5db", borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 700,
     background: "#fff", color: "#374151", cursor: "pointer",
   },
   chipOn: { background: "#111827", borderColor: "#111827", color: "#fff" },

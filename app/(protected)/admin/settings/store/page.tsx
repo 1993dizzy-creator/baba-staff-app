@@ -1681,23 +1681,31 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-around",
   },
   subNavTab: {
+    // Equal columns for 3 or 4 tabs; narrow phones shrink the text and may wrap a long label
+    // onto two lines instead of clipping it.
     flex: 1,
     minWidth: 0,
     textAlign: "center",
-    padding: "12px 0 10px",
-    fontSize: 14,
+    padding: "12px 2px 10px",
+    fontSize: "clamp(12px, 3.6vw, 14px)",
+    lineHeight: 1.25,
     fontWeight: 600,
     color: "#9ca3af",
     background: "transparent",
-    border: 0,
-    borderBottom: "3px solid transparent",
-    whiteSpace: "nowrap",
+    // Longhand border properties only, so the active state can change the colour without a
+    // shorthand/longhand style conflict.
+    borderWidth: "0 0 3px",
+    borderStyle: "solid",
+    borderColor: "transparent",
+    whiteSpace: "normal",
+    wordBreak: "keep-all",
+    overflowWrap: "anywhere",
     cursor: "pointer",
   },
   subNavTabActive: {
     fontWeight: 800,
     color: "#111827",
-    borderBottom: "3px solid #111827",
+    borderColor: "#111827",
   },
   card: {
     background: "#fff",

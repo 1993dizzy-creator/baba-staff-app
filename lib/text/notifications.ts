@@ -57,7 +57,7 @@ export const notificationText = {
 
 export const notificationSettingsText = {
   ko: {
-    tab: "알림 설정",
+    tab: "알림설정",
     intro: "알림 유형별로 받을 사람을 정합니다. 업무 화면에 접근할 수 없는 직원에게는 설정과 관계없이 표시되지 않습니다.",
     typeNames: {
       "attendance.leave_request_pending": "휴무 신청 대기",
@@ -95,7 +95,7 @@ export const notificationSettingsText = {
     nullPartNote: "파트가 비어 있는 계정(예: 파트 미지정 최고관리자)은 파트를 '전체'로 둔 그룹에서만 포함됩니다.",
   },
   vi: {
-    tab: "Cài đặt thông báo",
+    tab: "Thông báo",
     intro: "Chọn người nhận cho từng loại thông báo. Nhân viên không có quyền vào màn hình nghiệp vụ sẽ không thấy, dù cài đặt thế nào.",
     typeNames: {
       "attendance.leave_request_pending": "Đơn nghỉ chờ duyệt",

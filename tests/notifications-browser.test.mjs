@@ -1,6 +1,7 @@
 // Isolated Next production build of the real protected header, notification center, store
 // settings tab and notification routes + real signed sessions + PGlite (real migration).
 // No repository .env is loaded and no external host is reachable from the browser.
+// BABA_BROWSER_DEV=1 runs the same checks against `next dev` (React reports style conflicts only in development).
 // Test binaries: npm.cmd --cache .local/npm-cache install --prefix .local/browser-qa --no-audit --no-fund playwright@1.65.0
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -102,22 +103,24 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
     NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${transportPort}`, SUPABASE_SERVICE_ROLE_KEY: 'offline-synthetic-key',
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'offline-synthetic-key', BABA_SESSION_SECRET: secret };
   const next = path.resolve('node_modules/next/dist/bin/next'); const buildLog = path.join(work, 'preview-build.log');
-  let server, browser; let descriptor;
+  let server, browser; let descriptor; const devMode = process.env.BABA_BROWSER_DEV === '1';
   try {
-    descriptor = openSync(buildLog, 'w');
-    const build = spawnSync(process.execPath, [next, 'build', '--webpack'], { cwd: preview, env, windowsHide: true, stdio: ['ignore', descriptor, descriptor], timeout: 240000 });
-    closeSync(descriptor); descriptor = undefined;
-    assert.equal(build.status, 0, readFileSync(buildLog, 'utf8').slice(-6000));
-    t.diagnostic('isolated notification Next production build PASS');
+    if (!devMode) {
+      descriptor = openSync(buildLog, 'w');
+      const build = spawnSync(process.execPath, [next, 'build', '--webpack'], { cwd: preview, env, windowsHide: true, stdio: ['ignore', descriptor, descriptor], timeout: 240000 });
+      closeSync(descriptor); descriptor = undefined;
+      assert.equal(build.status, 0, readFileSync(buildLog, 'utf8').slice(-6000));
+      t.diagnostic('isolated notification Next production build PASS');
+    }
     const probe = http.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve)); const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
     const serverLog = openSync(path.join(work, 'preview-server.log'), 'w');
-    server = spawn(process.execPath, [next, 'start', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: preview, env, windowsHide: true, stdio: ['ignore', serverLog, serverLog] });
+    server = spawn(process.execPath, [next, devMode ? 'dev' : 'start', ...(devMode ? ['--webpack'] : []), '--hostname', '127.0.0.1', '--port', String(port)], { cwd: preview, env, windowsHide: true, stdio: ['ignore', serverLog, serverLog] });
     closeSync(serverLog);
     const origin = `http://127.0.0.1:${port}`;
-    for (let n = 0; n < 200; n++) { try { if ((await fetch(origin + '/login')).ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 50)); }
+    for (let n = 0; n < (devMode ? 2400 : 200); n++) { try { if ((await fetch(origin + '/login')).ok) break; } catch {} await new Promise(resolve => setTimeout(resolve, 50)); }
     const { chromium } = await import(pathToFileURL(path.resolve('.local/browser-qa/node_modules/playwright/index.mjs')).href);
     browser = await chromium.launch({ channel: 'chrome', headless: true });
-    const errors = [];
+    const errors = []; const consoleErrors = [];
     const NAMES = { [U.owner]: ['Owner A', 'owner'], [U.leaderBar]: ['Leader Bar', 'leader'], [U.staffNullPart]: ['Staff NoPart', 'staff'], [U.master]: ['Master B', 'master'] };
     async function open(userId, { lang = 'ko', width = 390, path: target = '/work', clock = false } = {}) {
       const context = await browser.newContext({ viewport: { width, height: 860 }, locale: lang === 'ko' ? 'ko-KR' : 'vi-VN' });
@@ -125,7 +128,9 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       const [name, role] = NAMES[userId];
       await context.addInitScript(user => { if (!sessionStorage.getItem('seeded')) { localStorage.setItem('baba_user', JSON.stringify(user)); sessionStorage.setItem('seeded', '1'); } },
         { id: userId, name, role, language: lang });
-      const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message)); page.on('dialog', d => d.accept());
+      const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
+      // Resource 404s are routes/assets the isolated preview does not copy (logo, /api/session, leave summary).
+      page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text()); }); page.on('dialog', d => d.accept());
       await page.route('**/*', route => { const u = new URL(route.request().url()); return u.hostname !== '127.0.0.1' && u.protocol !== 'data:' ? route.abort() : route.continue(); });
       if (clock) await page.clock.install();
       await page.goto(origin + target);
@@ -273,6 +278,66 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await leader.page.getByRole('button', { name: '공휴일', exact: true }).waitFor();
       assert.equal(await leader.page.getByRole('button', { name: copy.tab, exact: true }).count(), 0);
       await leader.context.close();
+    });
+
+    await t.test('store settings tabs: KO/VI × 320–1280 px, 4 tabs (owner/master) / 3 tabs (leader) equal, unclipped, underline kept; chip toggles log no console errors', async () => {
+      const navTabs = page => page.locator('nav button').evaluateAll(buttons => buttons.map(b => {
+        const r = b.getBoundingClientRect(); const cs = getComputedStyle(b);
+        return { text: b.textContent, left: r.left, right: r.right, top: r.top, width: r.width,
+          clipped: b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1,
+          underline: cs.borderBottomStyle === 'solid' && cs.borderBottomWidth === '3px' ? cs.borderBottomColor : null,
+          sides: [cs.borderTopWidth, cs.borderLeftWidth, cs.borderRightWidth] };
+      }));
+      const checkTabs = (tabs, count, label) => {
+        assert.equal(tabs.length, count, label + ' tab count');
+        for (const [i, tab] of tabs.entries()) {
+          assert.equal(tab.clipped, false, `${label} "${tab.text}" clipped`);
+          assert.ok(Math.abs(tab.width - tabs[0].width) <= 1, `${label} equal width`);
+          assert.ok(Math.abs(tab.top - tabs[0].top) <= 1, `${label} one row`);
+          if (i > 0) assert.ok(tab.left >= tabs[i - 1].right - 0.5, `${label} no overlap`);
+          assert.deepEqual(tab.sides, ['0px', '0px', '0px'], `${label} only the bottom border`);
+        }
+      };
+      for (const lang of ['ko', 'vi']) for (const width of [320, 360, 390, 414, 1280]) {
+        const label = `${lang}-${width}`; const copy = notificationSettingsText[lang];
+        const { page, context } = await open(U.master, { lang, width, path: '/admin/settings/store' });
+        await page.getByRole('button', { name: copy.tab, exact: true }).click();
+        await page.getByText(copy.typeNames['inventory.pos_deduction_pending'], { exact: true }).waitFor();
+        const tabs = await navTabs(page);
+        checkTabs(tabs, 4, label);
+        assert.deepEqual(tabs.map(tab => tab.underline), ['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)', 'rgb(17, 24, 39)'], `${label} active underline`);
+        await fits(page, `tabs-${label}`);
+        await page.screenshot({ path: path.join(shots, `store-tabs-${label}.png`), clip: { x: 0, y: 0, width, height: 320 } });
+        await context.close();
+        const leader = await open(U.leaderBar, { lang, width, path: '/admin/settings/store' });
+        await leader.page.locator('nav button').first().waitFor();
+        const leaderTabs = await navTabs(leader.page);
+        checkTabs(leaderTabs, 3, `leader-${label}`);
+        assert.equal(leaderTabs.some(tab => tab.text === copy.tab), false, 'leader never sees the notification tab');
+        await fits(leader.page, `leader-tabs-${label}`);
+        await leader.page.screenshot({ path: path.join(shots, `store-tabs-leader-${label}.png`), clip: { x: 0, y: 0, width, height: 320 } });
+        await leader.context.close();
+      }
+      const before = consoleErrors.length;
+      const { page, context } = await open(U.master, { path: '/admin/settings/store' });
+      const copy = notificationSettingsText.ko;
+      await page.getByRole('button', { name: copy.tab, exact: true }).click();
+      const card = page.getByTestId('notification-type-inventory.pos_deduction_pending');
+      await card.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
+      const group = card.getByTestId('rule-group-1');
+      const chips = [group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }),
+        group.getByTestId('rule-parts').getByRole('button', { name: 'Bar', exact: true }),
+        card.getByRole('button', { name: 'Leader Bar', exact: true })];
+      for (const chip of chips) for (let n = 0; n < 6; n++) {
+        await chip.click();
+        assert.equal(await chip.getAttribute('aria-pressed'), String(n % 2 === 0));
+        const color = await chip.evaluate(b => getComputedStyle(b).borderTopColor);
+        assert.equal(color, n % 2 === 0 ? 'rgb(17, 24, 39)' : 'rgb(209, 213, 219)', 'selected / unselected border kept');
+      }
+      await page.screenshot({ path: path.join(shots, 'settings-ko-390-chip-toggle.png'), fullPage: true });
+      await new Promise(r => setTimeout(r, 300));
+      assert.deepEqual(consoleErrors.slice(before), [], 'no console errors while toggling chips');
+      await context.close();
     });
 
     await t.test('polling: 120 s while visible, stopped in background, refreshed on return', async () => {
