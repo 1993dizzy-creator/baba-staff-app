@@ -260,6 +260,7 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       await page.getByRole('button', { name: copy.tab, exact: true }).click();
       const card = page.getByTestId('notification-type-inventory.pos_deduction_pending');
       await card.getByLabel(copy.enabled).check();
+      await card.getByTestId('notification-details-toggle').click();
       await card.getByRole('button', { name: copy.removeGroup }).click();
       await card.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
       const group = card.getByTestId('rule-group-0');
@@ -323,6 +324,8 @@ test('notification UI in a real browser: header bell, center, settings tab, DB m
       const copy = notificationSettingsText.ko;
       await page.getByRole('button', { name: copy.tab, exact: true }).click();
       const card = page.getByTestId('notification-type-inventory.pos_deduction_pending');
+      await card.getByTestId('notification-details-toggle').click();
+      await card.getByTestId('notification-people-toggle').click();
       await card.getByRole('button', { name: `+ ${copy.addGroup}` }).click();
       const group = card.getByTestId('rule-group-1');
       const chips = [group.getByTestId('rule-roles').getByRole('button', { name: '리더', exact: true }),

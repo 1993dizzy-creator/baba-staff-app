@@ -35,8 +35,11 @@ test("both setting tabs still confirm the unified schedule before saving", () =>
   assert.match(page, /onConfirm=\{save\}/);
 });
 
-test("current hours metadata stays 2-by-2 and renders a numeric revision without a hash", () => {
-  assert.match(page, /currentMetaGrid: \{[\s\S]*?gridTemplateColumns: "repeat\(2, minmax\(0, 1fr\)\)"/);
+// BABA-STORE-UI-REFINE: effective date / revision / timezone moved from a 2-by-2 tile grid to one wrapping
+// secondary line (MetaLine); the hours summary itself is the primary content.
+test("current hours metadata is a wrapping secondary line and renders a numeric revision without a hash", () => {
+  assert.match(page, /metaLine: \{[\s\S]*?flexWrap: "wrap"/);
+  assert.match(page, /function SettingBody[\s\S]*?<MetaLine>[\s\S]*?<HoursSummary/);
   assert.match(page, /<CompactMetric label=\{t\.metaRevision\} value=\{String\(props\.setting\.revision\)\} \/>/);
   assert.doesNotMatch(page, /value=\{`#\$\{props\.setting\.revision\}`\}/);
   assert.match(page, /metaRevision: "변경번호"/);

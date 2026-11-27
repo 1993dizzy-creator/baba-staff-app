@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import ChevronIcon from "@/components/ChevronIcon";
 import Container from "@/components/Container";
 import NotificationSettingsTab from "@/components/notifications/NotificationSettingsTab";
 import { getUser } from "@/lib/supabase/auth";
@@ -90,13 +91,15 @@ const copy = {
     title: "매장 통합설정",
     intro: "운영시간과 근태 판정 기준을 같은 설정 버전으로 관리합니다.",
     tabs: { hours: "운영시간", attendance: "근태설정", holidays: "공휴일" },
-    current: "🏪 현재 매장 운영시간",
-    attendancePolicyTitle: "⏰ 현재 근태 기준",
+    current: "현재 운영시간",
+    attendancePolicyTitle: "현재 근태 기준",
     policyDescription: "기준 설명",
     policyDescriptionClose: "기준 설명 닫기",
-    scheduled: "📅 예약 설정",
-    newSetting: "🗓️ 운영시간 변경",
-    newAttendanceSetting: "✏️ 설정 예약",
+    scheduled: "예약 설정",
+    scheduledNone: "없음",
+    scheduledFrom: "{date}부터",
+    newSetting: "운영시간 변경",
+    newAttendanceSetting: "근태 기준 변경",
     timezone: "시간대",
     cutoff: "영업일 마감",
     businessHours: "요일별 운영시간",
@@ -120,8 +123,8 @@ const copy = {
     failed: "설정을 처리하지 못했습니다.",
     created: "생성",
     cancelled: "취소",
-    history: "🧾 변경 기록",
-    hideHistory: "이력 닫기",
+    history: "변경 기록",
+    historyEmpty: "기록이 없습니다.",
     confirmCancel: "예약 설정을 취소하시겠습니까?",
     lateGrace: "지각 기준",
     minutes: "분",
@@ -150,6 +153,9 @@ const copy = {
     operationPolicyDescription: "선택한 날짜는 매장 영업 및 내부 200% 적용일로 관리됩니다.",
     operationPolicySaving: "저장 중…",
     dayCountSuffix: "일",
+    selectedDays: "{n}일 적용",
+    prevYear: "이전 연도",
+    nextYear: "다음 연도",
 
     notPreparedPrefix: "아직 ",
     notPreparedSuffix: "년 공휴일이 준비되지 않았습니다.",
@@ -181,13 +187,15 @@ const copy = {
       attendance: "Chấm công",
       holidays: "Ngày lễ",
     },
-    current: "🏪 Giờ hoạt động hiện tại",
-    attendancePolicyTitle: "⏰ Tiêu chuẩn chấm công hiện tại",
+    current: "Giờ hoạt động hiện tại",
+    attendancePolicyTitle: "Tiêu chuẩn chấm công hiện tại",
     policyDescription: "Giải thích tiêu chuẩn",
     policyDescriptionClose: "Đóng phần giải thích",
-    scheduled: "📅 Cài đặt đã lên lịch",
-    newSetting: "🗓️ Thay đổi giờ mở cửa",
-    newAttendanceSetting: "✏️ Lên lịch cài đặt",
+    scheduled: "Cài đặt đã lên lịch",
+    scheduledNone: "Không có",
+    scheduledFrom: "Từ {date}",
+    newSetting: "Thay đổi giờ mở cửa",
+    newAttendanceSetting: "Thay đổi tiêu chuẩn chấm công",
     timezone: "Múi giờ",
     cutoff: "Giờ chốt ngày kinh doanh",
     businessHours: "Giờ hoạt động theo ngày",
@@ -214,8 +222,8 @@ const copy = {
     failed: "Không thể xử lý cài đặt.",
     created: "Tạo",
     cancelled: "Hủy",
-    history: "🧾 Lịch sử thay đổi",
-    hideHistory: "Đóng lịch sử",
+    history: "Lịch sử thay đổi",
+    historyEmpty: "Chưa có lịch sử.",
     confirmCancel: "Bạn có muốn hủy cài đặt đã lên lịch không?",
     lateGrace: "Tiêu chuẩn đi muộn",
     minutes: "phút",
@@ -245,6 +253,9 @@ const copy = {
       "Ngày đã chọn được quản lý là ngày cửa hàng hoạt động và áp dụng mức 200% theo quy định nội bộ.",
     operationPolicySaving: "Đang lưu…",
     dayCountSuffix: "ngày",
+    selectedDays: "Áp dụng {n} ngày",
+    prevYear: "Năm trước",
+    nextYear: "Năm sau",
 
     notPreparedPrefix: "Chưa chuẩn bị ngày lễ năm ",
     notPreparedSuffix: ".",
@@ -284,6 +295,8 @@ export default function StoreSettingsPage() {
   const t = copy[lang];
   const [tab, setTab] = useState<PageTab>("hours");
   const [canManageNotifications, setCanManageNotifications] = useState(false);
+  // Once opened, the notification tab stays mounted (hidden) so unsaved drafts survive tab switches.
+  const [notificationsVisited, setNotificationsVisited] = useState(false);
   useEffect(() => {
     queueMicrotask(() => setCanManageNotifications(isOwnerOrMasterRole(String(getUser()?.role ?? "").trim().toLowerCase())));
   }, []);
@@ -494,7 +507,10 @@ export default function StoreSettingsPage() {
           {canManageNotifications ? (
             <button
               type="button"
-              onClick={() => setTab("notifications")}
+              onClick={() => {
+                setTab("notifications");
+                setNotificationsVisited(true);
+              }}
               style={{
                 ...styles.subNavTab,
                 ...(tab === "notifications" ? styles.subNavTabActive : null),
@@ -543,7 +559,11 @@ export default function StoreSettingsPage() {
 
       {tab === "holidays" ? <HolidaysTab lang={lang} /> : null}
 
-      {tab === "notifications" && canManageNotifications ? <NotificationSettingsTab lang={lang} /> : null}
+      {canManageNotifications && notificationsVisited ? (
+        <div hidden={tab !== "notifications"}>
+          <NotificationSettingsTab lang={lang} />
+        </div>
+      ) : null}
 
       {confirmOpen ? (
         <ConfirmScheduleModal
@@ -579,6 +599,9 @@ function HoursTab(props: {
   onHistory: () => void;
 }) {
   const t = copy[props.lang];
+  const scheduled = props.data.overview.scheduled;
+  const canEdit = props.data.capabilities.mutate && !props.data.overview.scheduled;
+  const [editOpen, setEditOpen] = useState(false);
 
   return (
     <>
@@ -587,146 +610,170 @@ function HoursTab(props: {
         setting={props.data.overview.current}
         lang={props.lang}
       />
-      <section style={styles.card}>
-        <div style={{ ...styles.cardHeader, marginBottom: 10 }}>
-          <h2 style={{ ...styles.sectionTitle, margin: 0, flex: 1, minWidth: 0 }}>
-            {t.scheduled}
-          </h2>
-          {props.data.overview.scheduled &&
-          props.data.capabilities.mutate ? (
-            <button style={styles.danger} onClick={props.onCancel}>
-              {t.cancel}
-            </button>
-          ) : null}
-        </div>
-        {props.data.overview.scheduled ? (
-          <SettingBody
-            setting={props.data.overview.scheduled}
-            lang={props.lang}
-          />
-        ) : (
-          <p style={styles.muted}>{t.empty}</p>
-        )}
-      </section>
 
-      {props.data.capabilities.mutate &&
-      !props.data.overview.scheduled ? (
-        <section style={styles.card}>
-          <h2 style={styles.sectionTitle}>{t.newSetting}</h2>
-          <div style={styles.metaGrid3}>
-            <CompactField label={t.metaTimezone}>
-              <input
-                style={styles.compactInput}
-                value={STORE_TIMEZONE}
-                disabled
-              />
-            </CompactField>
-            <CompactField label={t.metaCutoff}>
-              <input
-                type="time"
-                style={styles.compactInput}
-                value={props.cutoff}
-                onChange={(event) => props.onCutoff(event.target.value)}
-              />
-            </CompactField>
-            <CompactField label={t.metaEffective}>
-              <input
-                type="date"
-                style={styles.compactInput}
-                min={addStoreDays(calculateStoreBusinessDate(new Date()), 1)}
-                value={props.effective}
-                onChange={(event) => props.onEffective(event.target.value)}
-              />
-            </CompactField>
+      <section style={styles.card}>
+        <div style={styles.cardHeader}>
+          <h2 style={styles.cardTitle}>{t.scheduled}</h2>
+          {scheduled ? (
+            props.data.capabilities.mutate ? (
+              <button type="button" style={styles.danger} onClick={props.onCancel}>
+                {t.cancel}
+              </button>
+            ) : null
+          ) : (
+            <span style={styles.pill}>{t.scheduledNone}</span>
+          )}
+        </div>
+        {scheduled ? (
+          <div style={styles.cardBody}>
+            <SettingBody setting={scheduled} lang={props.lang} />
           </div>
-          <h3 style={styles.subheading}>{t.businessHours}</h3>
-          <div style={styles.days}>
-            {props.hours.map((hour) => {
-              const defaults = DEFAULT_STORE_HOURS[hour.weekday];
-              return (
-                <div key={hour.weekday} style={styles.day}>
-                  <strong
-                    style={{ ...styles.dayName, color: weekdayColor(hour.weekday) }}
-                  >
-                    {weekdayNames[props.lang][hour.weekday]}
-                  </strong>
-                  <input
-                    aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.businessHours}`}
-                    type="time"
-                    style={styles.timeInput}
-                    value={hour.openTime || ""}
-                    disabled={hour.isClosed}
-                    onChange={(event) =>
-                      props.onHour(hour.weekday, {
-                        openTime: event.target.value,
-                      })
-                    }
-                  />
-                  <span style={styles.dayDash}>–</span>
-                  <input
-                    aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.businessHours}`}
-                    type="time"
-                    style={styles.timeInput}
-                    value={hour.closeTime || ""}
-                    disabled={hour.isClosed}
-                    onChange={(event) =>
-                      props.onHour(hour.weekday, {
-                        closeTime: event.target.value,
-                      })
-                    }
-                  />
-                  <label style={styles.openToggle}>
+        ) : null}
+
+        {canEdit ? (
+          <>
+            <Disclosure
+              title={t.newSetting}
+              open={editOpen}
+              onToggle={() => setEditOpen((value) => !value)}
+              testId="hours-edit-toggle"
+            />
+            {editOpen ? (
+              <div style={styles.editBody}>
+                <div style={styles.fieldGrid2}>
+                  <CompactField label={t.cutoff}>
                     <input
-                      type="checkbox"
-                      checked={!hour.isClosed}
-                      onChange={(event) =>
-                        props.onHour(
-                          hour.weekday,
-                          event.target.checked
-                            ? {
-                                isClosed: false,
-                                openTime:
-                                  hour.openTime || defaults.openTime,
-                                closeTime:
-                                  hour.closeTime || defaults.closeTime,
-                              }
-                            : {
-                                isClosed: true,
-                                openTime: null,
-                                closeTime: null,
-                              }
-                        )
-                      }
+                      type="time"
+                      style={styles.compactInput}
+                      value={props.cutoff}
+                      onChange={(event) => props.onCutoff(event.target.value)}
                     />
-                    <span style={styles.openToggleText}>{t.open}</span>
-                  </label>
+                  </CompactField>
+                  <CompactField label={t.effective}>
+                    <input
+                      type="date"
+                      style={styles.compactInput}
+                      min={addStoreDays(calculateStoreBusinessDate(new Date()), 1)}
+                      value={props.effective}
+                      onChange={(event) => props.onEffective(event.target.value)}
+                    />
+                  </CompactField>
                 </div>
-              );
-            })}
-          </div>
-          <button
-            style={ui.button}
-            disabled={props.busy}
-            onClick={props.onSave}
-          >
-            {props.busy ? t.saving : t.save}
-          </button>
-        </section>
-      ) : null}
+                <div style={styles.fieldLabel}>{t.businessHours}</div>
+                {/* Scoped to these inputs only: a smaller picker icon leaves room for "오후 04:00" at 320 px. */}
+                <style>{".store-time-input::-webkit-calendar-picker-indicator{margin:0;padding:0;width:11px;height:11px}.store-time-input::-webkit-datetime-edit-fields-wrapper{padding:0}"}</style>
+                <div style={styles.days}>
+                  {/* "영업" is labelled once in this header so each row keeps the width for the times. */}
+                  <div style={styles.dayHead} aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                    <span style={styles.dayHeadOpen}>{t.open}</span>
+                  </div>
+                  {props.hours.map((hour) => {
+                    const defaults = DEFAULT_STORE_HOURS[hour.weekday];
+                    return (
+                      <div key={hour.weekday} style={styles.day}>
+                        <strong
+                          style={{ ...styles.dayName, color: weekdayColor(hour.weekday) }}
+                        >
+                          {weekdayNames[props.lang][hour.weekday]}
+                        </strong>
+                        <input
+                          aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.businessHours}`}
+                          type="time"
+                          className="store-time-input"
+                          style={styles.timeInput}
+                          value={hour.openTime || ""}
+                          disabled={hour.isClosed}
+                          onChange={(event) =>
+                            props.onHour(hour.weekday, {
+                              openTime: event.target.value,
+                            })
+                          }
+                        />
+                        <span style={styles.dayDash}>–</span>
+                        <input
+                          aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.businessHours}`}
+                          type="time"
+                          className="store-time-input"
+                          style={styles.timeInput}
+                          value={hour.closeTime || ""}
+                          disabled={hour.isClosed}
+                          onChange={(event) =>
+                            props.onHour(hour.weekday, {
+                              closeTime: event.target.value,
+                            })
+                          }
+                        />
+                        <label style={styles.openToggle}>
+                          <input
+                            type="checkbox"
+                            aria-label={`${weekdayAriaNames[props.lang][hour.weekday]} ${t.open}`}
+                            style={styles.openCheckbox}
+                            checked={!hour.isClosed}
+                            onChange={(event) =>
+                              props.onHour(
+                                hour.weekday,
+                                event.target.checked
+                                  ? {
+                                      isClosed: false,
+                                      openTime:
+                                        hour.openTime || defaults.openTime,
+                                      closeTime:
+                                        hour.closeTime || defaults.closeTime,
+                                    }
+                                  : {
+                                      isClosed: true,
+                                      openTime: null,
+                                      closeTime: null,
+                                    }
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p style={styles.help}>{t.scheduleNotice}</p>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  disabled={props.busy}
+                  onClick={props.onSave}
+                >
+                  {props.busy ? t.saving : t.save}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
 
       {props.data.capabilities.audit ? (
         <section style={styles.card}>
-          <button style={styles.historyButton} onClick={props.onHistory}>
-            {props.logs ? t.hideHistory : t.history}
-          </button>
+          <Disclosure
+            title={t.history}
+            open={Boolean(props.logs)}
+            onToggle={props.onHistory}
+            testId="history-toggle"
+            flush
+          />
           {props.logs ? (
-            <div style={styles.history}>
+            <div style={styles.history} data-testid="history-list">
+              {props.logs.length === 0 ? <p style={styles.muted}>{t.historyEmpty}</p> : null}
               {props.logs.map((log) => (
                 <div key={log.id} style={styles.historyRow}>
                   <strong>
                     {log.action === "created" ? t.created : t.cancelled}
                   </strong>
                   <span>#{log.setting_version_id}</span>
+                  <span style={styles.historyMeta}>
+                    {log.actorName ?? ""}
+                    {log.created_at ? ` · ${shortDate(log.created_at.slice(0, 10))}` : ""}
+                  </span>
                 </div>
               ))}
             </div>
@@ -756,25 +803,25 @@ function AttendanceTab(props: {
     props.data.overview.current?.attendancePolicy ??
     DEFAULT_STORE_ATTENDANCE_POLICY;
   const currentSetting = props.data.overview.current;
+  const scheduled = props.data.overview.scheduled;
   const [showPolicyDescription, setShowPolicyDescription] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const policyDescriptionId = useId();
 
   return (
     <>
       <section style={styles.card}>
-        <h2 style={styles.sectionTitle}>{t.attendancePolicyTitle}</h2>
-        <div style={styles.policyMetaGrid}>
+        <div style={styles.cardHeader}>
+          <h2 style={styles.cardTitle}>{t.attendancePolicyTitle}</h2>
+        </div>
+        <MetaLine>
           <CompactMetric label={t.metaEffective} value={currentSetting ? shortDate(currentSetting.effectiveFromBusinessDate) : "-"} />
           <CompactMetric label={t.metaRevision} value={currentSetting ? String(currentSetting.revision) : "-"} />
-        </div>
-        <div style={styles.metaGrid3}>
-          <CompactMetric label={t.lateGrace} value={`${current.lateGraceMinutes}${t.minutes}`} />
-          <CompactMetric label={t.earlyLeaveGrace} value={`${current.earlyLeaveGraceMinutes}${t.minutes}`} />
-          <CompactMetric label={t.missingCheckoutGrace} value={`${current.missingCheckoutGraceMinutes}${t.minutes}`} />
-        </div>
+        </MetaLine>
+        <PolicyMetrics policy={current} lang={props.lang} testId="attendance-current" />
         <button type="button" style={styles.compactDisclosure} aria-expanded={showPolicyDescription} aria-controls={policyDescriptionId} onClick={() => setShowPolicyDescription((value) => !value)}>
           {showPolicyDescription ? t.policyDescriptionClose : t.policyDescription}
-          <span aria-hidden="true">{showPolicyDescription ? "▴" : "▾"}</span>
+          <ChevronIcon open={showPolicyDescription} />
         </button>
         {showPolicyDescription ? (
           <div id={policyDescriptionId} style={styles.policyDescription}>
@@ -786,77 +833,89 @@ function AttendanceTab(props: {
       </section>
 
       <section style={styles.card}>
-        <h2 style={{ ...styles.sectionTitle, marginBottom: 10 }}>{t.scheduled}</h2>
-        {props.data.overview.scheduled ? (
-          <AttendanceScheduledBody
-            setting={props.data.overview.scheduled}
-            lang={props.lang}
-          />
-        ) : (
-          <p style={styles.muted}>{t.empty}</p>
-        )}
-      </section>
+        <div style={styles.cardHeader}>
+          <h2 style={styles.cardTitle}>{t.scheduled}</h2>
+          {scheduled ? null : <span style={styles.pill}>{t.scheduledNone}</span>}
+        </div>
+        {scheduled ? (
+          <div style={styles.cardBody}>
+            <AttendanceScheduledBody
+              setting={scheduled}
+              lang={props.lang}
+            />
+          </div>
+        ) : null}
 
-      {props.data.capabilities.mutate &&
-      !props.data.overview.scheduled ? (
-        <section style={styles.card}>
-          <h2 style={styles.sectionTitle}>{t.newAttendanceSetting}</h2>
-          <div style={styles.metaGrid3}>
-            <CompactField label={t.lateGrace}>
-              <div style={styles.inlineInput}>
-                <GraceMinutesInput
-                  value={props.lateGrace}
-                  min={0}
-                  max={180}
-                  onChange={props.onLateGrace}
-                />
-                <span>{t.minutes}</span>
+        {props.data.capabilities.mutate && !scheduled ? (
+          <>
+            <Disclosure
+              title={t.newAttendanceSetting}
+              open={editOpen}
+              onToggle={() => setEditOpen((value) => !value)}
+              testId="attendance-edit-toggle"
+            />
+            {editOpen ? (
+              <div style={styles.editBody}>
+                <div style={styles.metaGrid3}>
+                  <CompactField label={t.lateGrace}>
+                    <div style={styles.inlineInput}>
+                      <GraceMinutesInput
+                        value={props.lateGrace}
+                        min={0}
+                        max={180}
+                        onChange={props.onLateGrace}
+                      />
+                      <span>{t.minutes}</span>
+                    </div>
+                  </CompactField>
+                  <CompactField label={t.earlyLeaveGrace}>
+                    <div style={styles.inlineInput}>
+                      <GraceMinutesInput
+                        value={props.earlyLeaveGrace}
+                        min={0}
+                        max={180}
+                        onChange={props.onEarlyLeaveGrace}
+                      />
+                      <span>{t.minutes}</span>
+                    </div>
+                  </CompactField>
+                  <CompactField label={t.missingCheckoutGrace}>
+                    <div style={styles.inlineInput}>
+                      <GraceMinutesInput
+                        value={props.missingCheckoutGrace}
+                        min={0}
+                        max={360}
+                        onChange={props.onMissingCheckoutGrace}
+                      />
+                      <span>{t.minutes}</span>
+                    </div>
+                  </CompactField>
+                </div>
+                <div style={styles.fieldGrid2}>
+                  <CompactField label={t.effective}>
+                    <input
+                      type="date"
+                      style={styles.compactInput}
+                      min={addStoreDays(calculateStoreBusinessDate(new Date()), 1)}
+                      value={props.effective}
+                      onChange={(event) => props.onEffective(event.target.value)}
+                    />
+                  </CompactField>
+                </div>
+                <p style={styles.help}>{t.scheduleNotice}</p>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  disabled={props.busy}
+                  onClick={props.onSave}
+                >
+                  {props.busy ? t.saving : t.saveAttendance}
+                </button>
               </div>
-            </CompactField>
-            <CompactField label={t.earlyLeaveGrace}>
-              <div style={styles.inlineInput}>
-                <GraceMinutesInput
-                  value={props.earlyLeaveGrace}
-                  min={0}
-                  max={180}
-                  onChange={props.onEarlyLeaveGrace}
-                />
-                <span>{t.minutes}</span>
-              </div>
-            </CompactField>
-            <CompactField label={t.missingCheckoutGrace}>
-              <div style={styles.inlineInput}>
-                <GraceMinutesInput
-                  value={props.missingCheckoutGrace}
-                  min={0}
-                  max={360}
-                  onChange={props.onMissingCheckoutGrace}
-                />
-                <span>{t.minutes}</span>
-              </div>
-            </CompactField>
-          </div>
-          <div style={styles.effectiveField}>
-            <Field label={t.effective}>
-              <input
-                type="date"
-                style={styles.input}
-                min={addStoreDays(calculateStoreBusinessDate(new Date()), 1)}
-                value={props.effective}
-                onChange={(event) => props.onEffective(event.target.value)}
-              />
-            </Field>
-          </div>
-          <p style={styles.help}>{t.scheduleNotice}</p>
-          <button
-            style={ui.button}
-            disabled={props.busy}
-            onClick={props.onSave}
-          >
-            {props.busy ? t.saving : t.saveAttendance}
-          </button>
-        </section>
-      ) : null}
+            ) : null}
+          </>
+        ) : null}
+      </section>
     </>
   );
 }
@@ -864,7 +923,7 @@ function AttendanceTab(props: {
 // "YYYY-MM-DD" → "MM/DD". 공휴일 목록/Tet 옵션 라벨 전용 — shortDate(연도만 자르는
 // 용도)와는 다른 포맷이라 별도로 둔다.
 function monthDay(dateKey: string) {
-  return dateKey.length === 10 ? dateKey.slice(5) : dateKey;
+  return dateKey.length === 10 ? dateKey.slice(5).replace("-", "/") : dateKey;
 }
 
 // 공휴일은 store_setting_versions와 완전히 독립된 원본(store_holiday_calendars/
@@ -881,6 +940,7 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
   // 11월 이후에만 확인하는 "다음 연도 준비 안내" — 지금 보고 있는 연도(year)와는
   // 독립적이다(관리자가 2026년을 보고 있어도 2027년 데이터가 없으면 안내가 뜬다).
   const [reminderYear, setReminderYear] = useState<number | null>(null);
+  const [policyOpen, setPolicyOpen] = useState(false);
   const holidaysFailedTextRef = useRef(t.holidaysFailed);
   holidaysFailedTextRef.current = t.holidaysFailed;
 
@@ -1002,17 +1062,23 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
     }
   }
 
+  const selectedCount = selectableGroups.reduce(
+    (count, groupEntry) =>
+      count + groupEntry.items.filter((holiday) => isBabaPremiumHoliday(holiday, groupEntry.items.length)).length,
+    0
+  );
+
   return (
     <>
       {reminderYear !== null ? (
-        <section style={{ ...styles.card, ...styles.reminderCard }}>
+        <section style={styles.reminderBar}>
           <p style={styles.reminderText}>
             {t.reminderPrefix}
             {reminderYear}
             {t.reminderSuffix}
           </p>
           {data?.capabilities.mutate ? (
-            <button type="button" style={ui.button} onClick={() => setPrepareOpen(reminderYear)}>
+            <button type="button" style={styles.smallPrimary} onClick={() => setPrepareOpen(reminderYear)}>
               {t.prepareButtonPrefix}
               {reminderYear}
               {t.prepareButtonSuffix}
@@ -1022,36 +1088,40 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
       ) : null}
 
       <section style={styles.card}>
-        <div style={styles.cardHeader}>
-          <button
-            type="button"
-            style={styles.yearNavButton}
-            onClick={() => setYear((value) => value - 1)}
-          >
-            ‹
-          </button>
-          <h2 style={{ ...styles.sectionTitle, margin: 0, textAlign: "center", flex: 1 }}>
-            {t.holidaysYearPrefix}
-            {year}
-            {t.holidaysYearSuffix} {t.holidaysTitle}
-          </h2>
-          <button
-            type="button"
-            style={styles.yearNavButton}
-            onClick={() => setYear((value) => value + 1)}
-          >
-            ›
-          </button>
+        <div style={{ ...styles.cardHeader, marginBottom: 8 }}>
+          <h2 style={styles.cardTitle}>{t.holidaysTitle}</h2>
+          <div style={styles.yearStepper}>
+            <button
+              type="button"
+              style={styles.yearNavButton}
+              aria-label={t.prevYear}
+              onClick={() => setYear((value) => value - 1)}
+            >
+              ‹
+            </button>
+            <span style={styles.yearLabel}>
+              {t.holidaysYearPrefix}
+              {year}
+              {t.holidaysYearSuffix}
+            </span>
+            <button
+              type="button"
+              style={styles.yearNavButton}
+              aria-label={t.nextYear}
+              onClick={() => setYear((value) => value + 1)}
+            >
+              ›
+            </button>
+          </div>
         </div>
 
         {error ? <p style={styles.error}>{error}</p> : null}
 
         {loading ? (
-          <p style={styles.muted}>{t.loading}</p>
+          <p style={styles.holidayLoading}>{t.loading}</p>
         ) : !data?.calendar ? (
           <div style={styles.holidayEmptyState}>
-            <div aria-hidden="true" style={styles.holidayEmptyIcon}>🗓️</div>
-            <p style={{ ...styles.muted, margin: 0 }}>
+            <p style={styles.muted}>
               {t.notPreparedPrefix}
               {year}
               {t.notPreparedSuffix}
@@ -1067,7 +1137,7 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
         ) : holidays.length === 0 ? (
           <p style={styles.muted}>{t.holidaysEmpty}</p>
         ) : (
-          <ul style={styles.holidayList}>
+          <ul style={styles.holidayList} data-testid="holiday-list">
             {holidays.map((holiday) => {
               const effective = isBabaPremiumHoliday(
                 holiday,
@@ -1076,10 +1146,10 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
               return (
                 <li key={holiday.id} style={styles.holidayItem}>
                   <span style={styles.holidayDate}>{monthDay(holiday.holidayDate)}</span>
-                  <span style={effective ? styles.holidayNameActive : undefined}>
+                  <span style={effective ? styles.holidayNameActive : styles.holidayName}>
                     {props.lang === "vi" ? holiday.nameVi : holiday.nameKo}
-                    {effective ? " (200%)" : ""}
                   </span>
+                  {effective ? <span style={styles.premiumBadge} data-premium="">200%</span> : null}
                 </li>
               );
             })}
@@ -1089,38 +1159,50 @@ function HolidaysTab(props: { lang: "ko" | "vi" }) {
 
       {selectableGroups.length > 0 ? (
         <section style={styles.card}>
-          <h2 style={styles.sectionTitle}>{t.operationPolicyTitle}</h2>
-          <p style={styles.help}>{t.operationPolicyDescription}</p>
-          {selectableGroups.map((groupEntry) => (
-            <div key={groupEntry.group} style={styles.holidayGroupBlock}>
-              <h3 style={styles.subheading}>
-                {groupEntry.label} · {groupEntry.items.length}{t.dayCountSuffix}
-              </h3>
-              <div style={styles.holidayToggleGrid}>
-                {groupEntry.items.map((holiday) => {
-                  const active = isBabaPremiumHoliday(holiday, groupEntry.items.length);
-                  const isBusy = busyHolidayId === holiday.id;
-                  const disabled = busyHolidayId !== null || !data?.capabilities.mutate;
-                  return (
-                    <button
-                      key={holiday.id}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => toggleHoliday(holiday)}
-                      style={{
-                        ...styles.holidayToggleButton,
-                        ...(active ? styles.holidayToggleButtonActive : null),
-                        cursor: disabled ? "not-allowed" : "pointer",
-                        opacity: disabled && !isBusy ? 0.6 : 1,
-                      }}
-                    >
-                      {isBusy ? t.operationPolicySaving : monthDay(holiday.holidayDate)}
-                    </button>
-                  );
-                })}
-              </div>
+          <Disclosure
+            title={t.operationPolicyTitle}
+            summary={<span style={styles.pill}>{t.selectedDays.replace("{n}", String(selectedCount))}</span>}
+            open={policyOpen}
+            onToggle={() => setPolicyOpen((value) => !value)}
+            testId="holiday-policy-toggle"
+            flush
+          />
+          {policyOpen ? (
+            <div style={styles.editBody} data-testid="holiday-policy-body">
+              <p style={styles.help}>{t.operationPolicyDescription}</p>
+              {selectableGroups.map((groupEntry) => (
+                <div key={groupEntry.group} style={styles.holidayGroupBlock}>
+                  <h3 style={styles.groupHeading}>
+                    {groupEntry.label} · {groupEntry.items.length}{t.dayCountSuffix}
+                  </h3>
+                  <div style={styles.holidayToggleGrid}>
+                    {groupEntry.items.map((holiday) => {
+                      const active = isBabaPremiumHoliday(holiday, groupEntry.items.length);
+                      const isBusy = busyHolidayId === holiday.id;
+                      const disabled = busyHolidayId !== null || !data?.capabilities.mutate;
+                      return (
+                        <button
+                          key={holiday.id}
+                          type="button"
+                          disabled={disabled}
+                          aria-pressed={active}
+                          onClick={() => toggleHoliday(holiday)}
+                          style={{
+                            ...styles.holidayToggleButton,
+                            ...(active ? styles.holidayToggleButtonActive : null),
+                            cursor: disabled ? "not-allowed" : "pointer",
+                            opacity: disabled && !isBusy ? 0.6 : 1,
+                          }}
+                        >
+                          {isBusy ? t.operationPolicySaving : monthDay(holiday.holidayDate)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          ) : null}
         </section>
       ) : null}
 
@@ -1409,7 +1491,9 @@ function SettingCard(props: {
 }) {
   return (
     <section style={styles.card}>
-      <h2 style={styles.sectionTitle}>{props.title}</h2>
+      <div style={styles.cardHeader}>
+        <h2 style={styles.cardTitle}>{props.title}</h2>
+      </div>
       {props.setting ? (
         <SettingBody setting={props.setting} lang={props.lang} />
       ) : (
@@ -1419,6 +1503,8 @@ function SettingCard(props: {
   );
 }
 
+// 운영시간 요약: 적용일·변경번호·시간대는 한 줄 보조 정보, 본문은 같은 시간대
+// 요일을 묶은 운영시간과 영업일 마감 시간만 보여 준다.
 function SettingBody(props: {
   setting: StoreSetting;
   lang: "ko" | "vi";
@@ -1426,33 +1512,83 @@ function SettingBody(props: {
   const t = copy[props.lang];
   return (
     <div>
-      <div style={styles.currentMetaGrid}>
-        <CompactMetric label={t.metaTimezone} value={props.setting.timezone} />
-        <CompactMetric label={t.metaRevision} value={String(props.setting.revision)} />
-        <CompactMetric
-          label={t.metaCutoff}
-          value={props.setting.businessDayCutoffTime}
-        />
+      <MetaLine>
         <CompactMetric
           label={t.metaEffective}
           value={shortDate(props.setting.effectiveFromBusinessDate)}
         />
-      </div>
-      <h3 style={styles.subheading}>{t.businessHours}</h3>
-      <div style={styles.hourList}>
-        {props.setting.hours.map((hour) => (
-          <span key={hour.weekday} style={styles.hourItem}>
-            <b style={{ color: weekdayColor(hour.weekday) }}>
-              {weekdayNames[props.lang][hour.weekday]}
-            </b>
-            <span>
-              {hour.isClosed
-                ? t.closed
-                : `${hour.openTime}–${hour.closeTime}`}
-            </span>
+        <CompactMetric label={t.metaRevision} value={String(props.setting.revision)} />
+        <CompactMetric label={t.metaTimezone} value={props.setting.timezone} />
+      </MetaLine>
+      <HoursSummary
+        hours={props.setting.hours}
+        cutoff={props.setting.businessDayCutoffTime}
+        lang={props.lang}
+      />
+    </div>
+  );
+}
+
+function weekdayRangeLabel(weekdays: number[], lang: "ko" | "vi") {
+  const names = weekdayNames[lang];
+  return weekdays.length > 1
+    ? `${names[weekdays[0]]}~${names[weekdays[weekdays.length - 1]]}`
+    : names[weekdays[0]];
+}
+
+function HoursSummary(props: {
+  hours: StoreBusinessHour[];
+  cutoff: string;
+  lang: "ko" | "vi";
+}) {
+  const t = copy[props.lang];
+  return (
+    <div style={styles.summaryList}>
+      {groupStoreHours(props.hours).map((group) => (
+        <div key={group.weekdays.join("-")} style={styles.summaryRow}>
+          <span
+            style={{
+              ...styles.summaryLabel,
+              color: group.weekdays.length === 1 ? weekdayColor(group.weekdays[0]) : styles.summaryLabel.color,
+            }}
+          >
+            {weekdayRangeLabel(group.weekdays, props.lang)}
           </span>
-        ))}
+          <strong style={styles.summaryValue}>
+            {group.isClosed ? t.closed : `${group.openTime}–${group.closeTime}`}
+          </strong>
+        </div>
+      ))}
+      <div style={{ ...styles.summaryRow, ...styles.summaryRowLast }}>
+        <span style={styles.summaryLabel}>{t.cutoff}</span>
+        <strong style={styles.summaryValue}>{props.cutoff}</strong>
       </div>
+    </div>
+  );
+}
+
+function PolicyMetrics(props: {
+  policy: StoreSetting["attendancePolicy"];
+  lang: "ko" | "vi";
+  testId?: string;
+}) {
+  const t = copy[props.lang];
+  const items: Array<[string, number]> = [
+    [t.lateGrace, props.policy.lateGraceMinutes],
+    [t.earlyLeaveGrace, props.policy.earlyLeaveGraceMinutes],
+    [t.missingCheckoutGrace, props.policy.missingCheckoutGraceMinutes],
+  ];
+  return (
+    <div style={styles.metaGrid3} data-testid={props.testId}>
+      {items.map(([label, value]) => (
+        <div key={label} style={styles.metric} data-metric>
+          <span style={styles.metricLabel}>{label}</span>
+          <strong style={styles.metricValue}>
+            {value}
+            <span style={styles.metricUnit}>{t.minutes}</span>
+          </strong>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1462,39 +1598,54 @@ function AttendanceScheduledBody(props: {
   lang: "ko" | "vi";
 }) {
   const t = copy[props.lang];
-  const policy = props.setting.attendancePolicy;
   return (
     <div>
-      <div style={styles.policyMetaGrid}>
+      <MetaLine>
         <CompactMetric label={t.metaEffective} value={shortDate(props.setting.effectiveFromBusinessDate)} />
         <CompactMetric label={t.metaRevision} value={String(props.setting.revision)} />
-      </div>
-      <div style={styles.metaGrid3}>
-        <CompactMetric label={t.lateGrace} value={`${policy.lateGraceMinutes}${t.minutes}`} />
-        <CompactMetric label={t.earlyLeaveGrace} value={`${policy.earlyLeaveGraceMinutes}${t.minutes}`} />
-        <CompactMetric label={t.missingCheckoutGrace} value={`${policy.missingCheckoutGraceMinutes}${t.minutes}`} />
-      </div>
+      </MetaLine>
+      <PolicyMetrics policy={props.setting.attendancePolicy} lang={props.lang} />
     </div>
   );
 }
 
-function Field(props: { label: string; children: React.ReactNode }) {
+// 카드 안의 접이식 행(편집 영역·이력·정책). 펼침 여부는 호출하는 쪽 state가
+// 가지므로 접어도 입력값(페이지 state)은 그대로 남는다.
+function Disclosure(props: {
+  title: string;
+  summary?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  testId?: string;
+  flush?: boolean;
+}) {
   return (
-    <label style={styles.label}>
-      <span>{props.label}</span>
-      {props.children}
-    </label>
+    <button
+      type="button"
+      style={{ ...styles.disclosure, ...(props.flush ? styles.disclosureFlush : null) }}
+      aria-expanded={props.open}
+      data-testid={props.testId}
+      onClick={props.onToggle}
+    >
+      <span style={styles.disclosureTitle}>{props.title}</span>
+      <span style={styles.disclosureRight}>
+        {props.summary}
+        <ChevronIcon open={props.open} />
+      </span>
+    </button>
   );
 }
 
-// 좁은 모바일 폭에서도 시간대/마감/적용일 3칸이 줄바꿈 없이 한 줄에 들어가도록
-// Field보다 폰트·패딩을 줄인 전용 변형. 다른 곳에서 쓰는 Field는 그대로 두고
-// 이 두 곳(현재 운영시간 카드, 운영시간 변경 입력 카드)에만 쓴다.
+function MetaLine(props: { children: React.ReactNode }) {
+  return <div style={styles.metaLine}>{props.children}</div>;
+}
+
+// 적용일·변경번호·시간대 같은 보조 정보. 본문보다 작고 흐린 "라벨 값" 한 쌍.
 function CompactMetric(props: { label: string; value: string }) {
   return (
-    <span style={styles.compactMetric}>
-      <small style={styles.compactMetricLabel}>{props.label}</small>
-      <strong style={styles.compactMetricValue}>{props.value}</strong>
+    <span style={styles.metaItem}>
+      <span>{props.label}</span>
+      <strong style={styles.metaValue}>{props.value}</strong>
     </span>
   );
 }
@@ -1538,63 +1689,146 @@ function GraceMinutesInput(props: {
 }
 
 const styles: Record<string, CSSProperties> = {
+  card: {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+    padding: "10px 12px",
+    marginBottom: 10,
+    minWidth: 0,
+  },
+  cardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    minHeight: 28,
+  },
+  cardTitle: {
+    margin: 0,
+    minWidth: 0,
+    fontSize: 15,
+    fontWeight: 800,
+    color: "#111827",
+    lineHeight: 1.3,
+  },
+  cardBody: { marginTop: 4 },
+  pill: {
+    padding: "2px 8px",
+    borderRadius: 999,
+    background: "#f3f4f6",
+    color: "#6b7280",
+    fontSize: 11.5,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+  metaLine: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "2px 10px",
+    margin: "2px 0 8px",
+    fontSize: 11.5,
+    color: "#6b7280",
+  },
+  metaItem: { display: "inline-flex", gap: 4, minWidth: 0, flexWrap: "wrap" },
+  metaValue: { fontWeight: 700, color: "#374151", wordBreak: "break-all" },
+  summaryList: {
+    display: "grid",
+    borderTop: "1px solid #f1f2f4",
+  },
+  summaryRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: 10,
+    padding: "7px 2px",
+    borderBottom: "1px solid #f1f2f4",
+  },
+  summaryRowLast: { borderBottom: 0 },
+  summaryLabel: { fontSize: 13, fontWeight: 700, color: "#374151" },
+  summaryValue: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#111827",
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
+  },
   metaGrid3: {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: 6,
-    marginBottom: 12,
   },
-  currentMetaGrid: {
+  fieldGrid2: {
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 6,
-    marginBottom: 12,
+    gap: 8,
   },
-  policyMetaGrid: {
+  metric: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 6,
-    marginBottom: 6,
-  },
-  compactMetric: {
-    display: "grid",
-    gap: 2,
-    padding: "8px 6px",
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    background: "#f8fafc",
+    alignContent: "space-between",
+    gap: 4,
+    padding: "8px",
+    borderRadius: 10,
+    background: "#f9fafb",
     minWidth: 0,
   },
-  compactMetricLabel: {
-    fontSize: 10.5,
+  metricLabel: {
+    fontSize: 11.5,
     fontWeight: 700,
     color: "#6b7280",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    lineHeight: 1.3,
+    wordBreak: "keep-all",
+    overflowWrap: "anywhere",
   },
-  compactMetricValue: {
-    fontSize: 12.5,
+  metricValue: {
+    fontSize: 17,
     fontWeight: 800,
     color: "#111827",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    lineHeight: 1.1,
+    fontVariantNumeric: "tabular-nums",
   },
+  metricUnit: { marginLeft: 2, fontSize: 12, fontWeight: 700, color: "#6b7280" },
   compactLabel: {
     display: "grid",
-    gap: 3,
-    fontSize: 10.5,
-    fontWeight: 800,
+    gap: 4,
+    fontSize: 11.5,
+    fontWeight: 700,
+    color: "#6b7280",
     minWidth: 0,
+    lineHeight: 1.3,
   },
   compactInput: {
     ...ui.input,
     minWidth: 0,
-    height: 34,
-    padding: "6px 6px",
-    fontSize: 12.5,
+    height: 36,
+    padding: "6px 8px",
+    fontSize: 13,
+    color: "#111827",
   },
+  fieldLabel: { fontSize: 11.5, fontWeight: 700, color: "#6b7280" },
+  disclosure: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    width: "100%",
+    minHeight: 40,
+    marginTop: 8,
+    padding: "8px 0 0",
+    borderWidth: "1px 0 0",
+    borderStyle: "solid",
+    borderColor: "#f1f2f4",
+    background: "transparent",
+    color: "#111827",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  disclosureFlush: { marginTop: 0, paddingTop: 0, minHeight: 28, borderTopWidth: 0 },
+  disclosureTitle: { fontSize: 13.5, fontWeight: 800, minWidth: 0 },
+  disclosureRight: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0 },
+  editBody: { display: "grid", gap: 8, paddingTop: 8 },
   compactDisclosure: {
     display: "flex",
     width: "100%",
@@ -1610,12 +1844,32 @@ const styles: Record<string, CSSProperties> = {
   },
   policyDescription: {
     marginTop: 6,
-    padding: "4px 2px 0",
-    color: "#64748b",
+    padding: "8px 10px",
+    borderRadius: 8,
+    background: "#f9fafb",
+    color: "#4b5563",
     fontSize: 11.5,
-    lineHeight: 1.4,
+    lineHeight: 1.45,
   },
   policyDescriptionLine: { margin: "0 0 3px" },
+  primaryButton: {
+    ...ui.button,
+    padding: "11px 14px",
+    fontSize: 14,
+    fontWeight: 700,
+  },
+  smallPrimary: {
+    border: 0,
+    borderRadius: 9,
+    padding: "7px 12px",
+    background: "#111827",
+    color: "#fff",
+    fontSize: 12.5,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+    cursor: "pointer",
+  },
   modalOverlay: {
     position: "fixed",
     inset: 0,
@@ -1674,7 +1928,7 @@ const styles: Record<string, CSSProperties> = {
   },
   subNav: {
     borderBottom: "1px solid #e5e7eb",
-    marginBottom: 12,
+    marginBottom: 10,
   },
   subNavRow: {
     display: "flex",
@@ -1707,62 +1961,47 @@ const styles: Record<string, CSSProperties> = {
     color: "#111827",
     borderColor: "#111827",
   },
-  card: {
-    background: "#fff",
-    border: "1px solid #d8dce3",
-    borderRadius: 14,
-    boxShadow: "0 1px 3px rgba(15,23,42,0.05)",
-    padding: 14,
-    marginBottom: 12,
-  },
-  cardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-  },
-  sectionTitle: { fontSize: 16, fontWeight: 800, margin: "0 0 8px" },
-  subheading: {
-    borderTop: "1px solid #e5e7eb",
-    paddingTop: 12,
-    margin: "12px 0 6px",
-    fontSize: 13,
-    fontWeight: 700,
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-    gap: 10,
-    marginBottom: 12,
-  },
-  effectiveField: { marginBottom: 12 },
-  label: { display: "grid", gap: 5, fontSize: 12, fontWeight: 800 },
-  input: { ...ui.input, minWidth: 0, height: 40, padding: "8px 10px" },
+  input: { ...ui.input, minWidth: 0, height: 36, padding: "6px 8px", fontSize: 13 },
   inlineInput: {
     display: "grid",
-    gridTemplateColumns: "1fr auto",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
     alignItems: "center",
-    gap: 8,
+    gap: 4,
+    color: "#374151",
   },
   days: {
     display: "grid",
     gap: 1,
-    marginBottom: 12,
-    background: "#e5e7eb",
-    border: "1px solid #e5e7eb",
+    background: "#eef0f3",
+    border: "1px solid #eef0f3",
     borderRadius: 10,
     overflow: "hidden",
   },
   day: {
     display: "grid",
-    gridTemplateColumns: "28px minmax(0, 1fr) 12px minmax(0, 1fr) minmax(64px, auto)",
+    gridTemplateColumns: "20px minmax(0, 1fr) 6px minmax(0, 1fr) 34px",
     alignItems: "center",
     justifyItems: "center",
-    gap: 6,
-    padding: "8px 6px",
+    gap: 3,
+    padding: "5px 4px",
     background: "#fff",
     minHeight: 44,
   },
+  dayHead: {
+    display: "grid",
+    gridTemplateColumns: "20px minmax(0, 1fr) 6px minmax(0, 1fr) 34px",
+    gap: 3,
+    padding: "4px 4px",
+    background: "#f9fafb",
+  },
+  dayHeadOpen: {
+    textAlign: "center",
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#6b7280",
+    lineHeight: 1.2,
+  },
+  openCheckbox: { width: 18, height: 18, margin: 0, accentColor: "#111827" },
   dayName: {
     fontSize: 12,
     textAlign: "center",
@@ -1778,126 +2017,98 @@ const styles: Record<string, CSSProperties> = {
     ...ui.input,
     width: "100%",
     minWidth: 0,
-    padding: 6,
-    fontSize: 12,
+    height: 34,
+    padding: "4px 2px",
+    fontSize: 12.5,
     textAlign: "center",
   },
   openToggle: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
     width: "100%",
-    fontSize: 11,
-  },
-  openToggleText: {
-    whiteSpace: "nowrap",
-  },
-  hourList: {
-    display: "grid",
-    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-    gap: 5,
-  },
-  hourItem: {
-    display: "grid",
-    gap: 3,
-    padding: "7px 3px",
-    border: "1px solid #e5e7eb",
-    borderRadius: 8,
-    textAlign: "center",
-    fontSize: 11,
-  },
-  policyCards: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 10,
-  },
-  policyCard: {
-    display: "grid",
-    gap: 6,
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 10,
-    background: "#f8fafc",
-  },
-  policyCardLabel: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#374151",
-  },
-  policyValue: {
-    color: "#111827",
-    fontSize: 16,
-    fontWeight: 800,
-  },
-  changePreview: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-    gap: 6,
-    marginBottom: 12,
+    minHeight: 34,
+    cursor: "pointer",
   },
   help: {
-    margin: "6px 0 12px",
-    color: "#64748b",
-    fontSize: 12,
-    lineHeight: 1.5,
+    margin: 0,
+    color: "#6b7280",
+    fontSize: 11.5,
+    lineHeight: 1.45,
   },
   danger: {
-    border: "1px solid #dc2626",
-    background: "#dc2626",
-    color: "#ffffff",
-    borderRadius: 10,
-    padding: "8px 14px",
-    minHeight: 36,
-    fontSize: 13,
+    border: "1px solid #fecaca",
+    background: "#fff",
+    color: "#b91c1c",
+    borderRadius: 9,
+    padding: "6px 10px",
+    fontSize: 12.5,
     fontWeight: 700,
     whiteSpace: "nowrap",
     flexShrink: 0,
     cursor: "pointer",
   },
-  historyButton: {
-    border: 0,
-    background: "transparent",
-    padding: 0,
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  history: { display: "grid", gap: 7, marginTop: 12 },
+  history: { display: "grid", gap: 0, marginTop: 6 },
   historyRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    borderTop: "1px solid #eee",
-    paddingTop: 7,
-    fontSize: 12,
+    display: "grid",
+    gridTemplateColumns: "auto auto minmax(0, 1fr)",
+    alignItems: "baseline",
+    gap: 8,
+    borderTop: "1px solid #f1f2f4",
+    padding: "6px 0",
+    fontSize: 12.5,
   },
+  historyMeta: { color: "#6b7280", fontSize: 11.5, textAlign: "right", wordBreak: "break-word" },
   warning: {
-    padding: 10,
+    margin: "0 0 8px",
+    padding: "8px 10px",
     borderRadius: 10,
     background: "#fffbeb",
     color: "#92400e",
     fontSize: 12,
+    lineHeight: 1.45,
   },
   error: {
-    padding: 10,
+    margin: "0 0 8px",
+    padding: "8px 10px",
     borderRadius: 10,
     background: "#fef2f2",
     color: "#b91c1c",
     fontSize: 12,
+    lineHeight: 1.45,
   },
-  muted: { color: "#64748b", fontSize: 13 },
+  muted: { margin: "4px 0", color: "#6b7280", fontSize: 12.5 },
   status: { padding: 24, textAlign: "center", color: "#64748b" },
+  yearStepper: {
+    display: "flex",
+    alignItems: "center",
+    gap: 2,
+    flexShrink: 0,
+    padding: 2,
+    borderRadius: 999,
+    background: "#f3f4f6",
+  },
+  yearLabel: {
+    minWidth: 64,
+    textAlign: "center",
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#111827",
+    whiteSpace: "nowrap",
+  },
   yearNavButton: {
-    border: "1px solid #e5e7eb",
+    border: 0,
     background: "#fff",
-    borderRadius: 8,
-    width: 32,
-    height: 32,
+    borderRadius: 999,
+    width: 30,
+    height: 30,
     fontSize: 16,
     fontWeight: 800,
+    lineHeight: 1,
     color: "#374151",
     cursor: "pointer",
     flexShrink: 0,
+    boxShadow: "0 1px 1px rgba(15,23,42,0.06)",
   },
   holidayList: {
     display: "grid",
@@ -1905,39 +2116,72 @@ const styles: Record<string, CSSProperties> = {
     margin: 0,
     padding: 0,
     listStyle: "none",
-    background: "#e5e7eb",
-    border: "1px solid #e5e7eb",
+    background: "#eef0f3",
+    border: "1px solid #eef0f3",
     borderRadius: 10,
     overflow: "hidden",
   },
   holidayItem: {
-    display: "flex",
+    display: "grid",
+    gridTemplateColumns: "44px minmax(0, 1fr) auto",
     alignItems: "center",
-    gap: 10,
-    padding: "9px 10px",
+    gap: 8,
+    minHeight: 36,
+    padding: "7px 10px",
     background: "#fff",
     fontSize: 13,
   },
   holidayDate: {
-    minWidth: 44,
     fontWeight: 800,
     color: "#b91c1c",
+    fontVariantNumeric: "tabular-nums",
   },
+  holidayName: { minWidth: 0, color: "#374151", lineHeight: 1.35 },
   holidayNameActive: {
+    minWidth: 0,
     fontWeight: 800,
+    color: "#111827",
+    lineHeight: 1.35,
   },
-  reminderCard: {
+  premiumBadge: {
+    gridColumn: 3,
+    padding: "1px 7px",
+    borderRadius: 999,
+    background: "#111827",
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+  },
+  reminderBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 10,
+    padding: "8px 10px",
+    borderRadius: 12,
     background: "#fffbeb",
     border: "1px solid #fde68a",
   },
   reminderText: {
-    margin: "0 0 10px",
+    margin: 0,
+    minWidth: 0,
     color: "#92400e",
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: 700,
+    lineHeight: 1.4,
   },
   holidayGroupBlock: {
-    marginTop: 10,
+    display: "grid",
+    gap: 6,
+  },
+  groupHeading: {
+    margin: 0,
+    fontSize: 12.5,
+    fontWeight: 800,
+    color: "#374151",
   },
   holidayToggleGrid: {
     display: "grid",
@@ -1948,7 +2192,7 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #e5e7eb",
     background: "#fff",
     borderRadius: 10,
-    padding: "10px 4px",
+    padding: "9px 4px",
     fontSize: 12.5,
     fontWeight: 700,
     color: "#374151",
@@ -1960,14 +2204,12 @@ const styles: Record<string, CSSProperties> = {
     color: "#fff",
   },
   holidayEmptyState: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 14,
-    padding: "28px 12px 12px",
+    display: "grid",
+    gap: 10,
+    padding: "12px 0 2px",
     textAlign: "center",
   },
-  holidayEmptyIcon: { fontSize: 30, lineHeight: 1 },
+  holidayLoading: { margin: 0, padding: "16px 0", textAlign: "center", color: "#6b7280", fontSize: 12.5 },
   holidayChoiceGrid: { display: "grid", gap: 5 },
   holidayChoiceButton: {
     display: "grid",
@@ -1986,4 +2228,15 @@ const styles: Record<string, CSSProperties> = {
   holidayChoiceTitle: { minWidth: 22, fontSize: 12.5, lineHeight: 1.15 },
   holidayChoiceDate: { fontSize: 12, fontWeight: 700, lineHeight: 1.15 },
   holidayChoiceDescription: { fontSize: 10.5, lineHeight: 1.2 },
+  // 준비 모달: 공휴일 목록·Tet/국경일 선택의 기존 디자인 유지.
+  notice: {
+    margin: "0 0 8px",
+    padding: "8px 10px",
+    borderRadius: 10,
+    background: "#f9fafb",
+    color: "#4b5563",
+    fontSize: 12,
+    lineHeight: 1.45,
+  },
+  effectiveField: { marginBottom: 12 },
 };

@@ -97,14 +97,15 @@ test("top section renders the full legal holiday list from the server (MM/DD + l
   assert.doesNotMatch(fn, /holidaysStatus|calendar\.status|calendar\?\.status/);
 });
 
-test("effective (200%) holidays render bold with a literal ' (200%)' suffix appended to the name — judged via the shared isBabaPremiumHoliday helper, not re-derived ad hoc", () => {
+// BABA-STORE-UI-REFINE: the 200% mark moved from a " (200%)" name suffix to an aligned right-hand badge.
+test("effective (200%) holidays render bold with an aligned 200% badge — judged via the shared isBabaPremiumHoliday helper, not re-derived ad hoc", () => {
   const fn = holidaysTabFn();
   assert.match(
     fn,
     /const effective = isBabaPremiumHoliday\(\s*\n\s*holiday,\s*\n\s*groupSizes\.get\(holiday\.holidayGroup\) \?\? 0\s*\n\s*\);/
   );
-  assert.match(fn, /style=\{effective \? styles\.holidayNameActive : undefined\}/);
-  assert.match(fn, /\{effective \? " \(200%\)" : ""\}/);
+  assert.match(fn, /style=\{effective \? styles\.holidayNameActive : styles\.holidayName\}/);
+  assert.match(fn, /\{effective \? <span style=\{styles\.premiumBadge\} data-premium="">200%<\/span> : null\}/);
 });
 
 test("groupSizes is computed once via countHolidayGroupSizes(holidays) and reused by both the top list and the toggle-active judgement — a single source of truth per render, not two divergent computations", () => {
