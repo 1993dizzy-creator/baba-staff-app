@@ -135,12 +135,12 @@ test("payables API attaches read-only settlement periods without writes or due-d
 
 test("both payable sheets show the read-only summary; payment controls are unchanged", () => {
   const page = read("app/(protected)/admin/ledger/entries/page.tsx");
-  assert.equal((page.match(/<SettlementPeriodSummary lang=\{lang\} policy=\{party\.settlementPolicy\} periods=\{party\.settlementPeriods\} viewMonth=/g) ?? []).length, 2);
+  assert.equal((page.match(/<SettlementPeriodSummary lang=\{lang\} policy=\{party\.settlementPolicy\}\/>/g) ?? []).length, 2);
   assert.match(page, /선택 일자 \$\{selectedDates\.size\}건 결제/);
   assert.match(page, /부분 지급/);
   const component = read("components/ledger/SettlementPeriodSummary.tsx");
-  // display-only: local 상세 toggle and the optional jump callback; no payment or selection writes
-  assert.doesNotMatch(component, /fetch\(|method:|onPaid|setSelected/);
+  // display-only: the settlement term, no toggle, no payment or selection writes
+  assert.doesNotMatch(component, /fetch\(|method:|onPaid|setSelected|useState|<button/);
 });
 
 // Render the real component (KO/VI) with React; module CSS resolves to class names.
@@ -155,22 +155,23 @@ function renderSummary(props: Record<string, unknown>) {
 }
 const strip = (html: string) => html.replace(/<[^>]+>/g, "");
 
-test("compact summary: Phương single period is one line with range and 기준일, no badges or amounts", () => {
+// BABA-VENDOR-UI-01: the sheet top shows the settlement term only; 거래기간·기준일 stay in the 정산그룹 headers below.
+test("compact summary: Phương shows only the settlement term, no range or 기준일 (KO/VI)", () => {
   const periods = buildSettlementPeriods(phuong, [payable(1, "2026-11-02", 9_394_000), payable(2, "2026-11-05", 1_298_000)], "2026-11-30")!;
   const ko = renderSummary({ lang: "ko", policy: phuong, periods });
-  assert.equal(strip(ko), "📅 매월 15일·말일 정산 · 11/1~11/15 거래분 · 기준일 11/15(일)");
-  assert.doesNotMatch(ko, /기준일 지남|진행 중|₫|<button|연체/);
+  assert.equal(strip(ko), "📅 매월 15일·말일 정산");
+  assert.doesNotMatch(ko, /거래분|기준일|진행 중|₫|<button|연체/);
   const vi = renderSummary({ lang: "vi", policy: phuong, periods });
-  assert.equal(strip(vi), "📅 Chốt ngày 15 và cuối tháng hằng tháng · 11/1~11/15 giao dịch · chốt 11/15(CN)");
+  assert.equal(strip(vi), "📅 Chốt ngày 15 và cuối tháng hằng tháng");
+  assert.doesNotMatch(vi, /giao dịch|chốt \d/);
 });
 
-test("compact summary: several periods show a count and an on-demand detail toggle", () => {
+test("compact summary: Ok Mart (several periods) also shows only the term -- no count, no 상세 toggle", () => {
   const periods = buildSettlementPeriods(okMart, [payable(1, "2026-10-28", 4_144_500), payable(2, "2026-11-01", 939_000), payable(3, "2026-11-02", 10_922_000)], "2026-11-05")!;
   const ko = renderSummary({ lang: "ko", policy: okMart, periods });
-  assert.equal(strip(ko), "📅 매주 화요일 지급 기준 · 미지급 정산기간 2개상세›");
-  assert.match(ko, /aria-expanded="false"/);
-  assert.doesNotMatch(ko, /<ul|₫|기준일 지남/);
-  assert.equal(strip(renderSummary({ lang: "vi", policy: okMart, periods })), "📅 Thứ Ba hằng tuần (mốc thanh toán) · 2 kỳ còn nợChi tiết›");
+  assert.equal(strip(ko), "📅 매주 화요일 지급 기준");
+  assert.doesNotMatch(ko, /<ul|<button|aria-expanded|₫|정산기간/);
+  assert.equal(strip(renderSummary({ lang: "vi", policy: okMart, periods })), "📅 Thứ Ba hằng tuần (mốc thanh toán)");
 });
 
 test("compact summary: non-period terms show the term only; non-postpaid renders nothing", () => {
@@ -258,30 +259,6 @@ test("period header select-all adds or clears only that period's dates and repor
   assert.equal(periodSelectionState([], selected), "none");
 });
 
-// Renders the summary with its 상세 list open (first useState seeded true).
-function renderOpenSummary(props: Record<string, unknown>) {
-  const React = createRequire(import.meta.url)("react");
-  const original = React.useState;
-  let first = true;
-  React.useState = (initial: unknown) => { if (first) { first = false; return original(true); } return original(initial); };
-  try { return renderSummary(props); } finally { React.useState = original; }
-}
-
-test("summary detail rows are compact period rows with 기준일, count, remaining and carry-over; click jumps to the group", () => {
-  const periods = buildSettlementPeriods(okMart, [payable(1, "2026-10-28", 4_144_500), payable(2, "2026-11-01", 939_000), payable(3, "2026-11-02", 10_922_000)], "2026-11-30")!;
-  const ko = renderOpenSummary({ lang: "ko", policy: okMart, periods, viewMonth: "2026-11", onSelectPeriod: () => {} });
-  const text = strip(ko);
-  assert.match(text, /10\/26~11\/1 거래분기준일 11\/3\(화\) · 2건 · 10월 이월 포함5\.083\.500 ₫›/);
-  assert.match(text, /11\/2~11\/8 거래분기준일 11\/10\(화\) · 1건10\.922\.000 ₫›/);
-  assert.equal((ko.match(/<button type="button" class="row"/g) ?? []).length, 2);
-  assert.match(ko, /class="carried"/);
-  assert.doesNotMatch(ko, /지급 \d|기준일 지남|장부 집계 기준/); // no paid-amount repeat, badge or long note
-  const vi = strip(renderOpenSummary({ lang: "vi", policy: okMart, periods, viewMonth: "2026-11", onSelectPeriod: () => {} }));
-  assert.match(vi, /10\/26~11\/1 giao dịchchốt 11\/3\(T3\) · 2 khoản · gồm nợ T10/);
-  // without a jump target (historical sheet) rows are plain, not buttons
-  assert.doesNotMatch(renderOpenSummary({ lang: "ko", policy: okMart, periods, viewMonth: "2026-11" }), /<button type="button" class="row"/);
-});
-
 test("selected-date list renders period headers only for 정기정산, with select-all, collapse and the same totals", () => {
   const page = read("app/(protected)/admin/ledger/entries/page.tsx");
   assert.match(page, /settlement&&selectable\?groupDatesBySettlementPeriod\(settlement\.policy,groups,settlement\.periods,settlement\.viewMonth\):null/);
@@ -291,10 +268,12 @@ test("selected-date list renders period headers only for 정기정산, with sele
   assert.match(page, /onSetDates:\(dates,checked\)=>setSelectedDates\(current=>setDatesSelected\(current,dates,checked\)\)/);
   assert.match(page, /<b>\{money\(period\.remainingAmount\)\}<\/b>/);
   assert.match(page, /id=\{`payable-period-\$\{period\.key\}`\}/);
-  assert.match(page, /document\.getElementById\(`payable-period-\$\{key\}`\)\?\.scrollIntoView\(\{block:"start"/);
-  assert.match(page, /onSelectPeriod=\{focusPeriod\}/);
-  // the historical (read-only) sheet gets no grouping or jump
-  assert.match(page, /viewMonth=\{party\.settlementMonth\?\?\(party\.settlementAsOf\?\?""\)\.slice\(0,7\)\}\/>/);
+  // the top summary is term-only now, so there is no jump from it to a group
+  assert.doesNotMatch(page, /focusPeriod|onSelectPeriod/);
+  // 거래기간·예상 기준일·건수 stay in each group header (KO/VI)
+  assert.match(page, /\$\{shortMonthDay\(period\.start!\)\}~\$\{shortMonthDay\(period\.end!\)\} \$\{vi\?"giao dịch":"거래분"\}/);
+  assert.match(page, /\$\{vi\?"Dự kiến chốt":"예상 기준일"\} \$\{shortMonthDay\(period\.referenceDate\)\}/);
+  assert.match(page, /`\$\{period\.payableCount\}\$\{vi\?" khoản":"건"\}`/);
   // payment paths unchanged
   assert.match(page, /allocations:selectedPayables\.map\(row=>\(\{payableId:row\.id,allocatedAmount:row\.outstandingAmount\}\)\)/);
   assert.match(page, /planPartialPayablePayment\(partialRows,parseLedgerAmount\(partialAmount\)\?\?0\)/);

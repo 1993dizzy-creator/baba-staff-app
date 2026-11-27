@@ -2181,7 +2181,7 @@ function HistoricalPayablePartySheet({lang,month,party,onClose}:{lang:"ko"|"vi";
     <div className={styles.payableDetailHeader}><div className={styles.payableDetailPartner}><span className={styles.partnerTypeBadge}>{partnerTypeLabel(party.partnerType,lang)}</span><strong>{party.partyName}</strong></div><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(party.closingOutstanding)}</b></span></div>
     <p className={styles.payableReadOnlyHint} role="status">{vi?"Số dư cuối tháng đã chọn. Không thể thanh toán giao dịch cũ.":"선택월 말 기준 잔액입니다. 과거 내역은 결제할 수 없습니다."}</p>
     <PayableMonthTotals summary={party} vi={vi}/>
-    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={party.settlementMonth??(party.settlementAsOf??"").slice(0,7)}/>
+    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy}/>
     {loadError?<p className={styles.error} role="alert">{vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다."}</p>
       :rows===null?<InventoryLoadingCard lang={lang} inline minHeight={80} label={vi?"Đang tải…":"불러오는 중…"} />
       :<><PayableMonthGroups rows={rows} lang={lang}/>{!rows.length?<p className={styles.payableEmpty}>{vi?"Không có công nợ cuối tháng.":"선택월 말 미납금이 없습니다."}</p>:null}</>}
@@ -2198,13 +2198,12 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
   // 결제 정보(출금 계정·결제일시·메모) starts collapsed so the date list keeps the vertical space;
   // selecting dates never opens it, so the list scroll position and checks stay put.
   const [paymentInfoOpen,setPaymentInfoOpen]=useState(false);
-  // 정산기간 groups in the date list: all open by default; the summary rows jump to a group.
+  // 정산기간 groups in the date list: all open by default.
   const [collapsedPeriods,setCollapsedPeriods]=useState<Set<string>>(()=>new Set());
   const viewMonth=party.settlementMonth??(party.settlementAsOf??"").slice(0,7);
   const settlementGrouping=useMemo<PayableSettlementGrouping>(()=>({policy:party.settlementPolicy,periods:party.settlementPeriods,viewMonth,collapsed:collapsedPeriods,
     onToggle:key=>setCollapsedPeriods(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next}),
     onSetDates:(dates,checked)=>setSelectedDates(current=>setDatesSelected(current,dates,checked))}),[party.settlementPolicy,party.settlementPeriods,viewMonth,collapsedPeriods]);
-  const focusPeriod=(key:string)=>{setMode("dates");setCollapsedPeriods(current=>{if(!current.has(key))return current;const next=new Set(current);next.delete(key);return next});requestAnimationFrame(()=>document.getElementById(`payable-period-${key}`)?.scrollIntoView({block:"start",behavior:"smooth"}))};
   const loadDetail=useCallback(async()=>{setError("");try{const response=await fetch(`/api/admin/ledger/payables/${party.partyId}`,{cache:"no-store"}),body=await response.json();if(!response.ok)throw new Error(body.code);setDetail(body)}catch{setError(vi?"Không thể tải chi tiết công nợ.":"미납 상세를 불러오지 못했습니다.")}},[party.partyId,vi]);
   useEffect(()=>{void loadDetail()},[loadDetail]);
   const groups=useMemo(()=>groupPayableRows(detail?.payables??[]),[detail]);
@@ -2223,7 +2222,7 @@ function PayablePartySheet({ lang, party, partyEmoji, accounts, onClose, onPaid 
     <PayablePaymentRecovery partyId={party.partyId} vi={vi} accounts={accounts} onConfirmed={onPaid}/>
     <div className={styles.payableDetailHeader}><strong><span role="img" aria-label={partnerTypeLabel(party.partnerType,lang)}>{partyEmoji}</span> {party.partyName}</strong><span>{vi?"Tổng công nợ":"총 미납"} <b>{money(detail?.totalOutstanding??party.outstandingAmount)}</b></span></div>
     <p className={styles.payablePartyMeta}>{vi?"Đầu tiên":"최초"} {party.oldestDate||"-"} · {vi?"Hạn":"예정"} {party.nearestDueDate??(vi?"Chưa định":"미정")} · {vi?"Thanh toán gần nhất":"최근 지급"} {party.recentPaymentDate??(vi?"Không có":"없음")}</p>
-    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy} periods={party.settlementPeriods} viewMonth={viewMonth} onSelectPeriod={focusPeriod}/>
+    <SettlementPeriodSummary lang={lang} policy={party.settlementPolicy}/>
     {error?<p className={styles.error} role="alert">{payablePaymentErrorMessage(error,vi)}</p>:null}
     {error==="IDEMPOTENCY_KEY_REQUIRED"?<PayablePaymentRefreshButton vi={vi}/>:null}
     {detail?<div className={styles.payModeTabs} role="group" aria-label={vi?"Cách thanh toán":"지급 방식"}><button type="button" aria-pressed={mode==="dates"} disabled={saving} onClick={()=>setMode("dates")}>{vi?"Theo ngày":"선택 일자 결제"}</button><button type="button" aria-pressed={mode==="partial"} disabled={saving||!groups.length} onClick={()=>setMode("partial")}>{vi?"Thanh toán một phần":"부분 지급"}</button><button type="button" aria-pressed={mode==="history"} disabled={saving} onClick={()=>setMode("history")}>{vi?"Lịch sử":"지급 내역"} {detail.payments?.length??0}</button></div>:null}
