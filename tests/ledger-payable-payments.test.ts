@@ -88,7 +88,7 @@ function payableApi(rows:ReturnType<typeof source>[],payments:ReturnType<typeof 
   const calls:string[]=[];
   const supabase={from(table:string){calls.push(table);let from=0,to=999;const filters:Array<(row:Record<string,unknown>)=>boolean>=[];
     const field=(row:Record<string,unknown>,name:string)=>name.split(".").reduce<unknown>((value,key)=>(value as Record<string,unknown>)?.[key],row);
-    const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
+    const query={select(){return query},order(){return query},eq(name:string,value:unknown){if(name!=="type")filters.push(row=>field(row,name)===value);return query},in(name:string,values:unknown[]){filters.push(row=>values.includes(field(row,name)));return query},neq(name:string,value:unknown){filters.push(row=>field(row,name)!==value);return query},lt(name:string,value:string){filters.push(row=>String(field(row,name))<value);return query},range(start:number,end:number){from=start;to=end;return query},then(resolve:(value:unknown)=>unknown){return Promise.resolve({data:tables[table].filter(row=>filters.every(filter=>filter(row as Record<string,unknown>))).slice(from,to+1),error:null}).then(resolve)}};return query;
   }};
   const dependencies:Record<string,unknown>={"@/lib/ledger/payables":payableFunctions,"@/lib/ledger/payment-verification":paymentVerificationFunctions,"@/lib/ledger/settlement-periods":settlementPeriodFunctions,"@/lib/common/business-time":businessDate?{...businessTimeFunctions,getBusinessDate:()=>businessDate}:businessTimeFunctions,"@/lib/ledger/inventory-display":{withInventoryDisplay:async(rows:unknown[])=>rows},"@/lib/supabase/server":{supabaseServer:supabase},"@/lib/ledger/server":{requireLedgerActor:async()=>denied?{response:Response.json({ok:false},{status:403})}:{},ledgerJson:(body:unknown,status=200)=>Response.json(body,{status})}};
   dependencies["@/lib/ledger/payable-balance-anchor-data"]={loadPayableBalanceAnchors:async()=>({data:anchors,error:null})};
@@ -183,7 +183,7 @@ test("payables route reads allocations once without a month cutoff and splits th
   assert.match(compact,/constasOfAllocations=month===null\?allConfirmedAllocations:confirmedAllocationsThroughMonth\(allConfirmedAllocations,month\);/);
   assert.match(compact,/calculatePayableBalances\(ordinarySources,allConfirmedAllocations,month\?\?undefined,anchorResult.data,asOfDate\)/);
   assert.match(compact,/for\(constallocationofasOfAllocations\)\{constlist=historyAllocations/);
-  assert.match(compact,/allocations:asOfAllocations\.filter\(/);
+  assert.match(compact,/allocations:\(allocationsByPayable\.get\(Number\(row\.id\)\)\?\?\[\]\)\.map\(/);
 });
 test("actual GET pages beyond 1000 payables and allocations without losing balances",async()=>{
   const rows=Array.from({length:1001},(_,i)=>source(i+1)),payments=rows.map(row=>allocation("2026-09-01",100,row.id));

@@ -28,8 +28,14 @@ export function buildPaymentVerificationItems(
   sources: readonly VerificationSource[],
   allocations: readonly VerificationAllocation[],
 ) {
+  const byPayable = new Map<number, VerificationAllocation[]>();
+  for (const allocation of allocations) {
+    if (allocation.payment?.status !== "confirmed") continue;
+    const id = Number(allocation.payable_id), rows = byPayable.get(id) ?? [];
+    rows.push(allocation); byPayable.set(id, rows);
+  }
   const items = sources.filter(source => source.status !== "cancelled" && source.expense?.status === "confirmed" && isPaymentVerification(source)).map(source => {
-    const paid = allocations.filter(allocation => Number(allocation.payable_id) === Number(source.id) && allocation.payment?.status === "confirmed");
+    const paid = byPayable.get(Number(source.id)) ?? [];
     const settlement:PurchaseSettlement=calculatePurchaseSettlement(source.original_amount,paid,{payableId:source.id,transactionId:source.expense?.id});
     const paidAmount = settlement.cashPaidAmount;
     const amount = Number(source.original_amount);

@@ -25,12 +25,35 @@ async function getPayables(request: Request) {
   const historyPartyId=historyPartyParam===null?null:Number(historyPartyParam);
   if(historyPartyId!==null&&(month===null||!Number.isSafeInteger(historyPartyId)||historyPartyId<=0))return ledgerJson({ok:false,code:"INVALID_HISTORY_PARTY"},400);
   const emptyRows=Promise.resolve({data:[],error:null});
-  const [payableResult,allocationResult,paymentResult,bridgeResult,partnerResult,anchorResult]=await Promise.all([
-    loadAll((from,to)=>{let query=supabaseServer.from("ledger_payables")
+  const payableRead=loadAll((from,to)=>{let query=supabaseServer.from("ledger_payables")
       .select("id,party_id,original_amount,due_date,status,created_at,party:ledger_parties(name),expense:ledger_transactions!inner(id,type,source_type,source_key,business_date,status,memo,source_snapshot)")
-      .neq("status","cancelled").eq("expense.status","confirmed");if(bounds)query=query.lt("expense.business_date",bounds.nextMonthStart);if(historyPartyId!==null)query=query.eq("party_id",historyPartyId);return query.order("created_at",{ascending:false}).order("id").range(from,to)}),
+      .neq("status","cancelled").eq("expense.status","confirmed");if(bounds)query=query.lt("expense.business_date",bounds.nextMonthStart);if(historyPartyId!==null)query=query.eq("party_id",historyPartyId);return query.order("created_at",{ascending:false}).order("id").range(from,to)});
+  async function loadAllocations(){
+    const read=(from:number,to:number,ids?:number[])=>{
+      let query=supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,created_at,payment:ledger_transactions!inner(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))").eq("payment.status","confirmed");
+      if(ids)query=query.in("payable_id",ids);
+      return query.order("id").range(from,to);
+    };
+    if(historyPartyId===null)return loadAll((from,to)=>read(from,to));
+    // Scope by payable IDs, never by payment.party_id: one payment can span parties.
+    // Keep every payment date for the anchor/prepayment rules applied below.
+    const sources=await payableRead;
+    if(sources.error)return {data:[],error:sources.error};
+    const ids=sources.data.filter(row=>!asOfDate||row.expense && (row.expense as unknown as {business_date:string}).business_date<=asOfDate).map(row=>Number(row.id));
+    const rows:Awaited<ReturnType<typeof read>>["data"]=[];
+    for(let offset=0;offset<ids.length;offset+=200){
+      const result=await loadAll((from,to)=>read(from,to,ids.slice(offset,offset+200)));
+      if(result.error)return result;
+      rows.push(...result.data);
+    }
+    // Preserve the original global allocation order across ID batches.
+    rows.sort((a,b)=>Number(a.id)-Number(b.id));
+    return {data:rows,error:null};
+  }
+  const [payableResult,allocationResult,paymentResult,bridgeResult,partnerResult,anchorResult]=await Promise.all([
+    payableRead,
     // All confirmed allocations (no month cutoff): 결제 미확인 needs today's remaining; the month cutoff is applied in memory below.
-    loadAll((from,to)=>supabaseServer.from("ledger_payable_allocations").select("id,payable_id,allocated_amount,created_at,payment:ledger_transactions!inner(id,type,source_type,source_key,source_snapshot,amount,economic_effect_sign,memo,business_date,status,movements:ledger_movements(amount))").eq("payment.status","confirmed").order("id").range(from,to)),
+    loadAllocations(),
     historyPartyId!==null?emptyRows:loadAll((from,to)=>{let query=supabaseServer.from("ledger_transactions").select("id,party_id,business_date").eq("type","payable_payment").eq("status","confirmed");if(bounds)query=query.lt("business_date",bounds.nextMonthStart);return query.order("business_date",{ascending:false}).order("id").range(from,to)}),
     historyPartyId!==null?emptyRows:loadAll((from,to)=>supabaseServer.from("business_partner_ledger_parties").select("business_partner_id,ledger_party_id").order("ledger_party_id").range(from,to)),
     historyPartyId!==null?emptyRows:loadAll((from,to)=>supabaseServer.from("business_partners").select("id,partner_type,payment_mode,settlement_mode,settlement_rule,settlement_days,default_payment_term_days").order("id").range(from,to)),loadPayableBalanceAnchors()]);
@@ -64,23 +87,29 @@ async function getPayables(request: Request) {
   }
   const verification=buildPaymentVerificationItems(sources,allConfirmedAllocations);
   const balances=calculatePayableBalances(ordinarySources,allConfirmedAllocations,month??undefined,anchorResult.data,asOfDate);
-  const payables=balances.payables.map(row=>({...row,allocations:asOfAllocations.filter(item=>item.payable_id===row.id).map(item=>({allocated_amount:item.allocated_amount}))}));
+  const allocationsByPayable=new Map<number,typeof asOfAllocations>();
+  for(const allocation of asOfAllocations){const list=allocationsByPayable.get(Number(allocation.payable_id))??[];list.push(allocation);allocationsByPayable.set(Number(allocation.payable_id),list)}
+  const payables=balances.payables.map(row=>({...row,allocations:(allocationsByPayable.get(Number(row.id))??[]).map(item=>({allocated_amount:item.allocated_amount}))}));
+  const openByParty=new Map<number,typeof payables>();
+  for(const row of payables){const id=Number(row.party_id),list=openByParty.get(id)??[];list.push(row);openByParty.set(id,list)}
+  const sourceByParty=new Map<number,typeof ordinarySources[number]>();
+  for(const row of ordinarySources)if(!sourceByParty.has(Number(row.party_id)))sourceByParty.set(Number(row.party_id),row);
   const recent=new Map<number,string>();for(const row of paymentResult.data??[])if(row.party_id&&!recent.has(Number(row.party_id)))recent.set(Number(row.party_id),row.business_date);
   const businessPartnerByLedgerParty=new Map((bridgeResult.data??[]).map(row=>[Number(row.ledger_party_id),Number(row.business_partner_id)]));
   const partnerTypeByBusinessPartner=new Map((partnerResult.data??[]).map(row=>[Number(row.id),row.partner_type]));
   const map=new Map<number,{partyId:number;partyName:string;partnerType:string|null;outstandingAmount:number;partialPaidAmount:number;totalOpenAmount:number;openCount:number;oldestDate:string;nearestDueDate:string|null;recentPaymentDate:string|null}>();
   for(const row of payables){const partyRelation=row.party as unknown as {name:string}|null;const partyId=Number(row.party_id);const expense=row.expense as unknown as {business_date:string}|null;const businessPartnerId=businessPartnerByLedgerParty.get(partyId);const current=map.get(partyId)??{partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,outstandingAmount:0,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:expense?.business_date??"",nearestDueDate:null,recentPaymentDate:recent.get(partyId)??null};current.outstandingAmount+=row.outstandingAmount;current.partialPaidAmount+=row.allocatedAmount;current.totalOpenAmount+=Number(row.original_amount);current.openCount+=1;if(expense?.business_date&&(!current.oldestDate||expense.business_date<current.oldestDate))current.oldestDate=expense.business_date;if(row.due_date&&(!current.nearestDueDate||row.due_date<current.nearestDueDate))current.nearestDueDate=row.due_date;map.set(partyId,current)}
   // Sum each party independently in thousandths, preserving exact 3-digit precision.
-  for(const party of map.values()){const rows=payables.filter(row=>Number(row.party_id)===party.partyId);party.outstandingAmount=sumPayableAmounts(rows.map(row=>row.outstandingAmount));party.partialPaidAmount=sumPayableAmounts(rows.map(row=>row.allocatedAmount));party.totalOpenAmount=sumPayableAmounts(rows.map(row=>row.original_amount))}
+  for(const party of map.values()){const rows=openByParty.get(party.partyId)??[];party.outstandingAmount=sumPayableAmounts(rows.map(row=>row.outstandingAmount));party.partialPaidAmount=sumPayableAmounts(rows.map(row=>row.allocatedAmount));party.totalOpenAmount=sumPayableAmounts(rows.map(row=>row.original_amount))}
   for(const anchor of balances.balanceAnchors??[]){
     if(anchor.settlement)continue;
-    const source=ordinarySources.find(row=>Number(row.party_id)===anchor.party_id);
+    const source=sourceByParty.get(anchor.party_id);
     const current=map.get(anchor.party_id)??{partyId:anchor.party_id,partyName:source?.party?.name??"Coca-Cola",partnerType:null,outstandingAmount:0,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(anchor.party_id)??null};
     current.outstandingAmount=sumPayableAmounts([current.outstandingAmount,anchor.adjustment_amount]);map.set(anchor.party_id,current);
   }
   const currentParties=[...map.values()];
   const parties=month===null?currentParties:(balances.partySummaries??[]).map(summary=>{
-    const source=ordinarySources.find(row=>Number(row.party_id)===summary.partyId);
+    const source=sourceByParty.get(summary.partyId);
     const partyRelation=source?.party as unknown as {name:string}|null;
     const businessPartnerId=businessPartnerByLedgerParty.get(summary.partyId);
     const metadata=map.get(summary.partyId)??{partyId:summary.partyId,partyName:partyRelation?.name??"-",partnerType:businessPartnerId===undefined?null:partnerTypeByBusinessPartner.get(businessPartnerId)??null,partialPaidAmount:0,totalOpenAmount:0,openCount:0,oldestDate:"",nearestDueDate:null,recentPaymentDate:recent.get(summary.partyId)??null};
@@ -93,8 +122,6 @@ async function getPayables(request: Request) {
   // Period position only (not the ledger as-of above): past month = month end; current/later
   // month = today's BABA business date. settlementMonth is the selected month for display.
   const {asOf:settlementAsOf,month:settlementMonth}=settlementViewDates({month,asOfDate,businessDate:getBusinessDate()});
-  const allocationsByPayable=new Map<number,typeof asOfAllocations>();
-  for(const allocation of asOfAllocations){const list=allocationsByPayable.get(Number(allocation.payable_id))??[];list.push(allocation);allocationsByPayable.set(Number(allocation.payable_id),list)}
   const sourcesByParty=new Map<number,typeof ordinarySources>();
   for(const row of ordinarySources){if(row.status==="cancelled"||row.expense?.status!=="confirmed"||(bounds&&row.expense.business_date>=bounds.nextMonthStart))continue;const list=sourcesByParty.get(Number(row.party_id))??[];list.push(row);sourcesByParty.set(Number(row.party_id),list)}
   const withSettlement=parties.map(party=>{
