@@ -53,6 +53,8 @@ create table notification_private.push_subscriptions (
   device_hash text not null constraint push_subscriptions_device_hash_check check (device_hash ~ '^[A-Za-z0-9_-]{43}$'),
   -- Device generation of the request that registered (or last re-bound) this row.
   device_generation bigint not null constraint push_subscriptions_device_generation_check check (device_generation > 0),
+  -- App-server time (ms) that generation was issued (signed cookie); 0 = unknown (oldest).
+  generation_ms bigint not null default 0 constraint push_subscriptions_generation_ms_check check (generation_ms >= 0),
   endpoint text not null constraint push_subscriptions_endpoint_check check (
     char_length(endpoint) <= 1024
     and endpoint ~ '^https://(fcm\.googleapis\.com|android\.googleapis\.com|updates\.push\.services\.mozilla\.com|push\.services\.mozilla\.com|web\.push\.apple\.com|[a-z0-9-]{1,63}\.push\.apple\.com|[a-z0-9-]{1,63}\.notify\.windows\.com)/[A-Za-z0-9_~:./%=?&+-]+$'
@@ -394,9 +396,9 @@ begin
         case when v_cur.user_id = v_actor.id then 'replaced' else 'owner_changed' end);
     end if;
     if v_old.id is not null then perform notification_private.revoke_subscription(v_old.id, 'renewed'); end if;
-    insert into notification_private.push_subscriptions (user_id, session_iat, device_hash, device_generation, endpoint,
+    insert into notification_private.push_subscriptions (user_id, session_iat, device_hash, device_generation, generation_ms, endpoint,
       p256dh, auth, lang, expires_at)
-    values (v_actor.id, p_session_iat, p_device_hash, p_device_generation, p_endpoint, p_p256dh, p_auth,
+    values (v_actor.id, p_session_iat, p_device_hash, p_device_generation, greatest(coalesce(p_device_generation_ms, 0), 0), p_endpoint, p_p256dh, p_auth,
       coalesce(p_lang, v_old.lang, case when v_cur.user_id = v_actor.id then v_cur.lang end, 'ko'), p_session_expires_at)
     returning expires_at into v_expires;
     -- At most 10 active devices per staff member: the oldest registrations are retired.
@@ -482,9 +484,11 @@ begin
     return jsonb_build_object('status', 'ok', 'device', 'not_registered');
   end if;
   update notification_private.push_subscriptions set session_iat = p_session_iat, expires_at = p_session_expires_at,
-    device_generation = p_device_generation, lang = coalesce(p_lang, lang), updated_at = now()
+    device_generation = p_device_generation, generation_ms = greatest(coalesce(p_device_generation_ms, 0), 0),
+    lang = coalesce(p_lang, lang), updated_at = now()
   where id = v_row.id
     and (session_iat <> p_session_iat or expires_at <> p_session_expires_at or device_generation <> p_device_generation
+      or generation_ms <> greatest(coalesce(p_device_generation_ms, 0), 0)
       or (p_lang is not null and lang <> p_lang));
   return jsonb_build_object('status', 'ok', 'device', 'registered', 'expiresAt', p_session_expires_at);
 end $$;
@@ -553,7 +557,9 @@ begin
   on conflict (user_id, session_iat) do update set revoked_ms = greatest(m.revoked_ms, excluded.revoked_ms);
   update notification_private.push_subscriptions set status = 'revoked', revoked_at = now(),
     revoked_reason = 'logout', updated_at = now()
-  where status = 'active' and user_id = p_user_id and session_iat = p_session_iat;
+  -- Same condition as the marker: only generations issued up to this logout; a newer generation
+  -- registered by a later login of the same session second is kept.
+  where status = 'active' and user_id = p_user_id and session_iat = p_session_iat and generation_ms <= p_logout_ms;
   get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'revoked', v_count);
 end $$;

@@ -709,11 +709,15 @@ test('01B-FINAL-3 routes: delayed logout keeps the newer login, login advance be
     s.h.setToken(s.h.tokens.createServerSessionToken(U.leaderHall, Math.floor(Date.now() / 1000) - 10));
     const calls = s.calls.length;
     assert.equal((await s.send('session', 'GET')).status, 200);
-    assert.equal(s.calls.length, calls, 'nothing before the response');
-    await s.flushAfter();
-    assert.ok(s.calls.slice(calls).includes('notification_push_device_login_v1'));
+    // Checked right after the response: no after() work flushed, no sync ran.
+    assert.equal(s.afterQueue.length, 0, 'the floor move is not deferred');
+    assert.deepEqual(s.calls.slice(calls), ['notification_push_device_login_v1'], 'moved before the response');
     const claim = await execRpc(db, 'notification_push_claim_v1', { p_notification_id: ev.id, p_limit: 20, p_lease_seconds: 90 });
-    assert.ok(claim.items.every(i => i.endpoint !== old.json.endpoint), 'previous account not sent after the switch');
+    assert.ok(claim.items.every(i => i.endpoint !== old.json.endpoint), 'previous account not sent right after the switch');
+    // The same browser repeating its session check: no further RPC (cookie now matches).
+    const again = s.calls.length;
+    assert.equal((await s.send('session', 'GET')).status, 200);
+    assert.ok(!s.calls.slice(again).includes('notification_push_device_login_v1'));
     // A browser without a push identity: the login path makes no DB call at all.
     const fresh = harness(db);
     fresh.jar.device = null;
@@ -721,7 +725,7 @@ test('01B-FINAL-3 routes: delayed logout keeps the newer login, login advance be
     fresh.h.setToken(fresh.h.tokens.createServerSessionToken(U.owner, Math.floor(Date.now() / 1000) - 5));
     assert.equal((await fresh.send('session', 'GET')).status, 200);
     await fresh.flushAfter();
-    assert.ok(!fresh.calls.includes('notification_push_device_login_v1'));
+    assert.ok(!fresh.calls.includes('notification_push_device_login_v1'), 'browser without a push identity: no RPC');
     // A stale operation never acts with the new account's cookies (server-side check).
     const t = harness(db);
     t.login(U.managerHall, 'manager'); const m = device(); await t.register(m);
@@ -737,9 +741,20 @@ test('01B-FINAL-3 routes: delayed logout keeps the newer login, login advance be
     l.setMode('missing');
     l.h.setActor({ id: U.master, role: 'master', is_active: true, app_login_enabled: true });
     l.h.setToken(l.h.tokens.createServerSessionToken(U.master, Math.floor(Date.now() / 1000) - 5));
-    assert.equal((await l.send('session', 'GET')).status, 200);
+    assert.equal((await l.send('session', 'GET')).status, 200, 'push DB missing: the awaited floor move is skipped');
+    assert.ok(l.calls.includes('notification_push_device_login_v1'));
     await l.flushAfter();
     assert.equal((await l.send('logout', 'POST')).status, 200);
+    // DB failure (timeout/error) is also swallowed before the response.
+    l.setMode('db');
+    const broken = harness(legacy); broken.login(U.owner, 'owner');
+    broken.h.setActor({ id: U.master, role: 'master', is_active: true, app_login_enabled: true });
+    broken.h.setToken(broken.h.tokens.createServerSessionToken(U.master, Math.floor(Date.now() / 1000) - 4));
+    assert.equal((await broken.send('session', 'GET')).status, 200);
+    // Static contract: the login route awaits the same bounded call before returning.
+    const loginSrc = readFileSync('app/api/login/route.ts', 'utf8');
+    assert.match(loginSrc, /await advancePushDeviceOnLogin\(previous, next\);[\s\S]*return response;/);
+    assert.match(loginSrc, /setServerSessionCookie\(response, data\.id\)/);
   } finally { await legacy.close(); }
 }));
 

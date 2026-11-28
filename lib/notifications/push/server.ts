@@ -306,17 +306,22 @@ export function schedulePushRecovery(now = Date.now()) {
 
 /**
  * Login (or a session check that re-issued the push cookie) in a browser that ALREADY had a push
- * identity: after the response, move that browser's floor to the new generation so the previous
- * account's rows stop at the send gate (device_moved) even before any sync. A browser without an
- * identity costs nothing; the DB writes only when the browser is known to push and the generation is
- * new. Never affects the login: a missing push DB or a failure only leaves the previous rows until
- * the first sync / page load (documented limit).
+ * identity: moves that browser's DB floor to the new generation BEFORE the login response is sent
+ * (bounded: 1.5 s), so from the moment the next account is signed in, the previous account's rows
+ * stop at the send gate (device_moved) — no window until a later sync. No push network call is
+ * involved. A browser without an identity: no RPC. The DB writes only when the browser is known to
+ * push and the generation is new. Never fails the login: a missing push DB, a timeout or an error
+ * returns false and the previous rows then wait for the first sync / page load (documented limit).
  */
-export function schedulePushDeviceLogin(previous: PushDevice | null, next: PushDevice) {
+export async function advancePushDeviceOnLogin(previous: PushDevice | null, next: PushDevice): Promise<boolean> {
   if (!previous || next.u === null || next.i === null) return false;
-  const run = () => callPushRpc("notification_push_device_login_v1", {
-    p_device_hash: pushDeviceHash(next), p_device_generation: next.g, p_device_nonce: next.n,
-    p_user_id: next.u, p_session_iat: next.i,
-  }, 2000).then(() => undefined);
-  try { after(run); return true; } catch { return false; }
+  try {
+    const outcome = await callPushRpc("notification_push_device_login_v1", {
+      p_device_hash: pushDeviceHash(next), p_device_generation: next.g, p_device_nonce: next.n,
+      p_user_id: next.u, p_session_iat: next.i,
+    }, 1500);
+    return outcome.kind === "ok" && outcome.data.status === "ok";
+  } catch {
+    return false;
+  }
 }

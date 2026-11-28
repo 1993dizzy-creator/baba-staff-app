@@ -4,7 +4,7 @@ import {
   clearServerSessionCookie,
   refreshServerSessionCookie,
 } from "@/lib/auth/server-session";
-import { schedulePushDeviceLogin, schedulePushSessionTouch } from "@/lib/notifications/push/server";
+import { advancePushDeviceOnLogin, schedulePushSessionTouch } from "@/lib/notifications/push/server";
 import { nextPushDevice, pushDeviceCookie, pushDeviceMatchesSession, readPushDevice } from "@/lib/notifications/push/device";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,8 @@ export async function GET(request: Request) {
     if (auth.session.v === 2 && !pushDeviceMatchesSession(pushPrevious, auth.actor.id, auth.session.iat)) {
       pushCurrent = nextPushDevice(pushPrevious, { uid: auth.actor.id, iat: auth.session.iat });
       const pushDevice = pushDeviceCookie(pushCurrent);
-      if (pushDevice) { response.cookies.set(pushDevice); try { schedulePushDeviceLogin(pushPrevious, pushCurrent); } catch { /* best effort */ } }
+      // Same contract as the login: the floor moves before this response (bounded, never fails it).
+      if (pushDevice) { response.cookies.set(pushDevice); await advancePushDeviceOnLogin(pushPrevious, pushCurrent); }
     }
     const refreshed = refreshServerSessionCookie(response, auth.session);
     // 01-B: the refreshed expiry also extends this session's push devices (v1 legacy sessions

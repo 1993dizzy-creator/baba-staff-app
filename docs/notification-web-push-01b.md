@@ -85,9 +85,10 @@ Messages already accepted by a push service cannot be recalled.
   existing session secret, separate tag). It carries the browser's device id `d` (the DB keeps only SHA-256), the
   server time the id was created, a **generation `g`**, a nonce, and the session it belongs to (user id, iat).
   - Login: `g + 1` computed from the cookie the browser sends, bound to the new session. If the browser already had
-    a push identity, the DB floor moves to the new generation right after the response
-    (`notification_push_device_login_v1`, FINAL-3): the previous account's rows stop at the send gate
-    (`device_moved`) even before any sync. A browser unknown to push: no DB write; same/older generation: no write.
+    a push identity, the DB floor moves to the new generation **before the login response** (FINAL-4; awaited,
+    bounded 1.5 s; `notification_push_device_login_v1`; the same applies when `/api/session` re-issues the cookie):
+    from the moment the next account is signed in, the previous account's rows stop at the send gate
+    (`device_moved`), with no window until a sync. No push network call is involved. A browser unknown to push: no DB write; same/older generation: no write.
     A missing push DB or a failure never affects the login; the previous rows then wait for the first sync (limit).
   - Every generation also carries its issue time `s` (ms).
   - Logout: `g + 1` with no user.
@@ -127,7 +128,8 @@ Messages already accepted by a push service cannot be recalled.
   new login in the same second (higher generation) registers normally. Without the push cookie (sessions older
   than the cookie) the session's rows are revoked and a whole-session marker
   (`push_session_revocations`: user, session iat, logout time) refuses generations issued up to that logout, not a
-  later re-login. Awaited, 2 s timeout, never fails logout. The client then unsubscribes the browser and clears the badge — the server
+  later re-login. The revoke uses the same condition (FINAL-4): only rows whose generation was issued up to the
+  logout time (`push_subscriptions.generation_ms`) are revoked; a newer generation already registered is kept. Awaited, 2 s timeout, never fails logout. The client then unsubscribes the browser and clears the badge — the server
   no longer depends on it.
 - Send gate addition: a row whose browser moved on to another account (higher generation, other user, or logged out)
   or whose identity was retired is skipped (`device_moved`) and revoked — even if no sync revoked it yet.

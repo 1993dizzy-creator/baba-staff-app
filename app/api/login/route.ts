@@ -5,7 +5,7 @@ import {
   setServerSessionCookie,
 } from "@/lib/auth/server-session";
 import { nextPushDevice, pushDeviceCookie, readPushDevice } from "@/lib/notifications/push/device";
-import { schedulePushDeviceLogin } from "@/lib/notifications/push/server";
+import { advancePushDeviceOnLogin } from "@/lib/notifications/push/server";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -88,13 +88,13 @@ export async function POST(req: Request) {
       const session = setServerSessionCookie(response, data.id);
       // 01-B: every login moves this browser to its next push generation (cookie only, no DB write),
       // so push requests issued by the previous account are refused afterwards.
-      // A browser that already had a push identity also moves its DB floor (after the response, no
-      // effect on the login; a browser without one costs no DB call).
+      // A browser that already had a push identity also moves its DB floor BEFORE this response
+      // (bounded, never fails the login); a browser without one costs no DB call.
       try {
         const previous = readPushDevice(req);
         const next = nextPushDevice(previous, { uid: Number(session.uid), iat: session.iat });
         const pushDevice = pushDeviceCookie(next);
-        if (pushDevice) { response.cookies.set(pushDevice); schedulePushDeviceLogin(previous, next); }
+        if (pushDevice) { response.cookies.set(pushDevice); await advancePushDeviceOnLogin(previous, next); }
       } catch (error) {
         console.warn("[PUSH_DEVICE_LOGIN_SKIPPED]", (error as Error)?.name);
       }

@@ -675,3 +675,28 @@ test('01B-FINAL-3 session touch is scoped to the browser generation; login advan
     assert.ok((await claim(db, e2.id)).items.some(i => i.endpoint === ep(11)));
   } finally { await db.close(); }
 });
+
+test('01B-FINAL-4 delayed cookie-less logout: only generations issued up to the logout are revoked', async () => {
+  const db = await fixture();
+  const X = IAT + 990;
+  const active = async e => (await subStatus(db, e)).filter(r => r.status === 'active').map(r => r.u);
+  try {
+    const t0 = Date.now();
+    const legacy = browser('legacy-4');
+    // Old generation (issued before the logout) registered.
+    await subscribe(db, U.owner, ep(1), { iat: X, device: legacy, gen: 1, genMs: t0 - 800 });
+    // Same-second re-login on this browser: new generation issued after the logout time, registered.
+    await subscribe(db, U.owner, ep(2), { iat: X, device: legacy, gen: 2, genMs: t0 + 400 });
+    // The cookie-less logout (at t0) arrives late.
+    const out = await logout(db, U.owner, X, null, null, { at: t0 });
+    assert.equal(out.revoked, 1, 'only the old generation row');
+    assert.deepEqual([await active(ep(1)), await active(ep(2))], [[], [U.owner]], 'new generation kept');
+    // Marker and UPDATE agree: an old-generation registration is refused, the new one is not.
+    assert.equal((await subscribe(db, U.owner, ep(3), { iat: X, device: legacy, gen: 2, genMs: t0 + 400 })).status, 'ok');
+    assert.equal((await subscribe(db, U.owner, ep(4), { iat: X, device: browser('legacy-4b'), gen: 1, genMs: t0 - 10 })).status, 'session_revoked');
+    // Sync keeps generation_ms in step (rebind to a newer generation writes it).
+    const [r] = await rows(db, "select generation_ms::bigint g from notification_private.push_subscriptions where endpoint=$1 and status='active'", [ep(2)]);
+    assert.equal(Number(r.g), t0 + 400);
+  } finally { await db.close(); }
+});
+
