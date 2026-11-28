@@ -25,14 +25,18 @@ export const cleaningReadError = (stage: "auto_context" | "cleaning_context", co
 
 /** Atomic DB read + existing complete v3 policy; DB separately validates the write.
  * timeoutMs is the whole budget of this read (both context RPCs together), not per call. */
-export async function readCleaningState(now = new Date(), timeoutMs = 15_000, budget: TablesReadBudget = tablesReadBudget(timeoutMs)) {
+export async function readCleaningState(now = new Date(), timeoutMs = 15_000, budget: TablesReadBudget = tablesReadBudget(timeoutMs),
+  loadBusinessTime?: () => ReturnType<typeof loadBusinessTimeAdapter>) {
   const activation = autoNormalActivation();
   if (!cleaningFeatureEnabled() && !activation) return null;
-  const time = await loadBusinessTimeAdapter(now), day = time.databaseBusinessDate, scope = openOrdersScope();
+  // Only the overview supplies its same-request/same-timestamp settings. Detail,
+  // observer and cleaning pre/post-save reads still resolve a fresh context each time.
+  const time = await (loadBusinessTime ? loadBusinessTime() : loadBusinessTimeAdapter(now)), day = time.databaseBusinessDate, scope = openOrdersScope();
   let stage: "auto_context" | "cleaning_context" = activation ? "auto_context" : "cleaning_context";
   let started = Date.now();
-  let result = await supabaseServer.rpc(activation ? "tables_auto_context_v1" : "tables_cleaning_context_v1",
-    { p_scope: scope, p_day: day, ...(activation ? { p_activation: activation } : {}) }).abortSignal(budget.signal());
+  let result = await Promise.resolve(supabaseServer.rpc(activation ? "tables_auto_context_v1" : "tables_cleaning_context_v1",
+    { p_scope: scope, p_day: day, ...(activation ? { p_activation: activation } : {}) }).abortSignal(budget.signal()))
+    .catch(error => { throw cleaningReadError(stage, logTablesReadFailure(stage, error, started)); });
   // Failed/missing/disabled automatic capability must never disable working manual cleaning.
   // A timeout is not retried with the manual context: it reads the same snapshot and would fail late.
   if (activation && (result.error || result.data?.enabled === false) && cleaningFeatureEnabled()) {
@@ -41,7 +45,8 @@ export async function readCleaningState(now = new Date(), timeoutMs = 15_000, bu
       if (tablesReadTimedOut(code) || !budget.allows()) throw cleaningReadError("auto_context", code);
     }
     stage = "cleaning_context"; started = Date.now();
-    result = await supabaseServer.rpc("tables_cleaning_context_v1", { p_scope: scope, p_day: day }).abortSignal(budget.signal());
+    result = await Promise.resolve(supabaseServer.rpc("tables_cleaning_context_v1", { p_scope: scope, p_day: day }).abortSignal(budget.signal()))
+      .catch(error => { throw cleaningReadError(stage, logTablesReadFailure(stage, error, started)); });
   }
   if (result.error) throw cleaningReadError(stage, logTablesReadFailure(stage, result.error, started));
   if (result.data?.enabled === false) return null;

@@ -60,10 +60,10 @@ test("resolveConfiguredBusinessDate calls store_business_date_for_timestamp_v1 o
   assert.match(body, /return databaseBusinessDate;/);
 });
 
-test("loadBusinessTimeAdapter is untouched: still calls both RPCs and still derives databaseBusinessDate from the date RPC alone", () => {
+test("full adapter still calls both RPCs and derives databaseBusinessDate from the date RPC alone, with optional cancellation", () => {
   const body = extractFunctionBody(
     adapter,
-    "export async function loadBusinessTimeAdapter(timestamp: Date | string) {"
+    "export async function loadBusinessTimeAdapter(timestamp: Date | string,"
   );
   assert.match(body, /store_business_date_for_timestamp_v1/);
   assert.match(body, /store_get_settings_overview_v1/);
@@ -71,8 +71,10 @@ test("loadBusinessTimeAdapter is untouched: still calls both RPCs and still deri
   // returned unchanged — the overview RPC only feeds snapshot/context.
   assert.match(
     body,
-    /const \{ data: databaseBusinessDate, error: dateError \} = await supabaseServer\.rpc\(\s*"store_business_date_for_timestamp_v1"/
+    /const dateQuery = supabaseServer\.rpc\(\s*"store_business_date_for_timestamp_v1"/
   );
+  assert.match(body, /data: databaseBusinessDate, error: dateError/);
+  assert.match(body, /options\.signal \? dateQuery\.abortSignal\(options\.signal\) : dateQuery/);
   assert.match(body, /databaseBusinessDate,\s*\n\s*\};/);
 });
 

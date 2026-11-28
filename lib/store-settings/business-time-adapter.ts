@@ -33,21 +33,25 @@ export async function resolveConfiguredBusinessDate(timestamp: Date | string) {
   return databaseBusinessDate;
 }
 
-export async function loadBusinessTimeAdapter(timestamp: Date | string) {
+export async function loadBusinessTimeAdapter(timestamp: Date | string, options: { signal?: AbortSignal } = {}) {
   const value = timestamp instanceof Date ? timestamp : new Date(timestamp);
   if (!Number.isFinite(value.getTime())) throw new Error("Invalid business-time timestamp");
 
-  const { data: databaseBusinessDate, error: dateError } = await supabaseServer.rpc(
+  options.signal?.throwIfAborted();
+  const dateQuery = supabaseServer.rpc(
     "store_business_date_for_timestamp_v1",
     { p_timestamp: value.toISOString() }
   );
+  const { data: databaseBusinessDate, error: dateError } = await (options.signal ? dateQuery.abortSignal(options.signal) : dateQuery);
   if (dateError || typeof databaseBusinessDate !== "string") {
     throw new Error(`Failed to calculate configured business date: ${dateError?.message ?? "invalid response"}`);
   }
 
-  const { data, error } = await supabaseServer.rpc("store_get_settings_overview_v1", {
+  options.signal?.throwIfAborted();
+  const settingsQuery = supabaseServer.rpc("store_get_settings_overview_v1", {
     p_business_date: databaseBusinessDate,
   });
+  const { data, error } = await (options.signal ? settingsQuery.abortSignal(options.signal) : settingsQuery);
   if (error) throw new Error(`Failed to load configured store setting: ${error.message}`);
 
   const overview = data as Omit<StoreSettingsOverview, "fallbackUsed">;

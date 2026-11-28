@@ -48,7 +48,12 @@ export async function readTableDetail(tableId: string, now = new Date()) {
       .select("id,receipt_id,item_name,quantity,final_amount,is_canceled", { count: "exact" }).eq("source", "cukcuk")
       .in("receipt_id", relevant.map(r => r.id)).order("id", { ascending: true }).abortSignal(AbortSignal.timeout(15_000)).range(from, to)).catch(() => { throw readFailure("lines"); });
     if (lines.error || !lines.data) throw readFailure("lines");
-    for (const receipt of relevant) receipt.lines = lines.data.filter(l => l.receipt_id === receipt.id).map(l => ({
+    const linesByReceipt = new Map<number, Line[]>();
+    for (const line of lines.data) {
+      const id = line.receipt_id, rows = linesByReceipt.get(id) ?? [];
+      rows.push(line); linesByReceipt.set(id, rows);
+    }
+    for (const receipt of relevant) receipt.lines = (linesByReceipt.get(receipt.id) ?? []).map(l => ({
       id: l.id, name: l.item_name ?? "—", quantity: detailNumber(l.quantity), amount: detailNumber(l.final_amount), canceled: l.is_canceled === true,
     }));
   }
