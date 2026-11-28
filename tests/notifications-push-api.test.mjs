@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { PGlite } from '@electric-sql/pglite';
-import { loadTs, authHarness, nextMock } from './helpers/sales-auth-harness.mjs';
+import { loadTs, authHarness } from './helpers/sales-auth-harness.mjs';
 import { baseSql, testTypesSql, U, MIGRATION_FILE, PUSH_MIGRATION_FILE } from './helpers/notification-fixture.mjs';
 import * as types from '../lib/notifications/types.ts';
 import * as rules from '../lib/notifications/rules.ts';
@@ -74,17 +74,22 @@ function harness(db) {
       throw Object.assign(new Error('Received unexpected response code'), { name: 'WebPushError', statusCode: result.statusCode, headers: result.headers ?? {}, endpoint: subscription.endpoint, body: 'x' });
     },
   };
-  const nextServer = { ...nextMock, after: fn => { afterQueue.push(fn); } };
+  // Browser cookie jar for the push device cookie (httpOnly, set by the push routes).
+  const jar = { device: null, set: [] };
+  const NextResponse = { json: (body, init) => Object.assign(Response.json(body, init), { cookies: { set(c) {
+    jar.set.push(c.name); if (c.name === 'baba_push_device') jar.device = c.value; } } }) };
+  const nextServer = { NextResponse, after: fn => { afterQueue.push(fn); } };
   const config = loadTs('lib/notifications/push/config.ts', { 'server-only': {} });
   const endpoint = loadTs('lib/notifications/push/endpoint.ts');
   const messages = loadTs('lib/notifications/push/messages.ts');
   const request = loadTs('lib/notifications/push/request.ts');
+  const deviceMod = loadTs('lib/notifications/push/device.ts');
   const push = loadTs('lib/notifications/push/server.ts', {
     'server-only': {}, 'next/server': nextServer, 'web-push': webpush, '@/lib/supabase/server': { supabaseServer },
     './config.ts': config, './endpoint.ts': endpoint, './messages.ts': messages,
   });
   const server = loadTs('lib/notifications/server.ts', {
-    'server-only': {}, 'next/server': nextMock, '@/lib/auth/server-auth': h.auth, '@/lib/supabase/server': { supabaseServer },
+    'server-only': {}, 'next/server': { NextResponse }, '@/lib/auth/server-auth': h.auth, '@/lib/supabase/server': { supabaseServer },
     './types.ts': types, './push/server.ts': push,
   });
   const cookies = [];
@@ -97,7 +102,7 @@ function harness(db) {
     '@/lib/notifications/server': server, '@/lib/notifications/types': types, '@/lib/notifications/rules': rules,
     '@/lib/auth/server-auth': h.auth, '@/lib/notifications/push/config': config, '@/lib/notifications/push/endpoint': endpoint,
     '@/lib/notifications/push/request': request, '@/lib/notifications/push/server': push, '@/lib/auth/server-session': sessionMod,
-    'next/server': { NextResponse: { json: (body, init) => Object.assign(Response.json(body, init), { cookies: { set() {} } }) } },
+    '@/lib/notifications/push/device': deviceMod, 'next/server': { NextResponse },
   };
   const routes = {
     push: loadTs('app/api/notifications/push/route.ts', mocks),
@@ -107,19 +112,20 @@ function harness(db) {
     session: loadTs('app/api/session/route.ts', mocks),
   };
   const send = async (route, method, { query = '', body, headers = {}, raw } = {}) => {
-    const init = { method, headers: { ...headers } };
+    const init = { method, headers: { ...(jar.device ? { cookie: `baba_push_device=${jar.device}` } : {}), ...headers } };
     if (body !== undefined || raw !== undefined) {
       init.body = raw ?? JSON.stringify(body);
-      init.headers = { 'content-type': 'application/json', origin: 'https://app.invalid', ...headers };
+      init.headers = { 'content-type': 'application/json', origin: 'https://app.invalid', ...init.headers };
     }
     const response = await routes[route][method](new Request(`https://app.invalid/api/x${query}`, init));
     return { status: response.status, body: await response.json() };
   };
   const flushAfter = async () => { while (afterQueue.length) await afterQueue.shift()(); };
   return {
-    h, calls, sent, server, push, send, afterQueue, flushAfter, cookies, logs, devices,
+    h, calls, sent, server, push, send, afterQueue, flushAfter, cookies, logs, devices, jar,
     setMode(v) { mode = v; }, respond(fn) { responder = fn; },
-    login(id, role, extra = {}, now) {
+    // Every login is a new session with its own (past, valid) second, as in real use.
+    login(id, role, extra = {}, now = Math.floor(Date.now() / 1000) - 3600 + (++loginSeq)) {
       h.setActor({ id, role, is_active: true, app_login_enabled: true, ...extra });
       h.setToken(h.tokens.createServerSessionToken(id, now));
     },
@@ -131,6 +137,8 @@ function harness(db) {
   };
 }
 
+let loginSeq = 0;
+const ungate = db => db.query("update notification_private.push_runtime set recovery_started_at = '-infinity'");
 const VAPID = realWebpush.generateVAPIDKeys(); // test-only, generated in memory, never stored
 const ENV_KEYS = ['BABA_SESSION_SECRET', 'WEB_PUSH_ENABLED', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT'];
 async function withEnv(values, fn) {
@@ -336,7 +344,7 @@ test('sender outcomes: 404/410 revoke, 429 Retry-After, 5xx/timeout retry then r
     assert.equal(claimed.items.length, 4, 'devices 3-6 are still active (404/410 revoked two)');
     await db.query("update notification_private.push_deliveries set claimed_at = now() - interval '5 minutes' where status='sending'");
     const sentBefore = a.sent.length;
-    await a.push.dispatchPushDeliveries({ notificationId: null });
+    await ungate(db); await a.push.dispatchPushDeliveries({ notificationId: null });
     const topics = new Set(a.sent.slice(sentBefore).map(x => x.headers.Topic));
     assert.deepEqual([a.sent.length - sentBefore, topics.size], [4, 1], 'resent once each with the same Topic');
 
@@ -347,7 +355,7 @@ test('sender outcomes: 404/410 revoke, 429 Retry-After, 5xx/timeout retry then r
     await db.query("update public.users set app_login_enabled = false where id = $1", [U.owner]);
     await db.query("update notification_private.push_deliveries set next_attempt_at = now() where status = 'pending'");
     const n = a.sent.length;
-    await a.push.dispatchPushDeliveries({ notificationId: null });
+    await ungate(db); await a.push.dispatchPushDeliveries({ notificationId: null });
     assert.equal(a.sent.length, n, 'login-disabled recipient: no retry sent');
     assert.ok((await rows(db, 'select last_error e from notification_private.push_deliveries where notification_id=$1', [evt3.id])).every(r => r.e === 'recipient_inactive'));
   } finally { await db.close(); }
@@ -451,3 +459,150 @@ test('static contracts: sw.js headers, worker registered only from the click pat
   assert.ok(!/console\.[a-z]+\([^)]*(endpoint|p256dh|privateKey|auth:)/.test(readFileSync('lib/notifications/push/server.ts', 'utf8')));
   assert.equal(JSON.parse(readFileSync('package.json', 'utf8')).dependencies['web-push'], '3.6.7', 'pinned');
 });
+
+test('01B-FINAL sender bounds: lease covers send + report, small batches, no DB work while push is off', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    const a = harness(db);
+    const L = a.push.PUSH_LIMITS;
+    assert.ok(L.leaseSeconds * 1000 >= 3 * (L.sendDeadlineMs + 5000), 'lease >= 3x (send bound + report timeout)');
+    assert.ok(L.maxClaimAgeMs + L.sendDeadlineMs + 5000 < L.leaseSeconds * 1000, 'a sender never outlives its lease');
+    assert.equal(L.batch, 5);
+    await enablePushPolicy(db, 'system.test_all', { rules: { groups: [], userIds: [U.owner] } });
+    a.login(U.owner, 'owner');
+    for (let i = 0; i < 12; i++) assert.equal((await a.register(device())).status, 200);
+    let inFlight = 0, peak = 0;
+    a.respond(async () => { inFlight++; peak = Math.max(peak, inFlight); await new Promise(r => setTimeout(r, 20)); inFlight--; return { statusCode: 201 }; });
+    const evt = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:batch', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    const before = a.calls.filter(c => c === 'notification_push_claim_v1').length;
+    const s = await a.push.dispatchPushDeliveries({ notificationId: evt.id });
+    assert.deepEqual([s.rounds, s.claimed, s.accepted, peak], [3, 10, 10, 5], 'rounds of 5 (10 active devices), at most 5 sends in flight');
+    assert.equal(a.calls.filter(c => c === 'notification_push_claim_v1').length - before, 3);
+  } finally { await db.close(); }
+  // Push globally OFF: recovery and dispatch never reach the DB.
+  const db2 = await database();
+  try {
+    await withEnv({ ...PUSH_ON, WEB_PUSH_ENABLED: 'false' }, async () => {
+      const a = harness(db2);
+      a.login(U.owner, 'owner');
+      assert.equal(a.push.schedulePushRecovery(Date.now() + 10 ** 9), false);
+      assert.equal((await a.send('summary', 'GET')).status, 200);
+      await a.flushAfter();
+      assert.ok(!a.calls.some(c => c.startsWith('notification_push_claim')), 'no claim while push is off');
+    });
+  } finally { await db2.close(); }
+}));
+
+test('01B-FINAL right before sending: stale claim released unsent, exhausted TTL never sent, hard send bound, permission lost between rounds', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    const a = harness(db);
+    await enablePushPolicy(db, 'system.test_all', { rules: { groups: [], userIds: [U.owner] } });
+    a.login(U.owner, 'owner');
+    for (let i = 0; i < 2; i++) await a.register(device());
+    a.respond(() => ({ statusCode: 201 }));
+    const state = async id => (await rows(db, 'select status, last_error e, attempt_count n from notification_private.push_deliveries where notification_id=$1 order by id', [id]));
+    // Clock: claim answered at t=0, the sender looks at t=25 s (claim older than 20 s).
+    const clock = later => { let n = 0; return () => (++n <= 3 ? 0 : later); };
+    const e1 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:stale', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    await a.push.dispatchPushDeliveries({ notificationId: e1.id, now: clock(25_000) });
+    assert.equal(a.sent.length, 0, 'stale claim: nothing sent');
+    assert.deepEqual((await state(e1.id)).map(r => [r.status, r.e]), [['pending', 'claim_too_old'], ['pending', 'claim_too_old']]);
+    // TTL: 8 s left at claim, the sender looks 4 s later (< 5 s left): expired, not sent.
+    const e2 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:ttl', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    await db.query("update notification_private.push_deliveries set expires_at = now() + interval '8 seconds' where notification_id=$1", [e2.id]);
+    await a.push.dispatchPushDeliveries({ notificationId: e2.id, now: clock(4_000) });
+    assert.equal(a.sent.length, 0);
+    assert.deepEqual((await state(e2.id)).map(r => [r.status, r.e]), [['expired', 'ttl_expired'], ['expired', 'ttl_expired']]);
+    // Hard bound: a push service that never answers is cut off (bound shortened for the test).
+    const limits = a.push.PUSH_LIMITS; const old = limits.sendDeadlineMs;
+    limits.sendDeadlineMs = 300;
+    try {
+      a.respond(() => new Promise(() => {}));
+      const e3 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:hang', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+      const t0 = Date.now();
+      await a.push.dispatchPushDeliveries({ notificationId: e3.id });
+      assert.ok(Date.now() - t0 < 3000);
+      assert.deepEqual((await state(e3.id)).map(r => [r.status, r.e]), [['pending', 'send_timeout'], ['pending', 'send_timeout']]);
+    } finally { limits.sendDeadlineMs = old; }
+    // Permission lost while round 1 is sending: round 2 (claimed afterwards) is refused by the gate.
+    for (let i = 0; i < 6; i++) await a.register(device());
+    let flipped = false;
+    a.respond(async () => {
+      if (!flipped) { flipped = true; await db.query('update public.users set app_login_enabled=false where id=$1', [U.owner]); }
+      return { statusCode: 201 };
+    });
+    const sentBefore = a.sent.length;
+    const e4 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:perm', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    const s = await a.push.dispatchPushDeliveries({ notificationId: e4.id });
+    assert.equal(a.sent.length - sentBefore, 5, 'only the batch claimed before the change');
+    assert.equal(s.skipped, 3);
+    assert.deepEqual([...new Set((await state(e4.id)).filter(r => r.status === 'skipped').map(r => r.e))], ['recipient_inactive']);
+  } finally { await db.close(); }
+}));
+
+test('01B-FINAL slow sender vs another instance recovery: no preventable duplicate; lost report is the inherent one', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    const a = harness(db); const b = harness(db); // two server instances sharing the DB
+    await enablePushPolicy(db, 'system.test_all', { rules: { groups: [], userIds: [U.owner] } });
+    a.login(U.owner, 'owner');
+    for (let i = 0; i < 3; i++) await a.register(device());
+    let release; const hold = new Promise(r => { release = r; });
+    a.respond(async () => { await hold; return { statusCode: 201 }; });
+    b.respond(() => ({ statusCode: 201 }));
+    const evt = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:slow', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    const slow = a.push.dispatchPushDeliveries({ notificationId: evt.id });
+    await new Promise(r => setTimeout(r, 100));
+    for (let i = 0; i < 5; i++) { await ungate(db); await b.push.dispatchPushDeliveries({ notificationId: null }); }
+    assert.equal(b.sent.length, 0, 'live claims are never taken by another instance');
+    release(); await slow;
+    assert.equal(a.sent.length, 3);
+    // Inherent case: accepted but the report was lost -> resent once after the lease, same Topic.
+    const evt2 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:lost', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    const lost = await execRpc(db, 'notification_push_claim_v1', { p_notification_id: evt2.id, p_limit: 5, p_lease_seconds: 90 });
+    assert.equal(lost.items.length, 3);
+    await db.query("update notification_private.push_deliveries set claimed_at = now() - interval '91 seconds' where status='sending'");
+    await ungate(db); await b.push.dispatchPushDeliveries({ notificationId: null });
+    assert.deepEqual([b.sent.length, new Set(b.sent.map(x => x.headers.Topic)).size], [3, 1]);
+  } finally { await db.close(); }
+}));
+
+test('01B-FINAL device cookie + logout: in-flight registration refused, other device of the same second kept, sync language', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    const a = harness(db);
+    await enablePushPolicy(db);
+    const now = Math.floor(Date.now() / 1000) - 100;
+    a.login(U.owner, 'owner', {}, now);
+    const d1 = device();
+    assert.equal((await a.register(d1)).status, 200);
+    assert.match(a.jar.device ?? '', /^[A-Za-z0-9_-]{43}$/, 'push device cookie issued');
+    const [row] = await rows(db, "select device_hash from notification_private.push_subscriptions where status='active'");
+    assert.notEqual(row.device_hash, a.jar.device, 'only the hash is stored');
+    // Second device, same user, session issued in the same second, its own cookie.
+    const b = harness(db);
+    b.login(U.owner, 'owner', {}, now);
+    const d2 = device();
+    assert.equal((await b.register(d2)).status, 200);
+    // Language follows the app (sync).
+    assert.equal((await b.send('push', 'POST', { body: { action: 'sync', endpoint: d2.json.endpoint, lang: 'vi' } })).body.device, 'registered');
+    assert.equal((await rows(db, 'select lang from notification_private.push_subscriptions where endpoint=$1', [d2.json.endpoint]))[0].lang, 'vi');
+    assert.equal((await b.send('push', 'POST', { body: { action: 'sync', endpoint: d2.json.endpoint, lang: 'en' } })).status, 400);
+    // Logout on device 1 (with its cookie) while a registration of that session is still in flight.
+    assert.equal((await a.send('logout', 'POST')).status, 200);
+    const late = await a.register(device());
+    assert.deepEqual([late.status, late.body.code], [409, 'PUSH_SESSION_REVOKED'], 'late registration refused');
+    const active = await rows(db, "select endpoint from notification_private.push_subscriptions where status='active'");
+    assert.deepEqual(active.map(r => r.endpoint), [d2.json.endpoint], 'device 2 kept');
+    // Account switch: the older session's late request after the newer one took the endpoint changes nothing.
+    const c = harness(db);
+    c.login(U.leaderBar, 'leader'); const shared = device();
+    await c.register(shared);
+    c.login(U.leaderHall, 'leader'); await c.register(shared);
+    c.login(U.leaderBar, 'leader', {}, now - 5000); // an older session than both registrations above
+    const stale = await c.register(shared);
+    assert.deepEqual([stale.status, stale.body.code], [409, 'PUSH_SUPERSEDED']);
+    assert.equal((await rows(db, "select user_id::int u from notification_private.push_subscriptions where endpoint=$1 and status='active'", [shared.json.endpoint]))[0].u, U.leaderHall);
+  } finally { await db.close(); }
+}));

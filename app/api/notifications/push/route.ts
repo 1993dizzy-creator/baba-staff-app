@@ -5,6 +5,7 @@ import {
   isAllowedPushEndpoint, parsePushSubscription, PUSH_ENDPOINT_MAX_LENGTH, type PushSubscriptionInput,
 } from "@/lib/notifications/push/endpoint";
 import { isJsonRequest, isSameOriginRequest } from "@/lib/notifications/push/request";
+import { newPushDeviceToken, pushDeviceCookie, pushDeviceHash, readPushDeviceToken } from "@/lib/notifications/push/device";
 import { pushRpc } from "@/lib/notifications/push/server";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export async function GET() {
 type Action =
   | { action: "subscribe"; subscription: PushSubscriptionInput; lang: "ko" | "vi" | null; oldEndpoint: string | null }
   | { action: "unsubscribe"; endpoint: string }
-  | { action: "sync"; endpoint: string };
+  | { action: "sync"; endpoint: string; lang: "ko" | "vi" | null };
 
 function parseAction(body: unknown): Action | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
@@ -66,11 +67,15 @@ function parseAction(body: unknown): Action | null {
     return { action: "subscribe", subscription, lang: lang as "ko" | "vi" | null, oldEndpoint: oldEndpoint as string | null };
   }
   if (record.action === "unsubscribe" || record.action === "sync") {
-    if (keys.length !== 2 || !keys.includes("endpoint")) return null;
+    const allowed = record.action === "sync" ? ["action", "endpoint", "lang"] : ["action", "endpoint"];
+    if (!keys.includes("endpoint") || keys.some((key) => !allowed.includes(key))) return null;
     // Unsubscribe/sync only look a row up; they still accept push-service URLs only.
     if (typeof record.endpoint !== "string" || record.endpoint.length > PUSH_ENDPOINT_MAX_LENGTH
       || !isAllowedPushEndpoint(record.endpoint)) return null;
-    return { action: record.action, endpoint: record.endpoint };
+    if (record.action === "unsubscribe") return { action: "unsubscribe", endpoint: record.endpoint };
+    const lang = record.lang === undefined || record.lang === null ? null : record.lang;
+    if (lang !== null && lang !== "ko" && lang !== "vi") return null;
+    return { action: "sync", endpoint: record.endpoint, lang: lang as "ko" | "vi" | null };
   }
   return null;
 }
@@ -99,26 +104,36 @@ export async function POST(request: Request) {
       const config = getPushConfig();
       if (!config.ok) return notificationJson({ ok: true, available: false, reason: config.reason });
     }
+    // Push device identity (httpOnly, push routes only): issued on the first registration/sync.
+    const existingToken = readPushDeviceToken(request);
+    const deviceToken = existingToken ?? newPushDeviceToken();
+    const deviceHash = pushDeviceHash(deviceToken);
     const outcome = input.action === "subscribe"
-      ? await pushRpc.subscribe(auth.actor.id, sessionRef, input.subscription, input.lang, input.oldEndpoint)
+      ? await pushRpc.subscribe(auth.actor.id, sessionRef, input.subscription, input.lang, input.oldEndpoint, deviceHash)
       : input.action === "unsubscribe"
         ? await pushRpc.unsubscribe(auth.actor.id, input.endpoint)
-        : await pushRpc.sync(auth.actor.id, sessionRef, input.endpoint);
+        : await pushRpc.sync(auth.actor.id, sessionRef, input.endpoint, input.lang, deviceHash);
     if (outcome.kind === "missing") return notificationJson({ ok: true, available: false, reason: "db_pending" });
     if (outcome.kind === "failed") return notificationJson({ ok: false, code: "NOTIFICATIONS_UNAVAILABLE" }, 503);
     const status = outcome.data.status;
+    let result: ReturnType<typeof notificationJson>;
     if (status === "ok") {
-      return notificationJson({
+      result = notificationJson({
         ok: true, available: true,
         ...(input.action === "sync" ? { device: outcome.data.device } : {}),
         ...(input.action === "unsubscribe" ? { revoked: Number(outcome.data.revoked) || 0 } : {}),
       });
+    } else {
+      // session_revoked: this session logged out; superseded: a newer session holds this endpoint.
+      const errors: Record<string, [string, number]> = {
+        forbidden: ["FORBIDDEN", 403], invalid_input: ["INVALID_INPUT", 400], not_found: ["NOT_FOUND", 404],
+        session_revoked: ["PUSH_SESSION_REVOKED", 409], superseded: ["PUSH_SUPERSEDED", 409],
+      };
+      const [code, http] = errors[String(status)] ?? ["NOTIFICATIONS_UNAVAILABLE", 503];
+      result = notificationJson({ ok: false, code }, http);
     }
-    const errors: Record<string, [string, number]> = {
-      forbidden: ["FORBIDDEN", 403], invalid_input: ["INVALID_INPUT", 400], not_found: ["NOT_FOUND", 404],
-    };
-    const [code, http] = errors[String(status)] ?? ["NOTIFICATIONS_UNAVAILABLE", 503];
-    return notificationJson({ ok: false, code }, http);
+    if (!existingToken && input.action !== "unsubscribe") result.cookies.set(pushDeviceCookie(deviceToken));
+    return result;
   } catch (error) {
     console.error("[PUSH_DEVICE_FAILED]", (error as Error)?.name);
     return notificationJson({ ok: false, code: "NOTIFICATIONS_UNAVAILABLE" }, 503);

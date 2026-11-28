@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/language-context";
 import {
   getNotificationSummary,
   getServerNotificationSummary,
+  readCachedUserKey,
   subscribeNotificationSummary,
 } from "@/lib/notifications/client";
 import { setAppBadgeCount, syncPushDevice } from "@/lib/notifications/push-client";
@@ -22,13 +23,23 @@ export default function PushDeviceSync() {
   const summary = useSyncExternalStore(subscribeNotificationSummary, getNotificationSummary, getServerNotificationSummary);
 
   useEffect(() => {
-    const run = () => { void syncPushDevice(lang, true).catch(() => undefined); };
-    const onStorage = (event: StorageEvent) => { if (event.key === "baba_user") run(); };
+    // baba_user_updated also fires for routine profile refreshes: only a different user re-syncs.
+    // A language change re-runs this effect (the device's push language follows the app).
+    // syncPushDevice itself reuses a recent result across tabs and sends nothing without a subscription.
+    let lastUser = readCachedUserKey();
+    const run = () => { void syncPushDevice(lang).catch(() => undefined); };
+    const onUser = () => {
+      const user = readCachedUserKey();
+      if (user === lastUser) return;
+      lastUser = user;
+      run();
+    };
+    const onStorage = (event: StorageEvent) => { if (event.key === "baba_user") onUser(); };
     run();
-    window.addEventListener("baba_user_updated", run);
+    window.addEventListener("baba_user_updated", onUser);
     window.addEventListener("storage", onStorage);
     return () => {
-      window.removeEventListener("baba_user_updated", run);
+      window.removeEventListener("baba_user_updated", onUser);
       window.removeEventListener("storage", onStorage);
     };
   }, [lang]);

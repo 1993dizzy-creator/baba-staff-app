@@ -35,10 +35,18 @@ const uuid = v => ({ v, cast: '::uuid' });
 const inDays = d => new Date(Date.now() + d * 86400000).toISOString();
 const IAT = 1_790_000_000;
 
-const subscribe = (db, user, endpoint, { iat = IAT, exp = inDays(30), lang = 'ko', old = null, p256dh = KEY, auth = AUTH } = {}) =>
-  call(db, 'notification_push_subscribe_v1', [user, iat, ts(exp), endpoint, p256dh, auth, lang, old]);
+export const DEV = 'D'.repeat(43); // push device cookie hash (shape only)
+const subscribe = (db, user, endpoint, { iat = IAT, exp = inDays(30), lang = 'ko', old = null, p256dh = KEY, auth = AUTH, device = DEV } = {}) =>
+  call(db, 'notification_push_subscribe_v1', [user, iat, ts(exp), endpoint, p256dh, auth, lang, old, device]);
+const sync = (db, user, iat, exp, endpoint, lang = 'ko', device = DEV) =>
+  call(db, 'notification_push_sync_v1', [user, iat, ts(exp), endpoint, lang, device]);
+const ungate = db => db.query("update notification_private.push_runtime set recovery_started_at = '-infinity'");
 const upsert = (db, type, key, extra) => call(db, 'notification_upsert_v1', [type, key, j(payload(extra))]);
-const claim = (db, id = null, limit = 50, lease = 120) => call(db, 'notification_push_claim_v1', [id, limit, lease]);
+// Recovery claims (id null) pass a DB-wide 60 s gate; tests reopen it unless they test the gate itself.
+const claim = async (db, id = null, limit = 20, lease = 120, { gate = false } = {}) => {
+  if (id === null && !gate) await ungate(db);
+  return call(db, 'notification_push_claim_v1', [id, limit, lease]);
+};
 const report = (db, item, outcome, http = null, retryAfter = null, code = null) =>
   call(db, 'notification_push_report_v1', [item.deliveryId, uuid(item.claimToken), outcome, http, retryAfter, code]);
 async function setPolicy(db, type, policy) {
@@ -56,12 +64,12 @@ test('privileges: new tables closed, new RPCs service_role only, definer functio
   const db = await fixture();
   try {
     for (const role of ['anon', 'authenticated', 'service_role']) {
-      for (const table of ['push_subscriptions', 'push_deliveries', 'policies']) {
+      for (const table of ['push_subscriptions', 'push_deliveries', 'push_session_revocations', 'push_runtime', 'policies']) {
         await assert.rejects(asRole(db, role, `select * from notification_private.${table}`), /permission denied/);
       }
     }
-    const rpcs = ['notification_push_subscribe_v1(1,1,now(),null,null,null,null,null)', 'notification_push_unsubscribe_v1(1,null)',
-      'notification_push_sync_v1(1,1,now(),null)', 'notification_push_session_revoke_v1(1,1)', 'notification_push_session_touch_v1(1,1,now())',
+    const rpcs = ['notification_push_subscribe_v1(1,1,now(),null,null,null,null,null,null)', 'notification_push_unsubscribe_v1(1,null)',
+      'notification_push_sync_v1(1,1,now(),null,null,null)', 'notification_push_session_revoke_v1(1,1,null)', 'notification_push_session_touch_v1(1,1,now())',
       'notification_push_open_v1(1,1)', 'notification_push_status_v1(1)', 'notification_push_claim_v1(null,1,60)',
       "notification_push_report_v1(1,'00000000-0000-0000-0000-000000000000',null,null,null,null)"];
     for (const role of ['anon', 'authenticated']) {
@@ -70,7 +78,7 @@ test('privileges: new tables closed, new RPCs service_role only, definer functio
     for (const fn of rpcs) await asRole(db, 'service_role', `select public.${fn}`);
     const rls = await rows(db, `select relname, relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where nspname='notification_private' and relkind='r' order by relname`);
-    assert.equal(rls.length, 7); assert.ok(rls.every(r => r.relrowsecurity));
+    assert.equal(rls.length, 9); assert.ok(rls.every(r => r.relrowsecurity));
     const definers = await rows(db, `select p.proname, p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where (nspname='notification_private' or proname like 'notification\\_%') and prosecdef`);
     assert.ok(definers.length >= 20);
@@ -117,7 +125,7 @@ test('device registration: multi-device, endpoint ownership transfer, renewal, u
     await subscribe(db, U.staffBar, ep(1));
     assert.deepEqual((await subStatus(db, ep(1))).map(r => [r.status, r.r]), [['revoked', 'replaced'], ['active', null]]);
     // Account switch on device 1: B takes the endpoint, A's row is revoked (no send to A's device).
-    await subscribe(db, U.staffHall, ep(1));
+    await subscribe(db, U.staffHall, ep(1), { iat: IAT + 1 });
     assert.deepEqual((await subStatus(db, ep(1))).map(r => [r.u, r.status, r.r]),
       [[8, 'revoked', 'replaced'], [8, 'revoked', 'owner_changed'], [9, 'active', null]]);
     // Unsubscribe / renew cannot touch another user's row.
@@ -130,17 +138,17 @@ test('device registration: multi-device, endpoint ownership transfer, renewal, u
     assert.equal((await rows(db, 'select lang from notification_private.push_subscriptions where endpoint=$1 and status=$2', [ep(4), 'active']))[0].lang, 'vi');
     assert.equal((await call(db, 'notification_push_unsubscribe_v1', [U.staffBar, ep(4)])).revoked, 1);
     // Sync: foreign row revoked; own row re-bound to the current session; unknown endpoint.
-    assert.equal((await call(db, 'notification_push_sync_v1', [U.staffBar, IAT + 5, ts(inDays(30)), ep(1)])).device, 'foreign');
+    assert.equal((await sync(db, U.staffBar, IAT + 5, inDays(30), ep(1))).device, 'foreign');
     assert.deepEqual((await subStatus(db, ep(1))).at(-1).r, 'owner_changed');
     await subscribe(db, U.leaderBar, ep(5));
-    const resync = await call(db, 'notification_push_sync_v1', [U.leaderBar, IAT + 9, ts(inDays(20)), ep(5)]);
+    const resync = await sync(db, U.leaderBar, IAT + 9, inDays(20), ep(5));
     assert.equal(resync.device, 'registered');
     assert.equal((await rows(db, 'select session_iat::int s from notification_private.push_subscriptions where endpoint=$1 and status=$2', [ep(5), 'active']))[0].s, IAT + 9);
-    assert.equal((await call(db, 'notification_push_sync_v1', [U.leaderBar, IAT, ts(inDays(20)), ep(99)])).device, 'not_registered');
+    assert.equal((await sync(db, U.leaderBar, IAT, inDays(20), ep(99))).device, 'not_registered');
     // Inactive / login-disabled accounts cannot register or sync.
     for (const user of [U.staffKitchenInactive, U.staffHallNoLogin, U.unknown]) {
       assert.equal((await subscribe(db, user, ep(50 + user))).status, 'forbidden');
-      assert.equal((await call(db, 'notification_push_sync_v1', [user, IAT, ts(inDays(1)), ep(1)])).status, 'forbidden');
+      assert.equal((await sync(db, user, IAT, inDays(1), ep(1))).status, 'forbidden');
     }
     // At most 10 active devices per user: the oldest are retired.
     for (let i = 0; i < 12; i++) await subscribe(db, U.owner, ep(100 + i));
@@ -232,7 +240,7 @@ test('send-time gate: resolved, deactivated, login off, role/part change, push o
     // Changes after enqueue, before sending:
     await db.query('update public.users set is_active=false where id=$1', [U.leaderBar]);
     await db.query('update public.users set app_login_enabled=false where id=$1', [U.staffBar]);
-    await call(db, 'notification_push_session_revoke_v1', [U.staffHall, IAT + 1]); // logout of that session
+    await call(db, 'notification_push_session_revoke_v1', [U.staffHall, IAT + 1, null]); // logout of that session
     await db.query("update public.users set part='kitchen' where id=$1", [U.managerHall]);
     const c = await claim(db, a.id);
     assert.deepEqual(c.items.map(i => i.notificationId), [a.id]);
@@ -277,7 +285,7 @@ test('send-time gate: resolved, deactivated, login off, role/part change, push o
     // Owner change on the device after enqueue: the old owner's delivery is skipped.
     await subscribe(db, U.staffHall, ep(7));
     const g = await upsert(db, type, 'evt:g');
-    await subscribe(db, U.leaderHall, ep(7));
+    await subscribe(db, U.leaderHall, ep(7), { iat: IAT + 2 });
     await claim(db, g.id);
     const gd = await deliveries(db, `notification_id=${g.id} and user_id=${U.staffHall}`);
     assert.deepEqual(gd.map(x => x.e), ['subscription_inactive']);
@@ -294,7 +302,7 @@ test('claim/report: single claim, lease recovery, stale token, backoff + Retry-A
     const first = await claim(db, evt.id);
     assert.equal(first.items.length, 4);
     const item = first.items[0];
-    assert.deepEqual(Object.keys(item).sort(), ['attempt', 'auth', 'claimToken', 'deliveryId', 'endpoint', 'lang', 'notificationId', 'p256dh', 'severity', 'ttlSeconds', 'typeCode', 'unreadCount'].sort());
+    assert.deepEqual(Object.keys(item).sort(), ['attempt', 'auth', 'claimToken', 'deliveryId', 'endpoint', 'lang', 'leaseSeconds', 'notificationId', 'p256dh', 'severity', 'ttlSeconds', 'typeCode', 'unreadCount'].sort());
     assert.equal(item.attempt, 1); assert.ok(item.ttlSeconds > 3500 && item.ttlSeconds <= 3600); assert.equal(item.unreadCount, 1);
     assert.deepEqual((await claim(db, evt.id)).items, [], 'claimed rows are not claimed twice');
     assert.deepEqual((await claim(db)).items, [], 'recovery does not steal a live claim');
@@ -356,7 +364,8 @@ test('claim/report: single claim, lease recovery, stale token, backoff + Retry-A
     assert.deepEqual([exp.status, exp.e], ['expired', 'ttl_expired']);
     // Input validation.
     assert.equal((await call(db, 'notification_push_claim_v1', [null, 0, 120])).status, 'invalid_input');
-    assert.equal((await call(db, 'notification_push_claim_v1', [null, 10, 5])).status, 'invalid_input');
+    assert.equal((await call(db, 'notification_push_claim_v1', [null, 10, 30])).status, 'invalid_input', 'lease below 60 s');
+    assert.equal((await call(db, 'notification_push_claim_v1', [null, 21, 120])).status, 'invalid_input', 'batch above 20');
     assert.equal((await report(db, late, 'delivered')).status, 'invalid_input');
     assert.equal((await report(db, late, 'failed', null, null, 'Bad Code')).status, 'invalid_input');
   } finally { await db.close(); }
@@ -396,9 +405,104 @@ test('session lifecycle: logout revokes that session only; refresh extends that 
     assert.equal((await call(db, 'notification_push_session_touch_v1', [U.owner, IAT, ts(inDays(400))])).status, 'invalid_input');
     const exps = await rows(db, "select endpoint, round(extract(epoch from (expires_at - now()))/86400)::int d from notification_private.push_subscriptions order by id");
     assert.deepEqual(exps.map(e => e.d), [30, 3]);
-    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, IAT])).revoked, 1);
+    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, IAT, null])).revoked, 1);
     assert.deepEqual((await subStatus(db, ep(1))).map(r => r.r), ['logout']);
     assert.deepEqual((await subStatus(db, ep(2))).map(r => r.status), ['active'], 'other device of the same user untouched');
-    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, null])).status, 'invalid_input');
+    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, null, null])).status, 'invalid_input');
+  } finally { await db.close(); }
+});
+
+test('01B-FINAL logout/registration races: revocation markers, per-device scope, newer session wins, failed replacement keeps rows', async () => {
+  const db = await fixture();
+  const D1 = 'a'.repeat(43), D2 = 'b'.repeat(43);
+  try {
+    // Logout of device D1 (session IAT) then a late registration from D1: refused, nothing active.
+    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, IAT, D1])).status, 'ok');
+    assert.equal((await subscribe(db, U.owner, ep(1), { device: D1 })).status, 'session_revoked');
+    assert.equal((await sync(db, U.owner, IAT, inDays(30), ep(1), 'ko', D1)).status, 'session_revoked');
+    assert.equal((await call(db, 'notification_push_status_v1', [U.owner])).activeDevices, 0);
+    // Same user, same session second, another device D2: unaffected by D1's logout.
+    assert.equal((await subscribe(db, U.owner, ep(2), { device: D2 })).status, 'ok');
+    // Logout without a device cookie: the whole session (every device) is revoked and blocked.
+    assert.equal((await call(db, 'notification_push_session_revoke_v1', [U.owner, IAT, null])).revoked, 1);
+    assert.equal((await subscribe(db, U.owner, ep(3), { device: D2 })).status, 'session_revoked');
+    // A new login (new session) registers normally.
+    assert.equal((await subscribe(db, U.owner, ep(3), { iat: IAT + 60, device: D2 })).status, 'ok');
+
+    // Account switch A (older session) -> B (newer session) on one endpoint; A's late requests change nothing.
+    await subscribe(db, U.staffBar, ep(10), { iat: IAT + 100 });
+    assert.equal((await subscribe(db, U.staffHall, ep(10), { iat: IAT + 200 })).status, 'ok');
+    assert.equal((await subscribe(db, U.staffBar, ep(10), { iat: IAT + 100 })).status, 'superseded', 'late A subscribe');
+    assert.equal((await sync(db, U.staffBar, IAT + 100, inDays(30), ep(10))).device, 'superseded', 'late A sync');
+    assert.deepEqual((await subStatus(db, ep(10))).filter(r => r.status === 'active').map(r => r.u), [U.staffHall], 'B kept');
+    // Same second, different accounts: the requester (the browser's current account) takes over -- a
+    // late request can at worst stop pushes, never deliver one account's alerts to another.
+    await subscribe(db, U.leaderBar, ep(11), { iat: IAT + 300 });
+    assert.equal((await subscribe(db, U.leaderHall, ep(11), { iat: IAT + 300 })).status, 'ok');
+    assert.deepEqual((await subStatus(db, ep(11))).map(r => [r.u, r.status, r.r]), [[U.leaderBar, 'revoked', 'owner_changed'], [U.leaderHall, 'active', null]]);
+    assert.equal((await sync(db, U.leaderBar, IAT + 300, inDays(30), ep(11))).device, 'foreign', 'same-second sync of the other account also takes over');
+
+    // Failed replacement (invalid new keys) keeps the existing registration and the renewal source.
+    await subscribe(db, U.managerHall, ep(20));
+    assert.equal((await subscribe(db, U.managerHall, ep(20), { p256dh: 'bad' })).status, 'invalid_input');
+    assert.equal((await subscribe(db, U.managerHall, ep(21), { old: ep(20), auth: 'x' })).status, 'invalid_input');
+    assert.deepEqual((await subStatus(db, ep(20))).map(r => r.status), ['active'], 'nothing revoked by the failed attempts');
+    assert.equal((await subStatus(db, ep(21))).length, 0);
+    assert.equal((await subscribe(db, U.managerHall, ep(20), { device: 'short' })).status, 'invalid_input');
+  } finally { await db.close(); }
+});
+
+test('01B-FINAL sync writes only on change; language follows the app', async () => {
+  const db = await fixture();
+  try {
+    await subscribe(db, U.owner, ep(1), { exp: inDays(20), lang: 'ko' });
+    const stamp = async () => (await rows(db, "select updated_at, lang, xmin::text x from notification_private.push_subscriptions where status='active'"))[0];
+    const exp = (await rows(db, "select expires_at from notification_private.push_subscriptions where status='active'"))[0].expires_at.toISOString();
+    const before = await stamp();
+    for (let i = 0; i < 3; i++) assert.equal((await sync(db, U.owner, IAT, exp, ep(1), 'ko')).device, 'registered');
+    assert.deepEqual(await stamp(), before, 'identical sync = no row write');
+    assert.equal((await sync(db, U.owner, IAT, exp, ep(1), 'vi')).device, 'registered');
+    const after = await stamp();
+    assert.equal(after.lang, 'vi'); assert.notEqual(after.x, before.x, 'language change written');
+    assert.equal((await sync(db, U.owner, IAT, exp, ep(1), null)).device, 'registered');
+    assert.equal((await stamp()).x, after.x, 'no language given = keep');
+  } finally { await db.close(); }
+});
+
+test('01B-FINAL recovery gate + small batches: idle queue costs no write, one scan per 60 s, batch cap, TTL margin', async () => {
+  const db = await fixture();
+  try {
+    const runtime = async () => (await rows(db, 'select recovery_started_at::text t, xmin::text x from notification_private.push_runtime'))[0];
+    const idle = await runtime();
+    for (let i = 0; i < 5; i++) {
+      const r = await call(db, 'notification_push_claim_v1', [null, 5, 90]);
+      assert.deepEqual([r.items.length, r.idle], [0, true]);
+    }
+    assert.deepEqual(await runtime(), idle, 'empty queue: no gate write');
+    const type = 'system.test_all';
+    await setPolicy(db, type, { pushEnabled: true, rules: { groups: [], userIds: [U.owner] } });
+    for (let i = 1; i <= 8; i++) await subscribe(db, U.owner, ep(i));
+    const evt = await upsert(db, type, 'evt:gate');
+    const first = await call(db, 'notification_push_claim_v1', [null, 5, 90]);
+    assert.equal(first.items.length, 5, 'batch cap honoured');
+    assert.notEqual((await runtime()).t, idle.t, 'gate taken');
+    const second = await call(db, 'notification_push_claim_v1', [null, 5, 90]);
+    assert.deepEqual([second.items.length, second.throttled], [0, true], 'another instance within 60 s is throttled');
+    // Event dispatch is not gated (just-in-time rounds of the same event).
+    assert.equal((await claim(db, evt.id, 5, 90)).items.length, 3);
+    // TTL margin: less than 5 s left = expired at claim, never handed to the sender.
+    const evt2 = await upsert(db, type, 'evt:ttl');
+    await db.query(`update notification_private.push_deliveries set expires_at = now() + interval '3 seconds' where notification_id=${evt2.id}`);
+    const c = await claim(db, evt2.id, 20, 90);
+    assert.equal(c.items.length, 0);
+    assert.ok((await deliveries(db, `notification_id=${evt2.id}`)).every(d => d.status === 'expired' && d.e === 'ttl_expired'));
+    // Sender-side TTL check reports "expired" (no send).
+    const evt3 = await upsert(db, type, 'evt:report-expired');
+    const one = (await claim(db, evt3.id, 1, 90)).items[0];
+    assert.equal((await report(db, one, 'expired', null, null, 'ttl_expired')).delivery, 'expired');
+    // Per-user unread count computed once per batch and identical across that user's devices.
+    const evt4 = await upsert(db, type, 'evt:badge');
+    const batch = (await claim(db, evt4.id, 5, 90)).items;
+    assert.equal(new Set(batch.map(i => i.unreadCount)).size, 1);
   } finally { await db.close(); }
 });

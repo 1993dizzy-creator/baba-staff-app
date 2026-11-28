@@ -56,7 +56,7 @@ test('privileges: private schema closed to API roles; RPCs execute only as servi
     }
     const rls = await rows(db, `select relname, relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where nspname='notification_private' and relkind='r' order by relname`);
-    assert.ok(rls.length === (pushMigrationIncluded ? 7 : 5) && rls.every(r => r.relrowsecurity), 'RLS enabled on every table');
+    assert.ok(rls.length === (pushMigrationIncluded ? 9 : 5) && rls.every(r => r.relrowsecurity), 'RLS enabled on every table');
     const realtime = await rows(db, "select count(*)::int n from pg_publication_tables where schemaname='notification_private'");
     assert.equal(realtime[0].n, 0, 'no realtime publication');
   } finally { await db.close(); }

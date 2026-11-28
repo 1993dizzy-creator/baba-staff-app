@@ -96,10 +96,14 @@ test('push UI in a real browser: device panel states KO/VI, enable/disable, sett
     NEXT_PUBLIC_SUPABASE_ANON_KEY: 'offline-synthetic-key', BABA_SESSION_SECRET: secret };
   const pushEnv = { ...baseEnv, WEB_PUSH_ENABLED: 'true', VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: 'mailto:ops@example.invalid' };
   const next = path.resolve('node_modules/next/dist/bin/next'); const buildLog = path.join(work, 'preview-build.log');
-  let server, browser; let origin;
+  let server, browser; let origin; let fixedPort = null;
   const start = async env => {
     if (server && server.exitCode === null) { server.kill(); await new Promise(resolve => server.once('exit', resolve)); }
-    const probe = http.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve)); const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
+    // Restarts keep the same port (same origin => the browser keeps its storage and worker).
+    if (fixedPort === null) {
+      const probe = http.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve)); fixedPort = probe.address().port; await new Promise(resolve => probe.close(resolve));
+    }
+    const port = fixedPort;
     const serverLog = openSync(path.join(work, 'preview-server.log'), 'a');
     server = spawn(process.execPath, [next, 'start', '--hostname', '127.0.0.1', '--port', String(port)], { cwd: preview, env, windowsHide: true, stdio: ['ignore', serverLog, serverLog] });
     closeSync(serverLog);
@@ -268,6 +272,38 @@ test('push UI in a real browser: device panel states KO/VI, enable/disable, sett
         }
         await context.close();
       }
+    });
+    await t.test('01B-FINAL: reloads reuse the last sync, language follows the app, service OFF shows "paused" (not "on")', async () => {
+      const s = await open(U.owner, { stub: 'granted' });
+      await waitState(s.page, 'off');
+      await panel(s.page).getByRole('button', { name: notificationText.ko.push.turnOn }).click();
+      await waitState(s.page, 'on');
+      const syncBodies = [];
+      s.page.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/api/notifications/push') && (r.postData() ?? '').includes('"sync"')) syncBodies.push(JSON.parse(r.postData())); });
+      for (let i = 0; i < 3; i++) { await s.page.reload(); await waitState(s.page, 'on'); }
+      assert.equal(syncBodies.length, 1, 'three reloads, one sync (cross-tab reuse window)');
+      // Routine profile refresh events do not re-sync.
+      await s.page.evaluate(() => { for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('baba_user_updated')); });
+      await s.page.waitForTimeout(500);
+      assert.equal(syncBodies.length, 1);
+      // App language -> device push language.
+      await s.page.locator('header span', { hasText: '🇰🇷' }).click();
+      await s.page.waitForFunction(() => document.body.innerText.includes('Thông báo đẩy trên thiết bị này'));
+      await s.page.waitForTimeout(800);
+      assert.equal(syncBodies.at(-1)?.lang, 'vi');
+      const lang = (await db.query("select lang from notification_private.push_subscriptions where user_id=$1 and status='active'", [U.owner])).rows.map(r => r.lang);
+      assert.deepEqual(lang, ['vi']);
+      // Global switch OFF while this device is registered: "paused", never "on"; turning off still works.
+      await start({ ...pushEnv, WEB_PUSH_ENABLED: 'false' });
+      await s.page.reload();
+      await waitState(s.page, 'paused');
+      await panel(s.page).getByText(notificationText.vi.push.hint.paused).waitFor();
+      await fits(s.page, 'paused vi'); await s.page.screenshot({ path: path.join(shots, 'push-paused-vi-390.png') });
+      await panel(s.page).getByRole('button', { name: notificationText.vi.push.turnOff }).click();
+      await waitState(s.page, 'unavailable');
+      assert.equal(await active(U.owner), 0);
+      await s.context.close();
+      await start(pushEnv);
     });
     assert.deepEqual(errors, [], 'no page errors');
   } finally {

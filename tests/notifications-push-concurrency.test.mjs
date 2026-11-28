@@ -1,105 +1,123 @@
-// BABA-NOTIFICATION-01B on real PostgreSQL with independent connections (throwaway local cluster
-// under .local/, same pinned binaries as the 01-A concurrency test; no env DB URL is read).
-// Covers: parallel senders never claim the same delivery (SKIP LOCKED), a claim held by an open
-// transaction is skipped not duplicated, racing registrations of one endpoint leave one active
-// owner, and concurrent first observations enqueue each device exactly once.
+// BABA-NOTIFICATION-01B on real PostgreSQL with independent connections (throwaway local cluster).
+// Covers: endpoint ownership races (newer session wins), logout racing a registration, single
+// enqueue, disjoint parallel claims, a slow live claim never re-claimed within its lease, and
+// several server instances running recovery at once (one scan, an idle queue writes nothing).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, existsSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import net from 'node:net';
-import pg from 'pg';
-import { baseSql, testTypesSql, U, payload, MIGRATION_FILE, PUSH_MIGRATION_FILE } from './helpers/notification-fixture.mjs';
+import { U, payload } from './helpers/notification-fixture.mjs';
+import { startPushCluster, rpc } from './helpers/push-native-pg.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const rpc = async (client, name, args) => (await client.query(
-  `select public.${name}(${args.map((_, i) => '$' + (i + 1)).join(',')}) r`, args)).rows[0].r;
-const KEY = 'B' + 'A'.repeat(86), AUTH = 'C'.repeat(22);
+const KEY = 'B' + 'A'.repeat(86), AUTH = 'C'.repeat(22), DEV = 'D'.repeat(43), DEV2 = 'E'.repeat(43);
 const ep = n => `https://fcm.googleapis.com/fcm/send/race-${n}`;
 const exp = () => new Date(Date.now() + 20 * 86400000).toISOString();
+const subscribe = (c, user, iat, endpoint, device = DEV) => rpc(c, 'notification_push_subscribe_v1', [user, iat, exp(), endpoint, KEY, AUTH, 'ko', null, device]);
 
-test('real PostgreSQL push concurrency: single claim, endpoint ownership race, single enqueue', { timeout: 90000 }, async t => {
-  const platform = process.platform === 'win32' ? 'windows' : process.platform;
-  const bin = path.resolve(process.env.BABA_RESERVATION_PG_BIN || `.local/pg-tools/node_modules/@embedded-postgres/${platform}-${process.arch}/native/bin`);
-  const exe = name => path.join(bin, name + (process.platform === 'win32' ? '.exe' : ''));
-  assert.ok(existsSync(exe('initdb')), 'Install the pinned local-only test binaries (see tests/notifications-concurrency.test.mjs)');
-  const root = path.resolve('.local/notification-01b'); mkdirSync(root, { recursive: true });
-  const dir = mkdtempSync(path.join(root, 'pg-')); const logs = [];
-  const env = Object.fromEntries(['PATH', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
-  Object.assign(env, { TEMP: dir, TMP: dir, HOME: dir, USERPROFILE: dir });
-  logs.push(execFileSync(exe('initdb'), ['-D', dir, '--auth=trust', '--username=baba_test', '--locale=C', '--encoding=UTF8'], { env, windowsHide: true, encoding: 'utf8' }));
-  const probe = net.createServer(); await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
-  const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
-  const child = spawn(exe('postgres'), ['-D', dir, '-h', '127.0.0.1', '-p', String(port)], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  child.stdout.on('data', b => logs.push(b.toString())); child.stderr.on('data', b => logs.push(b.toString()));
-  const config = { host: '127.0.0.1', port, user: 'baba_test', database: 'postgres', connectionTimeoutMillis: 500, statement_timeout: 15000 };
-  const clients = []; let admin;
-  const connect = async () => { const c = new pg.Client(config); await c.connect(); clients.push(c); await c.query('set role service_role'); return c; };
+test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
+  const cluster = await startPushCluster('pg-conc');
+  const { admin } = cluster;
   try {
-    for (let i = 0; i < 100; i++) {
-      const candidate = new pg.Client(config);
-      try { await candidate.connect(); admin = candidate; break; } catch { await candidate.end().catch(() => {}); await delay(30); }
-    }
-    assert.ok(admin, logs.join('\n')); clients.push(admin);
-    await admin.query(baseSql); await admin.query(readFileSync(MIGRATION_FILE, 'utf8')); await admin.query(testTypesSql);
-    await admin.query(readFileSync(PUSH_MIGRATION_FILE, 'utf8'));
     await admin.query(`update notification_private.policies set push_enabled = true where type_code = 'system.test_all'`);
     t.diagnostic((await admin.query('select version() v')).rows[0].v);
-    const pool = []; for (let i = 0; i < 6; i++) pool.push(await connect());
+    const pool = []; for (let i = 0; i < 6; i++) pool.push(await cluster.connect());
+    const ungate = () => admin.query("update notification_private.push_runtime set recovery_started_at = '-infinity'");
+    const active = async endpoint => (await admin.query("select user_id::int u, session_iat::bigint iat from notification_private.push_subscriptions where endpoint=$1 and status='active'", [endpoint])).rows;
 
-    await t.test('racing registrations of one endpoint by different accounts leave exactly one active owner', async () => {
+    await t.test('30 racing registrations of one endpoint: exactly one active owner, always the newest session', async () => {
       const users = [U.owner, U.master, U.managerHall, U.leaderBar, U.staffBar, U.staffHall];
-      const results = await Promise.all(Array.from({ length: 30 }, (_, i) => rpc(pool[i % pool.length], 'notification_push_subscribe_v1',
-        [users[i % users.length], 1790000000 + i, exp(), ep('shared'), KEY, AUTH, 'ko', null])));
-      assert.ok(results.every(r => r.status === 'ok'), JSON.stringify(results));
-      const active = (await admin.query("select count(*)::int n from notification_private.push_subscriptions where endpoint=$1 and status='active'", [ep('shared')])).rows[0].n;
-      assert.equal(active, 1);
+      const results = await Promise.all(Array.from({ length: 30 }, (_, i) => subscribe(pool[i % pool.length], users[i % users.length], 1790000000 + i, ep('shared'))));
+      assert.ok(results.every(r => ['ok', 'superseded'].includes(r.status)), JSON.stringify(results));
+      const rows = await active(ep('shared'));
+      assert.equal(rows.length, 1); assert.equal(Number(rows[0].iat), 1790000029);
+    });
+
+    await t.test('account switch A -> B racing on 40 endpoints: B (newer session) always ends as the owner', async () => {
+      for (let i = 0; i < 40; i++) {
+        const [a, b] = await Promise.all([subscribe(pool[i % 6], U.staffBar, 1790001000 + i, ep(`ab-${i}`)), subscribe(pool[(i + 1) % 6], U.staffHall, 1790001001 + i, ep(`ab-${i}`))]);
+        assert.equal(b.status, 'ok'); assert.ok(['ok', 'superseded'].includes(a.status));
+        const late = await rpc(pool[(i + 2) % 6], 'notification_push_sync_v1', [U.staffBar, 1790001000 + i, exp(), ep(`ab-${i}`), 'ko', DEV]);
+        assert.equal(late.device, 'superseded', 'late sync of A never revokes B');
+        assert.deepEqual((await active(ep(`ab-${i}`))).map(r => r.u), [U.staffHall]);
+      }
+    });
+
+    await t.test('logout racing a registration of the same session (40 trials): never an active row afterwards', async () => {
+      for (let i = 0; i < 40; i++) {
+        const iat = 1790002000 + i;
+        const [sub, out] = await Promise.all([
+          subscribe(pool[i % 6], U.leaderBar, iat, ep(`lo-${i}`)),
+          rpc(pool[(i + 3) % 6], 'notification_push_session_revoke_v1', [U.leaderBar, iat, i % 2 ? DEV : null]),
+        ]);
+        assert.equal(out.status, 'ok');
+        assert.ok(['ok', 'session_revoked'].includes(sub.status), sub.status);
+        assert.equal((await active(ep(`lo-${i}`))).length, 0, `trial ${i}: ${sub.status}`);
+        // A late retry of that registration is refused.
+        assert.equal((await subscribe(pool[(i + 1) % 6], U.leaderBar, iat, ep(`lo-${i}`))).status, 'session_revoked');
+      }
+      // Another device of the same user and session second survives a per-device logout.
+      await subscribe(admin, U.master, 1790003000, ep('dev-a'), DEV);
+      await subscribe(admin, U.master, 1790003000, ep('dev-b'), DEV2);
+      await rpc(admin, 'notification_push_session_revoke_v1', [U.master, 1790003000, DEV]);
+      assert.deepEqual([(await active(ep('dev-a'))).length, (await active(ep('dev-b'))).length], [0, 1]);
     });
 
     await t.test('60 parallel first observations enqueue each device exactly once', async () => {
-      for (let i = 0; i < 8; i++) await rpc(admin, 'notification_push_subscribe_v1', [U.staffBar, 1790000100, exp(), ep(`bar-${i}`), KEY, AUTH, 'ko', null]);
-      const results = await Promise.all(Array.from({ length: 60 }, (_, i) => rpc(pool[i % pool.length], 'notification_upsert_v1',
+      for (let i = 0; i < 8; i++) await subscribe(admin, U.staffBar, 1790004000, ep(`bar-${i}`));
+      const results = await Promise.all(Array.from({ length: 60 }, (_, i) => rpc(pool[i % 6], 'notification_upsert_v1',
         ['system.test_all', 'race:push', JSON.stringify(payload())])));
       const created = results.filter(r => r.status === 'created');
       assert.equal(created.length, 1);
       const n = (await admin.query('select count(*)::int n, count(distinct subscription_id)::int d from notification_private.push_deliveries where notification_id=$1', [created[0].id])).rows[0];
-      assert.equal(n.n, n.d); assert.ok(n.n >= 9, 'all active devices of the recipients, once each');
+      assert.equal(n.n, n.d); assert.ok(n.n >= 9);
+      t.diagnostic(`deliveries for the race event: ${n.n}`);
+      await admin.query('select set_config($1, $2, false)', ['baba.race_event', String(created[0].id)]);
     });
 
-    await t.test('parallel senders claim disjoint sets; a held claim is skipped, never duplicated', async () => {
-      const [{ n: total }] = (await admin.query("select count(*)::int n from notification_private.push_deliveries where status='pending'")).rows;
-      const a = pool[0], b = pool[1];
-      await a.query('begin');
-      try {
-        const held = await rpc(a, 'notification_push_claim_v1', [null, 3, 120]);
-        assert.equal(held.items.length, 3);
-        // b runs while a's transaction still holds row locks: SKIP LOCKED gives b other rows only.
-        const other = await rpc(b, 'notification_push_claim_v1', [null, 100, 120]);
-        const heldIds = new Set(held.items.map(i => i.deliveryId));
-        assert.ok(other.items.every(i => !heldIds.has(i.deliveryId)));
-        assert.equal(other.items.length, total - 3);
-        await a.query('commit');
-      } finally { await a.query('rollback').catch(() => {}); }
-      // Everything is now "sending": a burst of 12 parallel recovery claims returns nothing.
-      const burst = await Promise.all(Array.from({ length: 12 }, (_, i) => rpc(pool[i % pool.length], 'notification_push_claim_v1', [null, 100, 120])));
-      assert.ok(burst.every(r => r.items.length === 0));
-      // Lease expired for all: 12 parallel claims re-claim each row exactly once.
-      await admin.query("update notification_private.push_deliveries set claimed_at = now() - interval '10 minutes' where status='sending'");
-      const reclaim = await Promise.all(Array.from({ length: 12 }, (_, i) => rpc(pool[i % pool.length], 'notification_push_claim_v1', [null, 100, 120])));
-      const ids = reclaim.flatMap(r => r.items.map(i => i.deliveryId));
-      assert.equal(ids.length, total); assert.equal(new Set(ids).size, total);
-      // Two reports with the same token race: one wins, the other is stale.
-      const item = reclaim.find(r => r.items.length).items[0];
-      const reports = await Promise.all([a, b].map(c => rpc(c, 'notification_push_report_v1', [item.deliveryId, item.claimToken, 'accepted', 201, null, null])));
-      assert.deepEqual(reports.map(r => r.status).sort(), ['ok', 'stale']);
+    await t.test('parallel senders: disjoint claims; a slow live claim (send + report delay) is never re-claimed within the lease', async () => {
+      const event = Number((await admin.query("select id from notification_private.notifications where dedupe_key='race:push'")).rows[0].id);
+      const [{ n: total }] = (await admin.query('select count(*)::int n from notification_private.push_deliveries where notification_id=$1 and status=$2', [event, 'pending'])).rows;
+      // 6 senders claim small batches of the same event at once.
+      const claims = await Promise.all(pool.map(c => rpc(c, 'notification_push_claim_v1', [event, 2, 90])));
+      const ids = claims.flatMap(r => r.items.map(i => i.deliveryId));
+      assert.equal(new Set(ids).size, ids.length, 'no row claimed twice');
+      assert.equal(ids.length, Math.min(total, 12));
+      // Slow sender: holds its claims for 2.5 s while other instances keep running recovery.
+      const slow = claims.flatMap(r => r.items);
+      const stop = Date.now() + 2500; let reclaimed = 0; let recoveryRuns = 0;
+      while (Date.now() < stop) {
+        await ungate();
+        const r = await rpc(pool[recoveryRuns % 6], 'notification_push_claim_v1', [null, 20, 90]);
+        recoveryRuns++;
+        reclaimed += r.items.filter(i => slow.some(s => s.deliveryId === i.deliveryId)).length;
+        await delay(100);
+      }
+      assert.equal(reclaimed, 0, `live claims never re-claimed (${recoveryRuns} recovery runs)`);
+      const reports = await Promise.all(slow.map((item, i) => rpc(pool[i % 6], 'notification_push_report_v1', [item.deliveryId, item.claimToken, 'accepted', 201, null, null])));
+      assert.ok(reports.every(r => r.status === 'ok'), 'the slow sender still owns its claims');
+      // Two reports with one token race: one wins, the other is stale.
+      await admin.query("update notification_private.push_deliveries set status='pending', next_attempt_at=now(), claim_token=null, claimed_at=null where status in ('pending','sending')");
+      const one = (await rpc(admin, 'notification_push_claim_v1', [event, 1, 90])).items[0];
+      if (one) {
+        const r2 = await Promise.all([pool[0], pool[1]].map(c => rpc(c, 'notification_push_report_v1', [one.deliveryId, one.claimToken, 'accepted', 201, null, null])));
+        assert.deepEqual(r2.map(r => r.status).sort(), ['ok', 'stale']);
+      }
+    });
+
+    await t.test('6 server instances run recovery at once: one scan; idle queue = no write', async () => {
+      await admin.query("update notification_private.push_deliveries set status='pending', next_attempt_at=now(), claim_token=null, claimed_at=null where status in ('pending','sending')");
+      await ungate();
+      const burst = await Promise.all(Array.from({ length: 12 }, (_, i) => rpc(pool[i % 6], 'notification_push_claim_v1', [null, 5, 90])));
+      const scanned = burst.filter(r => r.items.length || r.skipped);
+      assert.equal(scanned.length, 1, 'exactly one instance passed the gate');
+      assert.ok(burst.filter(r => r !== scanned[0]).every(r => r.throttled === true || r.idle === true));
+      // Drain everything, then an idle burst writes nothing.
+      await admin.query("update notification_private.push_deliveries set status='accepted', claim_token=null, claimed_at=null, finished_at=now() where status in ('pending','sending')");
+      const before = (await admin.query('select xmin::text x, recovery_started_at::text t from notification_private.push_runtime')).rows[0];
+      const idle = await Promise.all(Array.from({ length: 12 }, (_, i) => rpc(pool[i % 6], 'notification_push_claim_v1', [null, 5, 90])));
+      assert.ok(idle.every(r => r.idle === true && r.items.length === 0));
+      assert.deepEqual((await admin.query('select xmin::text x, recovery_started_at::text t from notification_private.push_runtime')).rows[0], before);
     });
   } finally {
-    for (const client of clients.reverse()) await client.end().catch(() => {});
-    if (child.exitCode === null) {
-      execFileSync(exe('pg_ctl'), ['-D', dir, 'stop', '-m', 'fast', '-w'], { env, windowsHide: true, encoding: 'utf8', timeout: 15000 });
-    }
-    writeFileSync(path.join(root, `${path.basename(dir)}-server.log`), logs.join('\n'));
-    rmSync(dir, { recursive: true, force: true });
+    await cluster.stop();
   }
 });

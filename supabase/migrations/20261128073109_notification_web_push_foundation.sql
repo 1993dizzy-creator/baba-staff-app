@@ -1,10 +1,11 @@
 -- BABA-NOTIFICATION-01B: common background Web Push foundation (on top of 01-A 20261126124217).
 --
 -- * Adds a per-type push channel switch (policies.push_enabled, default OFF), per-device push
---   subscriptions bound to the server session that registered them, and a per (notification x
---   subscription) delivery queue with bounded retries. 01-A tables/RPCs keep their contracts;
---   the two policy RPCs are replaced with versions that also read/write pushEnabled (an update
---   that omits pushEnabled keeps the stored value, so the 01-A app keeps working unchanged).
+--   subscriptions bound to the server session (and push device cookie) that registered them, and a
+--   per (notification x subscription) delivery queue with bounded retries. 01-A tables/RPCs keep
+--   their contracts; the two policy RPCs are replaced with versions that also read/write
+--   pushEnabled (an update that omits pushEnabled keeps the stored value, so the 01-A app keeps
+--   working unchanged).
 -- * Atomic enqueue: a statement trigger on recipients inserts the delivery rows in the SAME
 --   transaction that creates the event and fixes its recipients (notification_upsert_v1 is not
 --   modified). Only first observations insert recipients, so re-observing an open event never
@@ -12,13 +13,21 @@
 -- * No back-fill: deliveries are created only at event creation, only for subscriptions active at
 --   that moment, and only while the type is enabled AND push_enabled. Registering a device or
 --   switching push on later never sends older events.
--- * Send-time gate (claim): the event is still open, the delivery TTL (1 hour from creation) has not
---   passed, the subscription is still active, unexpired and owned by the recipient, the recipient
---   is still active + login-enabled, and the CURRENT role ceiling / rules / enabled / push_enabled
---   still allow it. in_app_enabled is NOT a push condition (separate channel).
--- * Claims use FOR UPDATE SKIP LOCKED + a claim token, so concurrent senders never claim the same
---   row. A claim whose result was never reported (process died after the push service accepted it)
---   is re-claimable after its lease; that re-send may duplicate on the device (same Topic/tag).
+-- * Send-time gate (claim, taken immediately before sending a small batch): the event is still open,
+--   more than 5 s of the delivery TTL (1 hour from creation) remain, the subscription is still
+--   active, unexpired and owned by the recipient, the recipient is still active + login-enabled, and
+--   the CURRENT role ceiling / rules / enabled / push_enabled still allow it. in_app_enabled is NOT
+--   a push condition (separate channel).
+-- * Claims use FOR UPDATE SKIP LOCKED + a claim token and are released at once (no DB transaction or
+--   lock is held while the push service is contacted). The lease (>= 60 s) is far longer than the
+--   sender's per-message bound (12 s send + 5 s report), so a live claim is never re-claimed. Only a
+--   sender that died after the push service accepted (no report) leaves a row that is re-sent after
+--   the lease: an inherent, bounded duplicate (same Topic/tag).
+-- * Logout writes a push session revocation (user, session iat, device) under a per-session lock, so
+--   a registration that arrives after the logout is refused. A request from an older session never
+--   takes over or revokes an endpoint held by a newer session (late answers after an account switch).
+-- * Recovery (claim without an event) first probes the two partial indexes (no write when empty) and
+--   then passes a global gate (one recovery scan per 60 s across all server instances).
 -- * Max 3 attempts (backoff 1 min, 5 min; Retry-After honoured), 404/410 revokes the subscription,
 --   401/403/400/413 and configuration errors never retry. History is kept (no retention job).
 -- * No cron, no realtime publication, no queue service. Writes no existing row.
@@ -35,6 +44,8 @@ create table notification_private.push_subscriptions (
   user_id bigint not null references public.users(id),
   -- iat of the signed server session that registered (or last re-bound) this device.
   session_iat bigint not null constraint push_subscriptions_session_iat_check check (session_iat > 0),
+  -- SHA-256 (base64url) of the httpOnly push device cookie: separates devices of one session second.
+  device_hash text not null constraint push_subscriptions_device_hash_check check (device_hash ~ '^[A-Za-z0-9_-]{43}$'),
   endpoint text not null constraint push_subscriptions_endpoint_check check (
     char_length(endpoint) <= 1024
     and endpoint ~ '^https://(fcm\.googleapis\.com|android\.googleapis\.com|updates\.push\.services\.mozilla\.com|push\.services\.mozilla\.com|web\.push\.apple\.com|[a-z0-9-]{1,63}\.push\.apple\.com|[a-z0-9-]{1,63}\.notify\.windows\.com)/[A-Za-z0-9_~:./%=?&+-]+$'
@@ -58,6 +69,16 @@ create unique index push_subscriptions_active_endpoint_unique
 create index push_subscriptions_user_active_idx
   on notification_private.push_subscriptions (user_id, session_iat) where status = 'active';
 
+-- Logged-out (user, session iat, device) markers: a late registration of that session is refused.
+-- device_hash '*' = the whole session (logout request without a push device cookie).
+create table notification_private.push_session_revocations (
+  user_id bigint not null references public.users(id),
+  session_iat bigint not null,
+  device_hash text not null constraint push_session_revocations_device_check check (device_hash = '*' or device_hash ~ '^[A-Za-z0-9_-]{43}$'),
+  revoked_at timestamptz not null default now(),
+  primary key (user_id, session_iat, device_hash)
+);
+
 create table notification_private.push_deliveries (
   id bigint generated always as identity primary key,
   notification_id bigint not null references notification_private.notifications(id),
@@ -80,12 +101,22 @@ create table notification_private.push_deliveries (
   constraint push_deliveries_unique unique (notification_id, subscription_id),
   constraint push_deliveries_claim_shape check ((status = 'sending') = (claim_token is not null and claimed_at is not null))
 );
+-- Only unfinished rows are indexed for the queue: finished history never enters a claim scan.
 create index push_deliveries_due_idx on notification_private.push_deliveries (next_attempt_at, id) where status = 'pending';
 create index push_deliveries_sending_idx on notification_private.push_deliveries (claimed_at, id) where status = 'sending';
 create index push_deliveries_subscription_idx on notification_private.push_deliveries (subscription_id);
 
+-- Single-row runtime state: global recovery gate across server instances.
+create table notification_private.push_runtime (
+  id smallint primary key constraint push_runtime_single check (id = 1),
+  recovery_started_at timestamptz not null default '-infinity'
+);
+insert into notification_private.push_runtime (id) values (1);
+
 alter table notification_private.push_subscriptions enable row level security;
+alter table notification_private.push_session_revocations enable row level security;
 alter table notification_private.push_deliveries enable row level security;
+alter table notification_private.push_runtime enable row level security;
 
 -- ---------------------------------------------------------------------------------------------
 -- Helpers
@@ -112,6 +143,19 @@ $$;
 create function notification_private.lock_endpoint(p_endpoint text) returns void
 language sql set search_path = pg_catalog as $$
   select pg_advisory_xact_lock(20261128, hashtext(coalesce(p_endpoint, '')))
+$$;
+
+-- Serializes logout against registration/sync of the same login session. Always taken BEFORE any
+-- endpoint lock (fixed lock order).
+create function notification_private.lock_session(p_user_id bigint, p_session_iat bigint) returns void
+language sql set search_path = pg_catalog as $$
+  select pg_advisory_xact_lock(20261129, hashtext(p_user_id::text || ':' || p_session_iat::text))
+$$;
+
+create function notification_private.session_revoked(p_user_id bigint, p_session_iat bigint, p_device_hash text)
+returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
+  select exists (select 1 from notification_private.push_session_revocations v
+    where v.user_id = p_user_id and v.session_iat = p_session_iat and v.device_hash in ('*', p_device_hash))
 $$;
 
 -- Enqueue in the event's own transaction (statement trigger on the recipients fan-out).
@@ -206,49 +250,66 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
--- Device RPCs (the server passes the authenticated user id + its verified session iat/expiry)
+-- Device RPCs (the server passes the authenticated user id, its verified session iat/expiry and
+-- the hash of the httpOnly push device cookie)
 -- ---------------------------------------------------------------------------------------------
 
--- Registers this device for the actor's current session. Any other active row with the same
--- endpoint (another account on this device, or an older registration) is revoked first.
--- p_old_endpoint (pushsubscriptionchange renewal): must be an active row of the same actor.
+-- Registers this device for the actor's current session. Refused when that session (or this
+-- device of it) has logged out, or when a NEWER session (any account) holds the endpoint.
+-- Otherwise any other active row with the same endpoint is revoked first. p_old_endpoint
+-- (pushsubscriptionchange renewal): must be an active row of the same actor. Every write happens in
+-- one block: if the new row is rejected, nothing (old or current registration) is revoked.
 create function public.notification_push_subscribe_v1(
   p_actor_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz,
-  p_endpoint text, p_p256dh text, p_auth text, p_lang text, p_old_endpoint text
+  p_endpoint text, p_p256dh text, p_auth text, p_lang text, p_old_endpoint text, p_device_hash text
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_actor record; v_old notification_private.push_subscriptions; v_row record; v_expires timestamptz;
+declare v_actor record; v_old notification_private.push_subscriptions; v_cur notification_private.push_subscriptions;
+  v_expires timestamptz;
 begin
   select * into v_actor from notification_private.actor(p_actor_user_id);
   if not found then return jsonb_build_object('status', 'forbidden'); end if;
   if p_session_iat is null or p_session_iat < 1 or not notification_private.valid_session_expiry(p_session_expires_at)
     or (p_lang is not null and p_lang not in ('ko', 'vi')) or p_endpoint is null
+    or p_device_hash is null or p_device_hash !~ '^[A-Za-z0-9_-]{43}$'
     or (p_old_endpoint is not null and p_old_endpoint = p_endpoint) then
     return jsonb_build_object('status', 'invalid_input');
   end if;
+  perform notification_private.lock_session(v_actor.id, p_session_iat);
+  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_hash) then
+    return jsonb_build_object('status', 'session_revoked');
+  end if;
+  -- Endpoint locks in a fixed (sorted) order.
+  perform notification_private.lock_endpoint(least(p_endpoint, coalesce(p_old_endpoint, p_endpoint)));
+  if p_old_endpoint is not null then perform notification_private.lock_endpoint(greatest(p_endpoint, p_old_endpoint)); end if;
   if p_old_endpoint is not null then
-    perform notification_private.lock_endpoint(p_old_endpoint);
     select * into v_old from notification_private.push_subscriptions
     where endpoint = p_old_endpoint and status = 'active' and user_id = v_actor.id for update;
     if not found then return jsonb_build_object('status', 'not_found'); end if;
   end if;
-  perform notification_private.lock_endpoint(p_endpoint);
-  for v_row in select id, user_id from notification_private.push_subscriptions
-    where endpoint = p_endpoint and status = 'active' for update loop
-    perform notification_private.revoke_subscription(v_row.id,
-      case when v_row.user_id = v_actor.id then 'replaced' else 'owner_changed' end);
-  end loop;
-  if v_old.id is not null then perform notification_private.revoke_subscription(v_old.id, 'renewed'); end if;
+  select * into v_cur from notification_private.push_subscriptions
+  where endpoint = p_endpoint and status = 'active' for update;
+  -- Only a strictly NEWER session keeps the endpoint. Within the same second the requester (the
+  -- browser's current account) takes over: a late request can at worst stop pushes, never misdeliver.
+  if v_cur.id is not null and v_cur.session_iat > p_session_iat then
+    return jsonb_build_object('status', 'superseded');
+  end if;
   begin
-    insert into notification_private.push_subscriptions (user_id, session_iat, endpoint, p256dh, auth, lang, expires_at)
-    values (v_actor.id, p_session_iat, p_endpoint, p_p256dh, p_auth, coalesce(p_lang, v_old.lang, 'ko'), p_session_expires_at)
+    if v_cur.id is not null then
+      perform notification_private.revoke_subscription(v_cur.id,
+        case when v_cur.user_id = v_actor.id then 'replaced' else 'owner_changed' end);
+    end if;
+    if v_old.id is not null then perform notification_private.revoke_subscription(v_old.id, 'renewed'); end if;
+    insert into notification_private.push_subscriptions (user_id, session_iat, device_hash, endpoint, p256dh, auth, lang, expires_at)
+    values (v_actor.id, p_session_iat, p_device_hash, p_endpoint, p_p256dh, p_auth,
+      coalesce(p_lang, v_old.lang, v_cur.lang, 'ko'), p_session_expires_at)
     returning expires_at into v_expires;
+    -- At most 10 active devices per staff member: the oldest registrations are retired.
+    perform notification_private.revoke_subscription(s.id, 'device_limit')
+    from (select id from notification_private.push_subscriptions
+          where user_id = v_actor.id and status = 'active' order by id desc offset 10) s;
   exception when check_violation or not_null_violation or string_data_right_truncation then
     return jsonb_build_object('status', 'invalid_input');
   end;
-  -- At most 10 active devices per staff member: the oldest registrations are retired.
-  perform notification_private.revoke_subscription(s.id, 'device_limit')
-  from (select id from notification_private.push_subscriptions
-        where user_id = v_actor.id and status = 'active' order by id desc offset 10) s;
   return jsonb_build_object('status', 'ok', 'expiresAt', v_expires);
 end $$;
 
@@ -269,24 +330,35 @@ begin
   return jsonb_build_object('status', 'ok', 'revoked', v_count);
 end $$;
 
--- Login / app start on a device that already holds a browser subscription:
---   foreign (another account owned it -> revoked; the client must unsubscribe locally),
---   registered (same account -> bound to the current session and its expiry), not_registered.
+-- App start / user switch / language change on a device that already holds a browser subscription:
+--   foreign (another account's older or same-second session owned it -> revoked; client unsubscribes),
+--   superseded (a NEWER session holds it: this late request changes nothing),
+--   registered (same account -> bound to this session/device/language; written only on change),
+--   not_registered.
 create function public.notification_push_sync_v1(
-  p_actor_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz, p_endpoint text
+  p_actor_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz, p_endpoint text,
+  p_lang text, p_device_hash text
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_actor record; v_row notification_private.push_subscriptions;
 begin
   select * into v_actor from notification_private.actor(p_actor_user_id);
   if not found then return jsonb_build_object('status', 'forbidden'); end if;
   if p_session_iat is null or p_session_iat < 1 or not notification_private.valid_session_expiry(p_session_expires_at)
-    or p_endpoint is null or char_length(p_endpoint) > 1024 then
+    or p_endpoint is null or char_length(p_endpoint) > 1024 or (p_lang is not null and p_lang not in ('ko', 'vi'))
+    or p_device_hash is null or p_device_hash !~ '^[A-Za-z0-9_-]{43}$' then
     return jsonb_build_object('status', 'invalid_input');
+  end if;
+  perform notification_private.lock_session(v_actor.id, p_session_iat);
+  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_hash) then
+    return jsonb_build_object('status', 'session_revoked');
   end if;
   perform notification_private.lock_endpoint(p_endpoint);
   select * into v_row from notification_private.push_subscriptions
   where endpoint = p_endpoint and status = 'active' for update;
   if not found then return jsonb_build_object('status', 'ok', 'device', 'not_registered'); end if;
+  if v_row.session_iat > p_session_iat then
+    return jsonb_build_object('status', 'ok', 'device', 'superseded');
+  end if;
   if v_row.user_id <> v_actor.id then
     perform notification_private.revoke_subscription(v_row.id, 'owner_changed');
     return jsonb_build_object('status', 'ok', 'device', 'foreign');
@@ -296,22 +368,44 @@ begin
     return jsonb_build_object('status', 'ok', 'device', 'not_registered');
   end if;
   update notification_private.push_subscriptions set session_iat = p_session_iat,
-    expires_at = p_session_expires_at, updated_at = now()
-  where id = v_row.id;
+    expires_at = p_session_expires_at, device_hash = p_device_hash, lang = coalesce(p_lang, lang), updated_at = now()
+  where id = v_row.id
+    and (session_iat <> p_session_iat or expires_at <> p_session_expires_at or device_hash <> p_device_hash
+      or (p_lang is not null and lang <> p_lang));
   return jsonb_build_object('status', 'ok', 'device', 'registered', 'expiresAt', p_session_expires_at);
 end $$;
 
--- Logout: every device row bound to that session stops receiving immediately.
-create function public.notification_push_session_revoke_v1(p_user_id bigint, p_session_iat bigint)
+-- Device panel: how many active devices the actor has (also proves the push storage is installed).
+create function public.notification_push_status_v1(p_actor_user_id bigint)
+returns jsonb language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare v_actor record;
+begin
+  select * into v_actor from notification_private.actor(p_actor_user_id);
+  if not found then return jsonb_build_object('status', 'forbidden'); end if;
+  return jsonb_build_object('status', 'ok', 'activeDevices', (select count(*)::integer
+    from notification_private.push_subscriptions s
+    where s.user_id = v_actor.id and s.status = 'active' and s.expires_at > now()));
+end $$;
+
+-- Logout: records the revocation and stops this session's device rows (this device only when its
+-- push device cookie is known, otherwise every device of the session), serialized with any
+-- registration of the same session.
+create function public.notification_push_session_revoke_v1(p_user_id bigint, p_session_iat bigint, p_device_hash text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_count integer;
 begin
-  if p_user_id is null or p_user_id < 1 or p_session_iat is null or p_session_iat < 1 then
+  if p_user_id is null or p_user_id < 1 or p_session_iat is null or p_session_iat < 1
+    or (p_device_hash is not null and p_device_hash !~ '^[A-Za-z0-9_-]{43}$')
+    or not exists (select 1 from public.users u where u.id = p_user_id) then
     return jsonb_build_object('status', 'invalid_input');
   end if;
+  perform notification_private.lock_session(p_user_id, p_session_iat);
+  insert into notification_private.push_session_revocations (user_id, session_iat, device_hash)
+  values (p_user_id, p_session_iat, coalesce(p_device_hash, '*')) on conflict do nothing;
   update notification_private.push_subscriptions set status = 'revoked', revoked_at = now(),
     revoked_reason = 'logout', updated_at = now()
-  where user_id = p_user_id and session_iat = p_session_iat and status = 'active';
+  where user_id = p_user_id and session_iat = p_session_iat and status = 'active'
+    and (p_device_hash is null or device_hash = p_device_hash);
   get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'revoked', v_count);
 end $$;
@@ -330,18 +424,6 @@ begin
     and expires_at > now() and expires_at < p_session_expires_at;
   get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'updated', v_count);
-end $$;
-
--- Device panel: whether push storage is installed + how many active devices the actor has.
-create function public.notification_push_status_v1(p_actor_user_id bigint)
-returns jsonb language plpgsql stable security definer set search_path = pg_catalog, public as $$
-declare v_actor record;
-begin
-  select * into v_actor from notification_private.actor(p_actor_user_id);
-  if not found then return jsonb_build_object('status', 'forbidden'); end if;
-  return jsonb_build_object('status', 'ok', 'activeDevices', (select count(*)::integer
-    from notification_private.push_subscriptions s
-    where s.user_id = v_actor.id and s.status = 'active' and s.expires_at > now()));
 end $$;
 
 -- Push click: the actor must be a recipient and still allowed on at least one channel; returns the
@@ -370,28 +452,53 @@ end $$;
 -- Sender RPCs (server-internal; no browser route reaches them)
 -- ---------------------------------------------------------------------------------------------
 
--- Claims due deliveries (one event, or any event when p_notification_id is null = recovery),
--- re-validating the send gate for each. Refused rows are closed as skipped/expired/failed here.
+-- Claims up to p_limit (<= 20) due deliveries for IMMEDIATE sending: one event, or any event when
+-- p_notification_id is null (recovery). The send gate is re-checked per row here, right before the
+-- send; refused rows are closed as skipped / expired / failed. Due rows are found through the two
+-- partial indexes only (pending by next_attempt_at, sending by claimed_at), never through finished
+-- history. The function returns at once, so no lock is held while the push service is contacted.
 create function public.notification_push_claim_v1(p_notification_id bigint, p_limit integer, p_lease_seconds integer)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
-  v_lease interval; v_items jsonb := '[]'::jsonb; v_skipped integer := 0; r record; g record; a record;
-  v_reason text; v_token uuid; v_unread integer;
+  v_lease interval; v_ids bigint[] := '{}'; v_more bigint[]; v_items jsonb := '[]'::jsonb; v_skipped integer := 0;
+  r record; g record; a record; v_reason text; v_token uuid; v_unread integer; v_unread_by_user jsonb := '{}'::jsonb;
 begin
-  if p_limit is null or p_limit < 1 or p_limit > 100 or p_lease_seconds is null or p_lease_seconds < 30
+  if p_limit is null or p_limit < 1 or p_limit > 20 or p_lease_seconds is null or p_lease_seconds < 60
     or p_lease_seconds > 600 or (p_notification_id is not null and p_notification_id < 1) then
     return jsonb_build_object('status', 'invalid_input');
   end if;
   v_lease := make_interval(secs => p_lease_seconds);
-  for r in
-    select d.* from notification_private.push_deliveries d
-    where (p_notification_id is null or d.notification_id = p_notification_id)
-      and ((d.status = 'pending' and d.next_attempt_at <= now())
-        or (d.status = 'sending' and d.claimed_at < now() - v_lease))
-    order by d.id
-    limit p_limit
-    for update of d skip locked
-  loop
+
+  if p_notification_id is null then
+    -- Empty queue: two index probes, no write.
+    if not exists (select 1 from notification_private.push_deliveries d where d.status = 'pending' and d.next_attempt_at <= now())
+      and not exists (select 1 from notification_private.push_deliveries d where d.status = 'sending' and d.claimed_at < now() - v_lease) then
+      return jsonb_build_object('status', 'ok', 'items', '[]'::jsonb, 'skipped', 0, 'idle', true);
+    end if;
+    -- Global gate: one recovery scan per 60 s across every server instance.
+    update notification_private.push_runtime set recovery_started_at = now()
+    where id = 1 and recovery_started_at <= now() - interval '60 seconds';
+    if not found then return jsonb_build_object('status', 'ok', 'items', '[]'::jsonb, 'skipped', 0, 'throttled', true); end if;
+    select coalesce(array_agg(id), '{}') into v_ids from (
+      select d.id from notification_private.push_deliveries d
+      where d.status = 'pending' and d.next_attempt_at <= now()
+      order by d.next_attempt_at, d.id limit p_limit for update skip locked) s;
+    if cardinality(v_ids) < p_limit then
+      select coalesce(array_agg(id), '{}') into v_more from (
+        select d.id from notification_private.push_deliveries d
+        where d.status = 'sending' and d.claimed_at < now() - v_lease
+        order by d.claimed_at, d.id limit p_limit - cardinality(v_ids) for update skip locked) s;
+      v_ids := v_ids || v_more;
+    end if;
+  else
+    select coalesce(array_agg(id), '{}') into v_ids from (
+      select d.id from notification_private.push_deliveries d
+      where d.notification_id = p_notification_id
+        and ((d.status = 'pending' and d.next_attempt_at <= now()) or (d.status = 'sending' and d.claimed_at < now() - v_lease))
+      order by d.id limit p_limit for update skip locked) s;
+  end if;
+
+  for r in select d.* from notification_private.push_deliveries d where d.id = any(v_ids) order by d.id loop
     select n.status n_status, n.type_code, n.severity, t.access_roles, p.enabled, p.push_enabled, p.rules,
       s.status s_status, s.user_id s_user, s.expires_at s_expires, s.endpoint, s.p256dh, s.auth, s.lang
     into g
@@ -403,7 +510,7 @@ begin
     select * into a from notification_private.actor(r.user_id);
     v_reason := case
       when r.status = 'sending' and r.attempt_count >= 3 then 'result_unknown'
-      when r.expires_at <= now() then 'ttl_expired'
+      when r.expires_at <= now() + interval '5 seconds' then 'ttl_expired'
       when g.n_status is distinct from 'open' then 'resolved'
       when g.s_status is distinct from 'active' or g.s_user is distinct from r.user_id then 'subscription_inactive'
       when g.s_expires <= now() then 'subscription_expired'
@@ -426,18 +533,25 @@ begin
     update notification_private.push_deliveries set status = 'sending', attempt_count = attempt_count + 1,
       claimed_at = now(), claim_token = v_token
     where id = r.id;
-    select count(*) into v_unread from (
-      select 1 from notification_private.recipients rr
-      join notification_private.notifications nn on nn.id = rr.notification_id
-      join notification_private.types tt on tt.code = nn.type_code
-      join notification_private.policies pp on pp.type_code = nn.type_code
-      where rr.user_id = a.id and rr.read_at is null
-        and notification_private.can_see(tt.access_roles, pp.enabled, pp.in_app_enabled, pp.rules, a.id, a.role, a.part)
-      limit 100) s;
+    -- Icon badge: one unread count per staff member per batch.
+    if v_unread_by_user ? a.id::text then
+      v_unread := (v_unread_by_user ->> a.id::text)::integer;
+    else
+      select count(*) into v_unread from (
+        select 1 from notification_private.recipients rr
+        join notification_private.notifications nn on nn.id = rr.notification_id
+        join notification_private.types tt on tt.code = nn.type_code
+        join notification_private.policies pp on pp.type_code = nn.type_code
+        where rr.user_id = a.id and rr.read_at is null
+          and notification_private.can_see(tt.access_roles, pp.enabled, pp.in_app_enabled, pp.rules, a.id, a.role, a.part)
+        limit 100) s;
+      v_unread_by_user := v_unread_by_user || jsonb_build_object(a.id::text, v_unread);
+    end if;
     v_items := v_items || jsonb_build_array(jsonb_build_object(
       'deliveryId', r.id, 'claimToken', v_token, 'notificationId', r.notification_id, 'typeCode', g.type_code,
       'severity', g.severity, 'lang', g.lang, 'attempt', r.attempt_count + 1,
       'ttlSeconds', greatest(1, floor(extract(epoch from (r.expires_at - now())))::integer),
+      'leaseSeconds', p_lease_seconds,
       'unreadCount', v_unread,
       'endpoint', g.endpoint, 'p256dh', g.p256dh, 'auth', g.auth));
   end loop;
@@ -445,7 +559,7 @@ begin
 end $$;
 
 -- Records one attempt. Only the current claim (token) may report; anything else is stale.
--- p_outcome: accepted | retry | gone | failed.
+-- p_outcome: accepted | retry | gone | failed | expired (sender saw the TTL run out before sending).
 create function public.notification_push_report_v1(
   p_delivery_id bigint, p_claim_token uuid, p_outcome text, p_http_status integer,
   p_retry_after_seconds integer, p_error_code text
@@ -453,7 +567,7 @@ create function public.notification_push_report_v1(
 declare r notification_private.push_deliveries; v_next timestamptz; v_http integer; v_error text;
 begin
   if p_delivery_id is null or p_claim_token is null or p_outcome is null
-    or p_outcome not in ('accepted', 'retry', 'gone', 'failed')
+    or p_outcome not in ('accepted', 'retry', 'gone', 'failed', 'expired')
     or (p_error_code is not null and p_error_code !~ '^[a-z][a-z0-9_]{0,59}$')
     or (p_retry_after_seconds is not null and p_retry_after_seconds < 0) then
     return jsonb_build_object('status', 'invalid_input');
@@ -466,6 +580,11 @@ begin
     update notification_private.push_deliveries set status = 'accepted', accepted_at = now(), finished_at = now(),
       last_http_status = v_http, last_error = null, claim_token = null, claimed_at = null where id = r.id;
     return jsonb_build_object('status', 'ok', 'delivery', 'accepted');
+  end if;
+  if p_outcome = 'expired' then
+    update notification_private.push_deliveries set status = 'expired', finished_at = now(),
+      last_error = coalesce(p_error_code, 'ttl_expired'), claim_token = null, claimed_at = null where id = r.id;
+    return jsonb_build_object('status', 'ok', 'delivery', 'expired');
   end if;
   if p_outcome = 'gone' then
     perform notification_private.revoke_subscription(r.subscription_id, 'gone');
@@ -505,24 +624,24 @@ revoke all on all functions in schema notification_private from public, anon, au
 
 revoke all on function public.notification_policy_list_v1(bigint) from public, anon, authenticated;
 revoke all on function public.notification_policy_update_v1(bigint, text, integer, jsonb) from public, anon, authenticated;
-revoke all on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text) from public, anon, authenticated;
 revoke all on function public.notification_push_unsubscribe_v1(bigint, text) from public, anon, authenticated;
-revoke all on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text) from public, anon, authenticated;
-revoke all on function public.notification_push_session_revoke_v1(bigint, bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text) from public, anon, authenticated;
+revoke all on function public.notification_push_status_v1(bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_session_revoke_v1(bigint, bigint, text) from public, anon, authenticated;
 revoke all on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz) from public, anon, authenticated;
 revoke all on function public.notification_push_open_v1(bigint, bigint) from public, anon, authenticated;
-revoke all on function public.notification_push_status_v1(bigint) from public, anon, authenticated;
 revoke all on function public.notification_push_claim_v1(bigint, integer, integer) from public, anon, authenticated;
 revoke all on function public.notification_push_report_v1(bigint, uuid, text, integer, integer, text) from public, anon, authenticated;
 
 grant execute on function public.notification_policy_list_v1(bigint) to service_role;
 grant execute on function public.notification_policy_update_v1(bigint, text, integer, jsonb) to service_role;
-grant execute on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text) to service_role;
+grant execute on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text) to service_role;
 grant execute on function public.notification_push_unsubscribe_v1(bigint, text) to service_role;
-grant execute on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text) to service_role;
-grant execute on function public.notification_push_session_revoke_v1(bigint, bigint) to service_role;
+grant execute on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text) to service_role;
+grant execute on function public.notification_push_status_v1(bigint) to service_role;
+grant execute on function public.notification_push_session_revoke_v1(bigint, bigint, text) to service_role;
 grant execute on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz) to service_role;
 grant execute on function public.notification_push_open_v1(bigint, bigint) to service_role;
-grant execute on function public.notification_push_status_v1(bigint) to service_role;
 grant execute on function public.notification_push_claim_v1(bigint, integer, integer) to service_role;
 grant execute on function public.notification_push_report_v1(bigint, uuid, text, integer, integer, text) to service_role;

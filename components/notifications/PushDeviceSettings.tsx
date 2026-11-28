@@ -13,7 +13,7 @@ import {
   syncPushDevice,
 } from "@/lib/notifications/push-client";
 
-type PanelState = "checking" | "on" | "off" | "unsupported" | "needs_install" | "denied" | "unavailable" | "error";
+type PanelState = "checking" | "on" | "off" | "unsupported" | "needs_install" | "denied" | "unavailable" | "paused" | "error";
 
 // Compact per-device push switch shown at the top of the notification center (every staff member
 // manages only their own device). Permission is requested only from the "turn on" click.
@@ -37,8 +37,9 @@ function Panel() {
     publicKeyRef.current = server.publicKey;
     const device = await syncPushDevice(lang);
     if (!current()) return;
+    // Service switched off / not configured: never shown as "on", even if this device is registered.
+    if (!server.available || !server.publicKey) { setState(device === "on" ? "paused" : "unavailable"); return; }
     if (device === "on") { setState("on"); return; }
-    if (!server.available || !server.publicKey) { setState("unavailable"); return; }
     setState(currentPermission() === "denied" ? "denied" : "off");
   }, [lang]);
 
@@ -79,7 +80,7 @@ function Panel() {
     setFailed(false);
     try {
       const result = await disablePushOnThisDevice();
-      if (result === "off") setState(currentPermission() === "denied" ? "denied" : "off");
+      if (result === "off") setState(!publicKeyRef.current ? "unavailable" : currentPermission() === "denied" ? "denied" : "off");
       else setFailed(true);
     } finally {
       setBusy(false);
@@ -99,7 +100,7 @@ function Panel() {
             {busy ? t.working : t.turnOn}
           </button>
         ) : null}
-        {state === "on" ? (
+        {state === "on" || state === "paused" ? (
           <button type="button" style={styles.secondaryButton} disabled={busy} onClick={() => void turnOff()}>
             {busy ? t.working : t.turnOff}
           </button>

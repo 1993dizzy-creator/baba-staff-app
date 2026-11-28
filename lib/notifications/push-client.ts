@@ -148,6 +148,7 @@ export async function enablePushOnThisDevice(options: { publicKey: string; lang:
     }
     if (status !== 200 || json?.ok !== true || json.available !== true) return "error";
     writeOptIn(userKey);
+    writeSyncMark(null);
     return "on";
   } catch {
     return "error";
@@ -157,6 +158,7 @@ export async function enablePushOnThisDevice(options: { publicKey: string; lang:
 export async function disablePushOnThisDevice(): Promise<"off" | "error"> {
   const subscription = await existingSubscription();
   writeOptIn(null);
+  writeSyncMark(null);
   if (!subscription) return "off";
   let ok = true;
   try {
@@ -172,43 +174,82 @@ export async function disablePushOnThisDevice(): Promise<"off" | "error"> {
 
 export type DeviceState = "on" | "off";
 let syncing: Promise<DeviceState> | null = null;
-let syncedFor: string | null = null;
+let syncingKey: string | null = null;
 
-/** Reconciles this browser's subscription with the signed-in user (no prompt, no new worker). */
+// Cross-tab de-duplication: the result of the last successful sync for (user, language, endpoint)
+// is reused for SYNC_REUSE_MS, so tabs, page loads and baba_user refreshes do not repeat it.
+const SYNC_MARK_KEY = "baba_push_synced";
+const SYNC_REUSE_MS = 10 * 60 * 1000;
+type SyncMark = { key: string; state: DeviceState; at: number };
+
+function readSyncMark(key: string): DeviceState | null {
+  try {
+    const mark = JSON.parse(window.localStorage.getItem(SYNC_MARK_KEY) ?? "null") as SyncMark | null;
+    return mark && mark.key === key && Date.now() - mark.at < SYNC_REUSE_MS && (mark.state === "on" || mark.state === "off") ? mark.state : null;
+  } catch {
+    return null;
+  }
+}
+function writeSyncMark(key: string | null, state?: DeviceState) {
+  try {
+    if (key && state) window.localStorage.setItem(SYNC_MARK_KEY, JSON.stringify({ key, state, at: Date.now() } satisfies SyncMark));
+    else window.localStorage.removeItem(SYNC_MARK_KEY);
+  } catch {
+    // storage unavailable: sync simply runs again
+  }
+}
+
+/**
+ * Reconciles this browser's subscription with the signed-in user (no prompt, no new worker) and
+ * keeps the device language in step with the app language. No subscription = no request.
+ * force skips the reuse window (e.g. the user just changed something).
+ */
 export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<DeviceState> {
   const userKey = typeof window === "undefined" ? null : readCachedUserKey();
   if (!userKey) return Promise.resolve("off");
-  if (syncing && syncedFor === userKey && !force) return syncing;
-  syncedFor = userKey;
-  syncing = (async (): Promise<DeviceState> => {
+  const runKey = `${userKey}:${lang}`;
+  if (syncing && syncingKey === runKey) return syncing;
+  syncingKey = runKey;
+  const run = (async (): Promise<DeviceState> => {
     const subscription = await existingSubscription();
     if (!subscription) return "off";
+    const markKey = `${runKey}:${subscription.endpoint}`;
+    const reused = force ? null : readSyncMark(markKey);
+    if (reused) return reused;
     try {
-      const { status, json } = await postDevice({ action: "sync", endpoint: subscription.endpoint });
+      const { status, json } = await postDevice({ action: "sync", endpoint: subscription.endpoint, lang });
       if (readCachedUserKey() !== userKey) return "off";
       if (status !== 200 || json?.ok !== true || json.available !== true) return "off";
-      if (json.device === "registered") return "on";
+      if (json.device === "registered") { writeSyncMark(markKey, "on"); return "on"; }
+      // A newer session (e.g. the next account) holds this endpoint: change nothing.
+      if (json.device === "superseded") return "off";
       if (json.device === "foreign" || readOptIn() !== userKey || currentPermission() !== "granted") {
         // Previous account's (or an abandoned) subscription: drop it locally.
         await subscription.unsubscribe().catch(() => false);
         if (json.device === "foreign") writeOptIn(null);
+        writeSyncMark(null);
         return "off";
       }
       // Same user opted in on this device but the row is gone (renewed endpoint / expiry): re-register.
       const again = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang });
-      return again.status === 200 && again.json?.ok === true && again.json.available === true ? "on" : "off";
+      const state: DeviceState = again.status === 200 && again.json?.ok === true && again.json.available === true ? "on" : "off";
+      if (state === "on") writeSyncMark(markKey, "on");
+      return state;
     } catch {
       return "off";
     }
   })();
-  return syncing;
+  syncing = run;
+  void run.finally(() => { if (syncing === run) { syncing = null; syncingKey = null; } });
+  return run;
 }
 
 /** Logout: local unsubscribe + opt-in flag + badge (the server revoke runs in /api/logout). */
 export async function cleanupPushOnLogout() {
   writeOptIn(null);
+  writeSyncMark(null);
   syncing = null;
-  syncedFor = null;
+  syncingKey = null;
   setAppBadgeCount(null);
   try {
     const subscription = await withTimeout(existingSubscription(), 3000);

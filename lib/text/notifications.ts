@@ -29,7 +29,7 @@ export const notificationText = {
       title: "이 기기 푸시 알림",
       state: {
         checking: "확인 중", on: "켜짐", off: "꺼짐", unsupported: "지원 안 됨", needs_install: "홈 화면 앱 필요",
-        denied: "권한 거부됨", unavailable: "준비 중", error: "확인 필요",
+        denied: "권한 거부됨", unavailable: "준비 중", paused: "발송 중지", error: "확인 필요",
       },
       hint: {
         checking: "이 기기의 푸시 알림 상태를 확인하고 있습니다.",
@@ -39,6 +39,7 @@ export const notificationText = {
         needs_install: "iPhone·iPad는 Safari 공유 메뉴의 '홈 화면에 추가'로 설치한 BABA 앱에서만 켤 수 있습니다(iOS 16.4 이상).",
         denied: "알림 권한이 거부되어 있습니다. 기기 또는 브라우저 설정에서 BABA 알림을 허용한 뒤 다시 시도해주세요.",
         unavailable: "푸시 알림 설정이 아직 완료되지 않았습니다. 앱 안의 알림은 그대로 사용할 수 있습니다.",
+        paused: "이 기기는 등록되어 있지만 현재 푸시 발송이 꺼져 있어 알림이 오지 않습니다. 앱 안의 알림은 그대로 사용할 수 있습니다.",
         error: "처리하지 못했습니다. 잠시 후 다시 시도해주세요.",
       },
       turnOn: "켜기",
@@ -76,7 +77,7 @@ export const notificationText = {
       title: "Thông báo đẩy trên thiết bị này",
       state: {
         checking: "Đang kiểm tra", on: "Đang bật", off: "Đang tắt", unsupported: "Không hỗ trợ", needs_install: "Cần cài lên màn hình chính",
-        denied: "Bị từ chối quyền", unavailable: "Đang chuẩn bị", error: "Cần kiểm tra",
+        denied: "Bị từ chối quyền", unavailable: "Đang chuẩn bị", paused: "Tạm dừng gửi", error: "Cần kiểm tra",
       },
       hint: {
         checking: "Đang kiểm tra trạng thái thông báo đẩy của thiết bị này.",
@@ -86,6 +87,7 @@ export const notificationText = {
         needs_install: "Trên iPhone/iPad chỉ bật được trong ứng dụng BABA đã thêm bằng 'Thêm vào MH chính' trong menu chia sẻ Safari (iOS 16.4 trở lên).",
         denied: "Quyền thông báo đang bị từ chối. Hãy cho phép thông báo BABA trong cài đặt thiết bị/trình duyệt rồi thử lại.",
         unavailable: "Thông báo đẩy chưa được thiết lập xong. Vẫn dùng được thông báo trong ứng dụng.",
+        paused: "Thiết bị đã đăng ký nhưng việc gửi thông báo đẩy đang tắt nên sẽ không nhận được. Vẫn dùng được thông báo trong ứng dụng.",
         error: "Không xử lý được. Vui lòng thử lại sau.",
       },
       turnOn: "Bật",
