@@ -9,7 +9,9 @@ import { layoutText } from "@/lib/text/layout";
 import BottomNav from "@/components/BottomNav";
 import UserSessionRefresher from "@/components/UserSessionRefresher";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import PushDeviceSync from "@/components/notifications/PushDeviceSync";
 import { resetNotificationSummary } from "@/lib/notifications/client";
+import { cleanupPushOnLogout } from "@/lib/notifications/push-client";
 
 function ProtectedLayoutContent({
   children,
@@ -173,6 +175,9 @@ function ProtectedLayoutContent({
     } catch (error) {
       console.warn("Failed to clear server session", error);
     }
+    // 01-B: the server revoked this session's push devices; also drop the browser subscription
+    // and the icon badge (bounded wait, never blocks logout).
+    await cleanupPushOnLogout().catch(() => undefined);
     localStorage.removeItem("baba_user");
     resetNotificationSummary();
     alert(t.logoutDone);
@@ -199,6 +204,7 @@ function ProtectedLayoutContent({
       }}
     >
       <UserSessionRefresher />
+      <PushDeviceSync />
 
       <header
         style={{

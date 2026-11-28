@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
-import { baseSql, migration, testTypesSql, U, payload } from './helpers/notification-fixture.mjs';
+import { baseSql, migration, testTypesSql, U, payload, pushMigrationIncluded } from './helpers/notification-fixture.mjs';
 import { matchesRecipientRules } from '../lib/notifications/rules.ts';
 
 async function fixture({ testTypes = true } = {}) {
@@ -56,7 +56,7 @@ test('privileges: private schema closed to API roles; RPCs execute only as servi
     }
     const rls = await rows(db, `select relname, relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where nspname='notification_private' and relkind='r' order by relname`);
-    assert.ok(rls.length === 5 && rls.every(r => r.relrowsecurity), 'RLS enabled on every table');
+    assert.ok(rls.length === (pushMigrationIncluded ? 7 : 5) && rls.every(r => r.relrowsecurity), 'RLS enabled on every table');
     const realtime = await rows(db, "select count(*)::int n from pg_publication_tables where schemaname='notification_private'");
     assert.equal(realtime[0].n, 0, 'no realtime publication');
   } finally { await db.close(); }
@@ -340,7 +340,7 @@ test('policy administration: owner/master only, validation, optimistic revision,
       { enabled: true, inAppEnabled: true, rules: { groups: [], userIds: ['5'] } },
       { enabled: true, inAppEnabled: true, rules: { groups: [], userIds: [U.unknown] } },
       { enabled: true, inAppEnabled: true, rules: { groups: Array.from({ length: 21 }, () => ({})) } },
-      { enabled: true, inAppEnabled: true, rules: { groups: [] }, pushEnabled: true },
+      { enabled: true, inAppEnabled: true, rules: { groups: [] }, pushEnabled: 'yes' },
     ]) assert.equal((await call(db, 'notification_policy_update_v1', [U.owner, type, 1, j(bad)])).status, 'invalid_input', JSON.stringify(bad));
     const ok = await call(db, 'notification_policy_update_v1', [U.owner, type, 1, j({ enabled: true, inAppEnabled: true,
       rules: { groups: [{ parts: ['bar', 'bar'], roles: ['leader'] }, { roles: ['leader'], parts: ['bar'] }], userIds: [8, 8, 4] } })]);

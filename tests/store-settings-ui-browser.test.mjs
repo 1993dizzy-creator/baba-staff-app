@@ -368,7 +368,7 @@ test('store settings UI in a real browser: 4 tabs, KO/VI 320–1280 px, collapsi
       const pos = page.getByTestId('notification-type-inventory.pos_deduction_pending');
       assert.equal(await page.getByText('attendance.leave_request_pending', { exact: true }).count(), 0, 'type code hidden');
       assert.equal(await page.getByTestId('rule-group-0').count(), 0, 'details collapsed by default');
-      assert.equal(await page.getByText(copy.pushLater).count(), 0, 'Web Push note only inside details');
+      assert.equal(await page.getByText(copy.pushPending).count(), 0, 'Web Push note only inside details');
       // Icon / title / switch on one row, both cards aligned.
       const rows = await page.locator('[data-testid^="notification-type-"]').evaluateAll(cards => cards.map(card => {
         const icon = card.querySelector('[data-testid="notification-details-toggle"] > span').getBoundingClientRect();
@@ -386,7 +386,7 @@ test('store settings UI in a real browser: 4 tabs, KO/VI 320–1280 px, collapsi
       assert.equal(await pos.getByText(copy.offNote, { exact: true }).count(), 0);
 
       await pos.getByTestId('notification-details-toggle').click();
-      await pos.getByText(copy.pushLater).waitFor();
+      await pos.getByText(copy.pushPending).waitFor();
       await page.screenshot({ path: path.join(shots, 'notifications-ko-390-groups-summary.png'), fullPage: true });
       await pos.getByRole('button', { name: copy.removeGroup }).first().click();
       await pos.getByRole('button', { name: `+ ${copy.addGroup}` }).click();

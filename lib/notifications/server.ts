@@ -11,6 +11,7 @@ import {
   isSafeInternalHref,
   type NotificationSeverity,
 } from "./types.ts";
+import { schedulePushDispatch } from "./push/server.ts";
 
 // Per-user data: never cached by shared caches.
 const NO_STORE = { "Cache-Control": "private, no-store, max-age=0", Vary: "Cookie" };
@@ -110,7 +111,15 @@ export type NotificationWriteResult =
   | { status: "observed"; id: number }
   | { status: "disabled" | "unknown_type" | "invalid_input" | "not_installed" | "failed" };
 
-export async function upsertNotification(input: NotificationWriteInput): Promise<NotificationWriteResult> {
+/**
+ * push (01-B): "after" (default) sends the new event's Web Push deliveries with Next.js after(),
+ * once the business response is done; "none" leaves them to the recovery entry point. The
+ * deliveries themselves were already enqueued atomically by the DB with the event. A push problem
+ * never changes this result.
+ */
+export async function upsertNotification(
+  input: NotificationWriteInput, options: { push?: "after" | "none" } = {},
+): Promise<NotificationWriteResult> {
   if (!isNotificationTypeCode(input.typeCode) || !isNotificationDedupeKey(input.dedupeKey)
     || (input.severity !== undefined && !NOTIFICATION_SEVERITIES.includes(input.severity))
     || (input.href != null && !isSafeInternalHref(input.href))) return { status: "invalid_input" };
@@ -121,7 +130,11 @@ export async function upsertNotification(input: NotificationWriteInput): Promise
   const outcome = await callRpc("notification_upsert_v1", { p_type_code: input.typeCode, p_dedupe_key: input.dedupeKey, p_payload: payload });
   if (outcome.kind === "missing") return { status: "not_installed" };
   if (outcome.kind === "failed") return { status: "failed" };
-  return outcome.data as NotificationWriteResult;
+  const result = outcome.data as NotificationWriteResult;
+  if (result.status === "created" && options.push !== "none") {
+    try { schedulePushDispatch(result.id); } catch { /* push is best effort; recovery re-claims */ }
+  }
+  return result;
 }
 
 /**

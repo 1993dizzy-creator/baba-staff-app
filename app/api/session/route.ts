@@ -4,6 +4,7 @@ import {
   clearServerSessionCookie,
   refreshServerSessionCookie,
 } from "@/lib/auth/server-session";
+import { schedulePushSessionTouch } from "@/lib/notifications/push/server";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,12 @@ export async function GET() {
       },
       { headers: { "Cache-Control": "no-store" } }
     );
-    refreshServerSessionCookie(response, auth.session);
+    const refreshed = refreshServerSessionCookie(response, auth.session);
+    // 01-B: the refreshed expiry also extends this session's push devices (v1 legacy sessions
+    // never registered any).
+    if (refreshed && auth.session.v === 2) {
+      try { schedulePushSessionTouch(refreshed); } catch { /* best effort */ }
+    }
     return response;
   } catch (error) {
     console.error("[SESSION_GET_ERROR]", error);

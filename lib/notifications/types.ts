@@ -41,6 +41,8 @@ export type NotificationTypePolicy = {
   defaultSeverity: NotificationSeverity;
   enabled: boolean;
   inAppEnabled: boolean;
+  /** 01-B device push channel; absent while the push migration is not applied. */
+  pushEnabled?: boolean;
   rules: { groups: Array<{ roles: string[]; parts: string[] }>; userIds: number[] };
   revision: number;
   updatedAt: string;

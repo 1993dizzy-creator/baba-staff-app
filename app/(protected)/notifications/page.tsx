@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import Container from "@/components/Container";
+import PushDeviceSettings from "@/components/notifications/PushDeviceSettings";
 import { useLanguage } from "@/lib/language-context";
 import { notificationText } from "@/lib/text/notifications";
 import {
@@ -266,6 +267,8 @@ export default function NotificationsPage() {
           ) : null}
         </div>
       </div>
+
+      <PushDeviceSettings />
 
       <nav style={styles.filters} aria-label={t.title}>
         {NOTIFICATION_FILTERS.map((value) => (

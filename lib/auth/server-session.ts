@@ -77,11 +77,12 @@ export function refreshServerSessionCookie(
   response: NextResponse,
   payload: ServerSessionPayload,
   now = Math.floor(Date.now() / 1000)
-) {
+): SessionPayloadV2 | null {
   const refreshed = refreshServerSessionPayload(payload, now);
-  if (!refreshed) return false;
+  if (!refreshed) return null;
   setServerSessionPayloadCookie(response, refreshed, now);
-  return true;
+  // The refreshed payload (truthy) lets callers follow the new expiry (01-B push devices).
+  return refreshed;
 }
 
 export function clearServerSessionCookie(response: NextResponse) {

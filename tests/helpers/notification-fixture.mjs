@@ -2,7 +2,11 @@
 import { readFileSync } from 'node:fs';
 
 export const MIGRATION_FILE = 'supabase/migrations/20261126124217_notification_center_foundation.sql';
-export const migration = readFileSync(MIGRATION_FILE, 'utf8');
+export const PUSH_MIGRATION_FILE = 'supabase/migrations/20261128073109_notification_web_push_foundation.sql';
+export const pushMigration = readFileSync(PUSH_MIGRATION_FILE, 'utf8');
+// BABA_NOTIFICATION_WITH_PUSH=1 re-runs the 01-A suites on 01-A + 01-B (old contracts after the push migration).
+export const pushMigrationIncluded = process.env.BABA_NOTIFICATION_WITH_PUSH === '1';
+export const migration = readFileSync(MIGRATION_FILE, 'utf8') + (pushMigrationIncluded ? '\n' + pushMigration : '');
 
 export const U = {
   owner: 1, master: 2, masterNull: 3, managerHall: 4, leaderBar: 5, leaderKitchen: 6, leaderHall: 7,

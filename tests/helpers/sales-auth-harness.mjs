@@ -14,6 +14,6 @@ export function authHarness() {
  const touched=[];
  const db={from(table){touched.push(table);if(table!=='users')throw new Error('Unexpected database access: '+table);const q={select(){return q},eq(){return q},async maybeSingle(){return {data:actor,error:null}}};return q;}};
  const auth=loadTs('lib/auth/server-auth.ts',{'server-only':{},'@/lib/auth/server-session':{readServerSession:async()=>tokens.verifyServerSessionToken(token)},'@/lib/supabase/server':{supabaseServer:db}});
- return {auth,tokens,touched,setToken(v){token=v},setActor(v){actor={...actor,...v}},sign(id=3){token=tokens.createServerSessionToken(id);return token;}};
+ return {auth,tokens,touched,token(){return token},setToken(v){token=v},setActor(v){actor={...actor,...v}},sign(id=3){token=tokens.createServerSessionToken(id);return token;}};
 }
 export const nextMock={NextResponse:{json:(body,init)=>Response.json(body,init)}};

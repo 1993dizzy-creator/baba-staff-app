@@ -161,7 +161,7 @@ test('settings: owner/master only; validation; revision conflict; staff never re
     assert.ok(got.body.staff.every(s => ![U.staffKitchenInactive, U.staffHallNoLogin].includes(s.id)));
     const body = { typeCode: 'inventory.pos_deduction_pending', expectedRevision: 1, enabled: true, inAppEnabled: true,
       rules: { groups: [{ roles: ['leader'], parts: ['bar'] }, { roles: ['manager'] }], userIds: [U.owner] } };
-    for (const bad of [{ ...body, pushEnabled: true }, { ...body, rules: { groups: [{ parts: ['garden'] }] } }, { ...body, expectedRevision: 0 },
+    for (const bad of [{ ...body, pushEnabled: 'yes' }, { ...body, rules: { groups: [{ parts: ['garden'] }] } }, { ...body, expectedRevision: 0 },
       { ...body, rules: { groups: [{ positions: ['owner'] }] } },
       { ...body, typeCode: 'Bad Code' }, { ...body, rules: { groups: [], userIds: ['1'] } }, { ...body, enabled: 'true' }]) {
       assert.equal((await a.send('settings', 'PUT', { body: bad })).status, 400, JSON.stringify(bad));

@@ -22,7 +22,9 @@ type Group = { roles: string[]; parts: string[] };
 type GroupKey = keyof Group;
 // baseRevision = the saved revision this draft was started from; it is sent as expectedRevision so a
 // draft kept across a reload can never silently overwrite another admin's newer save.
-type Draft = { enabled: boolean; inAppEnabled: boolean; groups: Group[]; userIds: number[]; baseRevision: number };
+// pushEnabled is undefined while the 01-B push DB is not applied (the channel is then shown as
+// pending and never sent, so the 01-A save contract is unchanged).
+type Draft = { enabled: boolean; inAppEnabled: boolean; pushEnabled?: boolean; groups: Group[]; userIds: number[]; baseRevision: number };
 type LoadState = "loading" | "ready" | "error" | "unavailable" | "forbidden";
 
 // One icon per notification type; a new type without its own entry falls back to its domain, then to a bell,
@@ -37,6 +39,7 @@ const typeIcon = (code: string) => TYPE_ICONS[code] ?? DOMAIN_ICONS[code.split("
 const toDraft = (type: NotificationTypePolicy): Draft => ({
   enabled: type.enabled,
   inAppEnabled: type.inAppEnabled,
+  ...(typeof type.pushEnabled === "boolean" ? { pushEnabled: type.pushEnabled } : {}),
   groups: (type.rules.groups ?? []).map((group) => ({
     roles: [...(group.roles ?? [])], parts: [...(group.parts ?? [])],
   })),
@@ -44,7 +47,8 @@ const toDraft = (type: NotificationTypePolicy): Draft => ({
   baseRevision: type.revision,
 });
 const sameSettings = (a: Draft | undefined, b: Draft | undefined) =>
-  !!a && !!b && JSON.stringify([a.enabled, a.inAppEnabled, a.groups, a.userIds]) === JSON.stringify([b.enabled, b.inAppEnabled, b.groups, b.userIds]);
+  !!a && !!b && JSON.stringify([a.enabled, a.inAppEnabled, a.pushEnabled ?? null, a.groups, a.userIds])
+    === JSON.stringify([b.enabled, b.inAppEnabled, b.pushEnabled ?? null, b.groups, b.userIds]);
 const toggle = (list: string[], value: string) => (list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
 const partLabel = (part: string | null) => (part ? getPartMeta(part).label : "-");
 const toggleKey = (set: Set<string>, key: string) => {
@@ -125,6 +129,7 @@ export default function NotificationSettingsTab({ lang }: { lang: Lang }) {
         cache: "no-store",
         body: JSON.stringify({
           typeCode: type.code, expectedRevision: draft.baseRevision, enabled: draft.enabled, inAppEnabled: draft.inAppEnabled,
+          ...(typeof draft.pushEnabled === "boolean" ? { pushEnabled: draft.pushEnabled } : {}),
           rules: { groups: draft.groups, userIds: draft.userIds },
         }),
       });
@@ -269,8 +274,21 @@ export default function NotificationSettingsTab({ lang }: { lang: Lang }) {
                       />
                       {t.inApp}
                     </label>
-                    <span style={styles.mutedNote}>{t.pushLater}</span>
+                    {typeof draft.pushEnabled === "boolean" ? (
+                      <label style={styles.checkRow}>
+                        <input
+                          type="checkbox"
+                          style={styles.checkbox}
+                          checked={draft.pushEnabled}
+                          onChange={(event) => update(type.code, (d) => ({ ...d, pushEnabled: event.target.checked }))}
+                        />
+                        {t.push}
+                      </label>
+                    ) : (
+                      <span style={styles.mutedNote}>{t.pushPending}</span>
+                    )}
                   </div>
+                  {typeof draft.pushEnabled === "boolean" ? <p style={styles.mutedNote}>{t.pushNote}</p> : null}
                 </Section>
 
                 <Section
