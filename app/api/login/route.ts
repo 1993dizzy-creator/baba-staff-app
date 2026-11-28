@@ -4,6 +4,7 @@ import {
   isServerSessionConfigured,
   setServerSessionCookie,
 } from "@/lib/auth/server-session";
+import { nextPushDevice, pushDeviceCookie, readPushDevice } from "@/lib/notifications/push/device";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -83,7 +84,11 @@ export async function POST(req: Request) {
       user: data,
     });
     if (isServerSessionConfigured()) {
-      setServerSessionCookie(response, data.id);
+      const session = setServerSessionCookie(response, data.id);
+      // 01-B: every login moves this browser to its next push generation (cookie only, no DB write),
+      // so push requests issued by the previous account are refused afterwards.
+      const pushDevice = pushDeviceCookie(nextPushDevice(readPushDevice(req), { uid: Number(session.uid), iat: session.iat }));
+      if (pushDevice) response.cookies.set(pushDevice);
     } else if (process.env.NODE_ENV === "production") {
       throw new Error("BABA_SESSION_SECRET is not configured.");
     } else {

@@ -1,8 +1,8 @@
 # BABA-NOTIFICATION-01B — Common background Web Push foundation
 
 Status: code + formal migration `supabase/migrations/20261128073109_notification_web_push_foundation.sql` on main
-(01B-FINAL revised the same, still unapplied migration version in place: sender bounds, logout/registration races,
-recovery gate, queue plans, sync writes).
+(01B-FINAL and 01B-FINAL-2 revised the same, still unapplied migration version in place: sender bounds, recovery
+gate, queue plans, sync writes; FINAL-2: account-switch ordering by a signed per-browser generation).
 **Production DB not applied** (GPT review + Owner approval → GPT applies, repairs history, runs postflight).
 01-A (`20261126124217`) is applied in Production; this migration builds on it and does not modify it.
 No business writer calls `upsertNotification` yet (POS / leave linkage are later tasks), so nothing is sent
@@ -33,8 +33,11 @@ register any VAPID key or Vercel variable. Missing/invalid VAPID → push report
    DB transaction or lock is open while a push service is contacted. Right before each send the sender re-checks the
    claim age (> 20 s → released unsent, `claim_too_old`) and the remaining TTL (< 5 s → `expired`, not sent). Each
    send is bounded (10 s socket timeout, 12 s hard bound → `send_timeout` retry) and so is its report (5 s), far
-   below the lease, so a live claim is never re-claimed. A round is reported before the next is claimed; one dispatch
-   is bounded (20 s, 10 rounds) and leaves the rest to recovery. Sent with `web-push@3.6.7` (VAPID, aes128gcm,
+   below the lease, so a live claim is never re-claimed. Claim age and remaining TTL are measured from the moment the
+   claim **request** was sent (conservative: the claim round trip counts). A round is reported before the next is
+   claimed. One dispatch has a **hard total bound of 30 s** (`dispatchBudgetMs`): a new round starts only if even its
+   worst case (claim 5 s + send 12 s + report 5 s = 22 s) still ends inside it; at most 10 rounds; the rest waits for
+   recovery. Sent with `web-push@3.6.7` (VAPID, aes128gcm,
    TTL = remaining TTL, `Topic: n<id>`, `Urgency: high` for urgent else normal).
 4. Limited recovery: the same claim with no event filter, one round of 5, scheduled with `after()` from the bell's
    `GET /api/notifications/summary` (instance throttle 60 s; nothing at all while push is off or not configured).
@@ -73,36 +76,63 @@ Messages already accepted by a push service cannot be recalled.
 
 ## Devices, sessions and accounts
 
-- A device row = (push endpoint, keys) bound to the user **and the `iat` of the signed server session** that
-  registered it; `expires_at` = that session's idle expiry. A normal `/api/session` refresh extends it
-  (`notification_push_session_touch_v1`, after the response). The login/session policy itself is unchanged.
-- Push device cookie (01B-FINAL): `baba_push_device`, httpOnly, random 32 bytes, set by the push routes only; the DB
-  stores only its SHA-256 (`device_hash`). It separates two devices of one staff member whose sessions were issued in
-  the same second (session `iat` is in seconds). Not a credential: every route still requires the signed session.
-  The login/session policy itself is unchanged.
-- One active owner per endpoint (partial unique index + per-endpoint advisory lock). A request from a strictly
-  **older** session never takes over or revokes an endpoint held by a newer session (`superseded`, no write) — this
-  stops late answers after an account switch. Within the same second the requester (the browser's current account)
-  takes over: a late request can at worst stop pushes, never misdeliver. Max 10 active devices per staff member.
-- Logout: `/api/logout` writes a push session revocation (`push_session_revocations`: user, session iat, device hash —
-  or `*` = whole session when the cookie is unknown) and revokes the matching rows, under a per-session advisory lock
-  shared with registration/sync. A registration of that session/device arriving later is refused
-  (`PUSH_SESSION_REVOKED`); tested with 40 real-PostgreSQL logout/registration races. Awaited, 2 s timeout, never
-  fails logout. The client then unsubscribes the browser and clears the badge — the server no longer depends on it.
+- A device row = (push endpoint, keys) bound to the user, the `iat` of the signed server session that registered it,
+  and the browser's push identity + generation; `expires_at` = that session's idle expiry. A normal `/api/session`
+  refresh extends it (`notification_push_session_touch_v1`, after the response). The login/session policy and
+  lifetimes are unchanged.
+- **Push device cookie (FINAL-2)**: `baba_push_device`, httpOnly, **signed by the server** (HMAC-SHA256 with the
+  existing session secret, separate tag). It carries the browser's device id `d` (the DB keeps only SHA-256), the
+  server time the id was created, a **generation `g`**, a nonce, and the session it belongs to (user id, iat).
+  - Login: `g + 1` computed from the cookie the browser sends (cookie only, **no DB write**), bound to the new session.
+  - Logout: `g + 1` with no user.
+  - `/api/session`: issues one only when it is missing or belongs to another session (logins made before this
+    cookie existed). Cookie only, no DB write; nothing when it already matches.
+  - Push routes act only when the cookie verifies **and** matches the authenticated session; otherwise
+    `409 PUSH_DEVICE_INIT` (the client calls `/api/session` once and retries). No push action ever runs without an
+    identity and generation.
+- **Request ordering per browser** (`push_devices`, one row per browser identity): every device RPC passes
+  (identity, generation, nonce, issue time). A request with a **lower** generation than the browser's floor — or the
+  same generation with another nonce/session — is refused as `superseded` **without any write**. The floor is written
+  only when a request carries a new generation (once per login/logout per browser that uses push). This replaces
+  any iat comparison: within one browser, every login is strictly later than the previous one even in the same
+  second, so a request issued before an account switch, a re-login or a logout can never register, restore, renew,
+  unsubscribe or revoke anything afterwards. There is no "last request wins".
+- One active owner per endpoint (partial unique index + per-endpoint advisory lock; lock order endpoint → device →
+  session). Ownership history (revoked rows included) is kept: if an endpoint was last held by a **different
+  browser identity** (cookie reset), the identity created later (signed issue time) wins and the older identity is
+  **retired** — all its later requests are refused; an older identity is refused outright.
+- Consent is not inherited: a user registration carries `expectUserId` (the account that clicked, captured at the
+  click). If the session in the browser became another account while the permission prompt / worker registration was
+  pending, the server answers `409 PUSH_USER_CHANGED` and registers nothing. The worker's renewal (old endpoint) may
+  omit it: the DB only renews an active row of the same account **and** browser.
+- Client: the current account is re-checked before every POST; a late or refused answer never unsubscribes the
+  browser (it may already serve the next account). Destructive local steps of a passive sync require that the
+  account and a cross-tab operation stamp (changed by every enable/disable in any tab) are unchanged.
+- Logout: `/api/logout` raises the browser's floor to the logout generation, records the revocation
+  (`push_session_revocations`: user, session iat, device — or `*` = whole session when the request has no push cookie)
+  and stops every active row of that browser, under the device + session locks shared with registration/sync. A
+  registration issued before the logout is refused when it arrives (`PUSH_SUPERSEDED` / `PUSH_SESSION_REVOKED`).
+  Awaited, 2 s timeout, never fails logout. The client then unsubscribes the browser and clears the badge — the server
+  no longer depends on it.
+- Send gate addition: a row whose browser moved on to another account (higher generation, other user, or logged out)
+  or whose identity was retired is skipped (`device_moved`) and revoked — even if no sync revoked it yet.
+- Same user, same second, two different browsers: independent identities; logout of one keeps the other.
 - Replacement safety: revoking the current/renewed row and inserting the new one happen in one block; an invalid new
   subscription leaves the existing registration untouched.
 - Every app start / user switch / app language change: `PushDeviceSync` reports the browser's existing subscription
-  (`sync`, with the language). Another account's row is revoked and the browser unsubscribes, so the next user never
-  inherits it. `sync` writes only when session / expiry / device / language actually changed; the client reuses a
-  sync result for 10 minutes across tabs and reloads (localStorage marker) and ignores routine `baba_user_updated`
-  refreshes for the same user. No subscription in the browser = no request. No new polling.
+  (`sync`, with the language). Another account's row on this browser is revoked and the browser unsubscribes, so the
+  next user never inherits it. `sync` writes only when session / expiry / generation / language actually changed; the
+  client reuses a sync result for 10 minutes across tabs and reloads and ignores routine `baba_user_updated` refreshes
+  for the same user. No subscription in the browser = no request. No new polling.
 - Panel: a registered device while the service is switched off / not configured shows **발송 중지 / Tạm dừng gửi**
   (never "on"); it can still be turned off.
 - Deactivation, login off, role/part/policy change: checked at every claim and click.
-- Limits: an **offline logout** cannot reach the server; that row keeps its session expiry until the next sync on
-  that browser, a `404/410`, or expiry. Stateless session tokens are not revoked by logout (unchanged 01-A/auth
-  behavior). Safari may not fire `pushsubscriptionchange`; the next app start re-registers when the same user had
-  opted in on that device.
+- Limits (unchanged): an **offline logout** cannot reach the server — that browser's rows stay until its next push
+  request (any request with the next generation moves the floor and the send gate then skips them), a `404/410`, or
+  session expiry. A browser switched to another account that never opens a protected page keeps the previous rows
+  until then (the first page load syncs). Stateless session tokens are not revoked by logout (unchanged auth
+  behavior). Messages already accepted by a push service cannot be recalled. Safari may not fire
+  `pushsubscriptionchange`; the next app start re-registers when the same user had opted in on that device.
 
 ## Security
 
@@ -126,13 +156,17 @@ Messages already accepted by a push service cannot be recalled.
 ## DB objects (migration `20261128073109`)
 
 - `notification_private.policies.push_enabled boolean not null default false`.
-- `notification_private.push_subscriptions` (RLS on, no policies, no grants; `device_hash`).
+- `notification_private.push_subscriptions` (RLS on, no policies, no grants; `device_hash`, `device_generation`;
+  history index `(endpoint, id desc)`).
+- `notification_private.push_devices` (per-browser identity: issue time, generation floor, nonce, current session,
+  retired state).
 - `notification_private.push_session_revocations` (logout markers; PK user, session iat, device hash).
 - `notification_private.push_deliveries` (RLS on, unique `(notification_id, subscription_id)`, status
   `pending|sending|accepted|failed|skipped|expired`, attempts 0–3, TTL, claim token). Queue indexes are partial
   (`pending` by `next_attempt_at, id`; `sending` by `claimed_at, id`), so finished history never enters a claim scan.
 - `notification_private.push_runtime` (single row: global recovery gate).
-- Private helpers: `can_push`, `revoke_subscription`, `lock_endpoint`, `lock_session`, `session_revoked`,
+- Private helpers: `can_push`, `revoke_subscription`, `lock_endpoint`, `lock_device`, `check_device`,
+  `claim_endpoint_identity`, `lock_session`, `session_revoked`,
   `enqueue_push_deliveries` (trigger), `valid_session_expiry`. All definer functions pin
   `search_path = pg_catalog, public`.
 - Claim RPC limits: batch ≤ 20 (sender uses 5), lease 60–600 s (sender uses 90); unread count for the badge is
@@ -144,10 +178,13 @@ Messages already accepted by a push service cannot be recalled.
   (local cluster; not Production).
 - Replaced (same signature/contract + `pushEnabled`): `notification_policy_list_v1`, `notification_policy_update_v1`
   (omitted `pushEnabled` keeps the stored value; audit before/after include it).
-- New RPCs, `service_role` only: `notification_push_subscribe_v1(…, p_device_hash)`, `_unsubscribe_v1`,
-  `_sync_v1(…, p_lang, p_device_hash)`, `_status_v1`, `_session_revoke_v1(user, iat, p_device_hash)`,
+- New RPCs, `service_role` only. Device RPCs end with `(p_device_hash, p_device_generation, p_device_nonce,
+  p_device_issued_ms)`: `notification_push_subscribe_v1(actor, iat, exp, endpoint, p256dh, auth, lang, old, …)`,
+  `_unsubscribe_v1(actor, iat, endpoint, …)`, `_sync_v1(actor, iat, exp, endpoint, lang, …)`,
+  `_session_revoke_v1(user, iat, …)` (logout generation, or all null = whole session). Also `_status_v1`,
   `_session_touch_v1`, `_open_v1`, `_claim_v1`, `_report_v1` (outcomes `accepted|retry|gone|failed|expired`).
-  Device RPC statuses add `session_revoked` and `superseded` (HTTP 409 `PUSH_SESSION_REVOKED` / `PUSH_SUPERSEDED`).
+  Device RPC statuses add `session_revoked` and `superseded` (HTTP 409 `PUSH_SESSION_REVOKED` / `PUSH_SUPERSEDED`);
+  routes add `409 PUSH_DEVICE_INIT` and `409 PUSH_USER_CHANGED`.
 - No retention job: delivery history is kept (no bulk delete without approval).
 
 ## Compatibility
@@ -161,7 +198,8 @@ Messages already accepted by a push service cannot be recalled.
 ## Tests
 
 `tests/notifications-push-db.test.mjs` (PGlite), `tests/notifications-push-concurrency.test.mjs` (real PostgreSQL:
-ownership races, logout vs registration, slow live claim vs other instances, multi-instance recovery, idle no-write),
+same-second account switches on one browser, revoke-then-late-restore, same-user re-login vs old unsubscribe,
+logout vs registration, slow live claim vs other instances, multi-instance recovery, idle no-write),
 `tests/notifications-push-plan.test.mjs` (real PostgreSQL, EXPLAIN ANALYZE BUFFERS + auto_explain at 10k/100k rows),
 `tests/notifications-push-api.test.mjs` (routes + sender with a mocked push service; real web-push request building and
 aes128gcm decryption with the test device key; service worker in a VM), `tests/notifications-push-browser.test.mjs`

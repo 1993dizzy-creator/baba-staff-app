@@ -1,17 +1,27 @@
 // BABA-NOTIFICATION-01B on real PostgreSQL with independent connections (throwaway local cluster).
-// Covers: endpoint ownership races (newer session wins), logout racing a registration, single
-// enqueue, disjoint parallel claims, a slow live claim never re-claimed within its lease, and
-// several server instances running recovery at once (one scan, an idle queue writes nothing).
+// Covers: same-browser account switches racing in the SAME session second (the browser generation
+// orders them, not the clock), a revoked row never restored by an older request, same-user re-login
+// vs the old session's unsubscribe, logout racing a registration, single enqueue, disjoint parallel
+// claims, a slow live claim never re-claimed within its lease, and several server instances running
+// recovery at once (one scan, an idle queue writes nothing).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { U, payload } from './helpers/notification-fixture.mjs';
 import { startPushCluster, rpc } from './helpers/push-native-pg.mjs';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const KEY = 'B' + 'A'.repeat(86), AUTH = 'C'.repeat(22), DEV = 'D'.repeat(43), DEV2 = 'E'.repeat(43);
+const KEY = 'B' + 'A'.repeat(86), AUTH = 'C'.repeat(22);
 const ep = n => `https://fcm.googleapis.com/fcm/send/race-${n}`;
 const exp = () => new Date(Date.now() + 20 * 86400000).toISOString();
-const subscribe = (c, user, iat, endpoint, device = DEV) => rpc(c, 'notification_push_subscribe_v1', [user, iat, exp(), endpoint, KEY, AUTH, 'ko', null, device]);
+// A browser = signed push device cookie identity; g grows with every login/logout in it.
+const browser = (tag, issued = 1000) => ({ hash: (String(tag) + '_'.repeat(43)).slice(0, 43), issued });
+const dev = (b, g) => [b.hash, g, (b.hash.slice(0, 12) + 'n' + g + '_'.repeat(22)).slice(0, 22), b.issued];
+const SECOND = 1790000000; // every session below is issued in this same second
+const subscribe = (c, user, endpoint, b, g, iat = SECOND) =>
+  rpc(c, 'notification_push_subscribe_v1', [user, iat, exp(), endpoint, KEY, AUTH, 'ko', null, ...dev(b, g)]);
+const sync = (c, user, endpoint, b, g, iat = SECOND) => rpc(c, 'notification_push_sync_v1', [user, iat, exp(), endpoint, 'ko', ...dev(b, g)]);
+const unsubscribe = (c, user, endpoint, b, g, iat = SECOND) => rpc(c, 'notification_push_unsubscribe_v1', [user, iat, endpoint, ...dev(b, g)]);
+const logout = (c, user, b, g, iat = SECOND) => rpc(c, 'notification_push_session_revoke_v1', [user, iat, ...(b ? dev(b, g) : [null, null, null, null])]);
 
 test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
   const cluster = await startPushCluster('pg-conc');
@@ -21,48 +31,71 @@ test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
     t.diagnostic((await admin.query('select version() v')).rows[0].v);
     const pool = []; for (let i = 0; i < 6; i++) pool.push(await cluster.connect());
     const ungate = () => admin.query("update notification_private.push_runtime set recovery_started_at = '-infinity'");
-    const active = async endpoint => (await admin.query("select user_id::int u, session_iat::bigint iat from notification_private.push_subscriptions where endpoint=$1 and status='active'", [endpoint])).rows;
+    const active = async endpoint => (await admin.query("select user_id::int u, device_generation::int g from notification_private.push_subscriptions where endpoint=$1 and status='active'", [endpoint])).rows;
+    const users = [U.owner, U.master, U.managerHall, U.leaderBar, U.staffBar, U.staffHall];
 
-    await t.test('30 racing registrations of one endpoint: exactly one active owner, always the newest session', async () => {
-      const users = [U.owner, U.master, U.managerHall, U.leaderBar, U.staffBar, U.staffHall];
-      const results = await Promise.all(Array.from({ length: 30 }, (_, i) => subscribe(pool[i % pool.length], users[i % users.length], 1790000000 + i, ep('shared'))));
+    await t.test('30 logins of one browser in the same second race their registrations: the latest generation always owns it', async () => {
+      const shared = browser('shared');
+      const results = await Promise.all(Array.from({ length: 30 }, (_, i) => subscribe(pool[i % 6], users[i % 6], ep('shared'), shared, i + 1)));
       assert.ok(results.every(r => ['ok', 'superseded'].includes(r.status)), JSON.stringify(results));
       const rows = await active(ep('shared'));
-      assert.equal(rows.length, 1); assert.equal(Number(rows[0].iat), 1790000029);
+      assert.equal(rows.length, 1); assert.deepEqual([rows[0].g, rows[0].u], [30, users[29 % 6]]);
     });
 
-    await t.test('account switch A -> B racing on 40 endpoints: B (newer session) always ends as the owner', async () => {
+    await t.test('(1) same-second A -> B on 40 browsers, A and B in parallel, then A late: B always owns it', async () => {
       for (let i = 0; i < 40; i++) {
-        const [a, b] = await Promise.all([subscribe(pool[i % 6], U.staffBar, 1790001000 + i, ep(`ab-${i}`)), subscribe(pool[(i + 1) % 6], U.staffHall, 1790001001 + i, ep(`ab-${i}`))]);
-        assert.equal(b.status, 'ok'); assert.ok(['ok', 'superseded'].includes(a.status));
-        const late = await rpc(pool[(i + 2) % 6], 'notification_push_sync_v1', [U.staffBar, 1790001000 + i, exp(), ep(`ab-${i}`), 'ko', DEV]);
-        assert.equal(late.device, 'superseded', 'late sync of A never revokes B');
+        const b = browser(`ab-${i}`);
+        const [ra, rb] = await Promise.all([subscribe(pool[i % 6], U.staffBar, ep(`ab-${i}`), b, 1), subscribe(pool[(i + 1) % 6], U.staffHall, ep(`ab-${i}`), b, 2)]);
+        assert.equal(rb.status, 'ok'); assert.ok(['ok', 'superseded'].includes(ra.status));
+        const [late, lateSync] = await Promise.all([subscribe(pool[(i + 2) % 6], U.staffBar, ep(`ab-${i}`), b, 1), sync(pool[(i + 3) % 6], U.staffBar, ep(`ab-${i}`), b, 1)]);
+        assert.deepEqual([late.status, lateSync.device], ['superseded', 'superseded']);
         assert.deepEqual((await active(ep(`ab-${i}`))).map(r => r.u), [U.staffHall]);
       }
     });
 
-    await t.test('logout racing a registration of the same session (40 trials): never an active row afterwards', async () => {
+    await t.test('(2)(3) B revokes A by sync while A\'s old subscribe races it (40 trials): A is never active afterwards', async () => {
       for (let i = 0; i < 40; i++) {
-        const iat = 1790002000 + i;
+        const b = browser(`rv-${i}`);
+        await subscribe(admin, U.leaderBar, ep(`rv-${i}`), b, 1);
+        const [s, late] = await Promise.all([sync(pool[i % 6], U.leaderHall, ep(`rv-${i}`), b, 2), subscribe(pool[(i + 1) % 6], U.leaderBar, ep(`rv-${i}`), b, 1)]);
+        assert.ok(['foreign'].includes(s.device), s.device);
+        assert.ok(['ok', 'superseded'].includes(late.status));
+        assert.deepEqual((await active(ep(`rv-${i}`))).filter(r => r.u === U.leaderBar), [], `trial ${i}`);
+        assert.equal((await subscribe(admin, U.leaderBar, ep(`rv-${i}`), b, 1)).status, 'superseded', 'history kept: no restore');
+      }
+    });
+
+    await t.test('(4) same-user re-login registration vs the old session unsubscribe (40 trials): the new registration survives', async () => {
+      for (let i = 0; i < 40; i++) {
+        const b = browser(`rl-${i}`);
+        await subscribe(admin, U.managerHall, ep(`rl-${i}`), b, 1);
+        await Promise.all([subscribe(pool[i % 6], U.managerHall, ep(`rl-${i}`), b, 2, SECOND + 1), unsubscribe(pool[(i + 1) % 6], U.managerHall, ep(`rl-${i}`), b, 1)]);
+        assert.deepEqual((await active(ep(`rl-${i}`))).map(r => r.g), [2], `trial ${i}`);
+      }
+    });
+
+    await t.test('(5) logout racing a registration of the same browser (40 trials): never an active row afterwards', async () => {
+      for (let i = 0; i < 40; i++) {
+        const b = browser(`lo-${i}`); const withCookie = i % 2 === 1;
         const [sub, out] = await Promise.all([
-          subscribe(pool[i % 6], U.leaderBar, iat, ep(`lo-${i}`)),
-          rpc(pool[(i + 3) % 6], 'notification_push_session_revoke_v1', [U.leaderBar, iat, i % 2 ? DEV : null]),
+          subscribe(pool[i % 6], U.leaderBar, ep(`lo-${i}`), b, 1, SECOND + 10 + i),
+          logout(pool[(i + 3) % 6], U.leaderBar, withCookie ? b : null, 2, SECOND + 10 + i),
         ]);
         assert.equal(out.status, 'ok');
-        assert.ok(['ok', 'session_revoked'].includes(sub.status), sub.status);
+        assert.ok(['ok', 'superseded', 'session_revoked'].includes(sub.status), sub.status);
         assert.equal((await active(ep(`lo-${i}`))).length, 0, `trial ${i}: ${sub.status}`);
-        // A late retry of that registration is refused.
-        assert.equal((await subscribe(pool[(i + 1) % 6], U.leaderBar, iat, ep(`lo-${i}`))).status, 'session_revoked');
+        assert.ok(['superseded', 'session_revoked'].includes((await subscribe(pool[(i + 1) % 6], U.leaderBar, ep(`lo-${i}`), b, 1, SECOND + 10 + i)).status));
       }
-      // Another device of the same user and session second survives a per-device logout.
-      await subscribe(admin, U.master, 1790003000, ep('dev-a'), DEV);
-      await subscribe(admin, U.master, 1790003000, ep('dev-b'), DEV2);
-      await rpc(admin, 'notification_push_session_revoke_v1', [U.master, 1790003000, DEV]);
+      // Same user, same second, another browser survives a per-browser logout.
+      const a = browser('dev-a'), c = browser('dev-b');
+      await subscribe(admin, U.master, ep('dev-a'), a, 1); await subscribe(admin, U.master, ep('dev-b'), c, 1);
+      await logout(admin, U.master, a, 2);
       assert.deepEqual([(await active(ep('dev-a'))).length, (await active(ep('dev-b'))).length], [0, 1]);
     });
 
     await t.test('60 parallel first observations enqueue each device exactly once', async () => {
-      for (let i = 0; i < 8; i++) await subscribe(admin, U.staffBar, 1790004000, ep(`bar-${i}`));
+      const bar = browser('bar');
+      for (let i = 0; i < 8; i++) await subscribe(admin, U.staffBar, ep(`bar-${i}`), bar, 1, SECOND + 100);
       const results = await Promise.all(Array.from({ length: 60 }, (_, i) => rpc(pool[i % 6], 'notification_upsert_v1',
         ['system.test_all', 'race:push', JSON.stringify(payload())])));
       const created = results.filter(r => r.status === 'created');
@@ -70,7 +103,6 @@ test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
       const n = (await admin.query('select count(*)::int n, count(distinct subscription_id)::int d from notification_private.push_deliveries where notification_id=$1', [created[0].id])).rows[0];
       assert.equal(n.n, n.d); assert.ok(n.n >= 9);
       t.diagnostic(`deliveries for the race event: ${n.n}`);
-      await admin.query('select set_config($1, $2, false)', ['baba.race_event', String(created[0].id)]);
     });
 
     await t.test('parallel senders: disjoint claims; a slow live claim (send + report delay) is never re-claimed within the lease', async () => {

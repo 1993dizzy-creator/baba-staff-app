@@ -46,11 +46,13 @@ function device() {
 function harness(db) {
   const h = authHarness();
   const calls = []; const afterQueue = []; const sent = []; const logs = [];
+  let claimDelayMs = 0;
   let mode = 'db'; let responder = () => ({ statusCode: 201, headers: {} });
   const supabaseServer = {
     rpc(name, args) {
       calls.push(name);
       const run = async () => {
+        if (name === 'notification_push_claim_v1' && claimDelayMs) await new Promise(r => setTimeout(r, claimDelayMs));
         if (mode === 'missing' && (name.startsWith('notification_push') || name === 'notification_upsert_v1'))
           return { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } };
         try { return { data: await execRpc(db, name, args), error: null }; }
@@ -76,6 +78,7 @@ function harness(db) {
   };
   // Browser cookie jar for the push device cookie (httpOnly, set by the push routes).
   const jar = { device: null, set: [] };
+  let currentUser = null;
   const NextResponse = { json: (body, init) => Object.assign(Response.json(body, init), { cookies: { set(c) {
     jar.set.push(c.name); if (c.name === 'baba_push_device') jar.device = c.value; } } }) };
   const nextServer = { NextResponse, after: fn => { afterQueue.push(fn); } };
@@ -86,7 +89,7 @@ function harness(db) {
   const deviceMod = loadTs('lib/notifications/push/device.ts');
   const push = loadTs('lib/notifications/push/server.ts', {
     'server-only': {}, 'next/server': nextServer, 'web-push': webpush, '@/lib/supabase/server': { supabaseServer },
-    './config.ts': config, './endpoint.ts': endpoint, './messages.ts': messages,
+    './config.ts': config, './endpoint.ts': endpoint, './messages.ts': messages, './device.ts': deviceMod,
   });
   const server = loadTs('lib/notifications/server.ts', {
     'server-only': {}, 'next/server': { NextResponse }, '@/lib/auth/server-auth': h.auth, '@/lib/supabase/server': { supabaseServer },
@@ -123,16 +126,21 @@ function harness(db) {
   const flushAfter = async () => { while (afterQueue.length) await afterQueue.shift()(); };
   return {
     h, calls, sent, server, push, send, afterQueue, flushAfter, cookies, logs, devices, jar,
-    setMode(v) { mode = v; }, respond(fn) { responder = fn; },
+    setMode(v) { mode = v; }, respond(fn) { responder = fn; }, claimDelay(ms) { claimDelayMs = ms; },
     // Every login is a new session with its own (past, valid) second, as in real use.
     login(id, role, extra = {}, now = Math.floor(Date.now() / 1000) - 3600 + (++loginSeq)) {
       h.setActor({ id, role, is_active: true, app_login_enabled: true, ...extra });
       h.setToken(h.tokens.createServerSessionToken(id, now));
+      // As the login route does: this browser moves to its next signed push generation.
+      const previous = jar.device ? deviceMod.readPushDevice(new Request('https://app.invalid/', { headers: { cookie: `baba_push_device=${jar.device}` } })) : null;
+      jar.device = deviceMod.pushDeviceCookie(deviceMod.nextPushDevice(previous, { uid: id, iat: now })).value;
+      currentUser = id;
     },
     logout() { h.setToken(undefined); },
-    async register(dev, lang = 'ko') {
+    async register(dev, lang = 'ko', { expectUserId = currentUser ?? 1, cookie } = {}) {
       devices.set(dev.json.endpoint, dev);
-      return send('push', 'POST', { body: { action: 'subscribe', subscription: dev.json, lang } });
+      return send('push', 'POST', { body: { action: 'subscribe', subscription: dev.json, lang, expectUserId },
+        ...(cookie !== undefined ? { headers: { cookie: cookie ? `baba_push_device=${cookie}` : '' } } : {}) });
     },
   };
 }
@@ -260,7 +268,9 @@ test('sender: event -> after() -> encrypted generic payload; TTL/Topic/Urgency; 
     await enablePushPolicy(db);
     const ko = device(), vi = device(), other = device();
     a.login(U.staffBar, 'staff'); assert.equal((await a.register(ko, 'ko')).status, 200); assert.equal((await a.register(vi, 'vi')).status, 200);
-    a.login(U.staffHall, 'staff'); assert.equal((await a.register(other)).status, 200);
+    const other2 = harness(db); other2.login(U.staffHall, 'staff');
+    assert.equal((await other2.register(other)).status, 200);
+    a.devices.set(other.json.endpoint, other); // this test's push service decrypts for every device
     a.respond(() => ({ statusCode: 201 }));
     const sensitive = { titleKo: '홍길동 급여 12,345,000₫', titleVi: 'Lương Nguyen 12.345.000₫', bodyKo: '영수증 #R-778 고객 김철수', bodyVi: 'Hoa don #R-778' };
     const logs = await captureLogs(async () => {
@@ -568,7 +578,7 @@ test('01B-FINAL slow sender vs another instance recovery: no preventable duplica
   } finally { await db.close(); }
 }));
 
-test('01B-FINAL device cookie + logout: in-flight registration refused, other device of the same second kept, sync language', () => withEnv(PUSH_ON, async () => {
+test('01B-FINAL-2 routes: signed device generation, in-flight requests after logout / account switch, consent, cookie init', () => withEnv(PUSH_ON, async () => {
   const db = await database();
   try {
     const a = harness(db);
@@ -577,32 +587,91 @@ test('01B-FINAL device cookie + logout: in-flight registration refused, other de
     a.login(U.owner, 'owner', {}, now);
     const d1 = device();
     assert.equal((await a.register(d1)).status, 200);
-    assert.match(a.jar.device ?? '', /^[A-Za-z0-9_-]{43}$/, 'push device cookie issued');
-    const [row] = await rows(db, "select device_hash from notification_private.push_subscriptions where status='active'");
-    assert.notEqual(row.device_hash, a.jar.device, 'only the hash is stored');
-    // Second device, same user, session issued in the same second, its own cookie.
+    const [row] = await rows(db, "select device_hash, device_generation::int g from notification_private.push_subscriptions where status='active'");
+    assert.ok(!a.jar.device.includes(row.device_hash), 'only a hash of the device id is stored');
+    assert.equal(row.g, 1);
+    // Cookie integrity: missing, tampered or another account's cookie never reaches the DB.
+    const calls = a.calls.length;
+    const [payloadPart, sig] = a.jar.device.split('.');
+    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payloadPart, 'base64url').toString()), u: U.master }), 'utf8').toString('base64url') + '.' + sig;
+    for (const cookie of [null, a.jar.device.slice(0, -2) + 'xx', forged]) {
+      const r = await a.register(device(), 'ko', { cookie });
+      assert.deepEqual([r.status, r.body.code], [409, 'PUSH_DEVICE_INIT']);
+    }
+    assert.equal(a.calls.length, calls, 'refused before any RPC');
+    // Consent: the click happened as another account than the session now in this browser.
+    const r6 = await a.register(device(), 'ko', { expectUserId: U.master });
+    assert.deepEqual([r6.status, r6.body.code], [409, 'PUSH_USER_CHANGED']);
+    assert.equal((await a.send('push', 'POST', { body: { action: 'subscribe', subscription: device().json } })).status, 400, 'consent field required');
+    // Same user, same second, another browser: its own identity, kept when browser 1 logs out.
     const b = harness(db);
     b.login(U.owner, 'owner', {}, now);
     const d2 = device();
     assert.equal((await b.register(d2)).status, 200);
-    // Language follows the app (sync).
     assert.equal((await b.send('push', 'POST', { body: { action: 'sync', endpoint: d2.json.endpoint, lang: 'vi' } })).body.device, 'registered');
     assert.equal((await rows(db, 'select lang from notification_private.push_subscriptions where endpoint=$1', [d2.json.endpoint]))[0].lang, 'vi');
-    assert.equal((await b.send('push', 'POST', { body: { action: 'sync', endpoint: d2.json.endpoint, lang: 'en' } })).status, 400);
-    // Logout on device 1 (with its cookie) while a registration of that session is still in flight.
+    // (5) A registration issued before the logout (old cookie + still-signed old session) arrives after it.
+    const inflight = a.jar.device;
     assert.equal((await a.send('logout', 'POST')).status, 200);
-    const late = await a.register(device());
-    assert.deepEqual([late.status, late.body.code], [409, 'PUSH_SESSION_REVOKED'], 'late registration refused');
-    const active = await rows(db, "select endpoint from notification_private.push_subscriptions where status='active'");
-    assert.deepEqual(active.map(r => r.endpoint), [d2.json.endpoint], 'device 2 kept');
-    // Account switch: the older session's late request after the newer one took the endpoint changes nothing.
-    const c = harness(db);
-    c.login(U.leaderBar, 'leader'); const shared = device();
-    await c.register(shared);
-    c.login(U.leaderHall, 'leader'); await c.register(shared);
-    c.login(U.leaderBar, 'leader', {}, now - 5000); // an older session than both registrations above
-    const stale = await c.register(shared);
-    assert.deepEqual([stale.status, stale.body.code], [409, 'PUSH_SUPERSEDED']);
-    assert.equal((await rows(db, "select user_id::int u from notification_private.push_subscriptions where endpoint=$1 and status='active'", [shared.json.endpoint]))[0].u, U.leaderHall);
+    const late = await a.register(device(), 'ko', { cookie: inflight });
+    assert.deepEqual([late.status, late.body.code], [409, 'PUSH_SUPERSEDED'], 'refused by the raised floor');
+    assert.deepEqual((await a.register(device())).body.code, 'PUSH_DEVICE_INIT', 'logged-out cookie belongs to no session');
+    assert.deepEqual((await rows(db, "select endpoint from notification_private.push_subscriptions where status='active'")).map(r => r.endpoint), [d2.json.endpoint]);
+
+    // (1)(6) Same-second account switch on ONE browser; A's request issued before the switch arrives late.
+    const c = harness(db); const second = Math.floor(Date.now() / 1000) - 50;
+    c.login(U.leaderBar, 'leader', {}, second);
+    const aToken = c.h.token(); const aCookie = c.jar.device; const shared = device();
+    assert.equal((await c.register(shared)).status, 200);
+    c.login(U.leaderHall, 'leader', {}, second); // B logs in during the same second
+    assert.equal((await c.register(shared)).status, 200);
+    c.h.setActor({ id: U.leaderBar, role: 'leader', is_active: true, app_login_enabled: true }); c.h.setToken(aToken);
+    const stale = await c.register(shared, 'ko', { cookie: aCookie, expectUserId: U.leaderBar });
+    assert.deepEqual([stale.status, stale.body.code], [409, 'PUSH_SUPERSEDED'], 'A does not take it back (no last-request-wins)');
+    const staleSync = await c.send('push', 'POST', { body: { action: 'sync', endpoint: shared.json.endpoint }, headers: { cookie: `baba_push_device=${aCookie}` } });
+    assert.equal(staleSync.body.device, 'superseded');
+    const staleOff = await c.send('push', 'POST', { body: { action: 'unsubscribe', endpoint: shared.json.endpoint }, headers: { cookie: `baba_push_device=${aCookie}` } });
+    assert.deepEqual([staleOff.status, staleOff.body.code], [409, 'PUSH_SUPERSEDED']);
+    assert.deepEqual((await rows(db, "select user_id::int u from notification_private.push_subscriptions where endpoint=$1 and status='active'", [shared.json.endpoint])).map(r => r.u), [U.leaderHall]);
+
+    // /api/session issues a cookie only when missing or not this session's (no DB call either way).
+    const s = harness(db);
+    s.login(U.staffBar, 'staff');
+    s.jar.device = null; s.jar.set.length = 0;
+    const before = s.calls.length;
+    assert.equal((await s.send('session', 'GET')).status, 200);
+    assert.ok(s.jar.set.includes('baba_push_device') && s.jar.device, 'issued for a session without one');
+    s.jar.set.length = 0;
+    assert.equal((await s.send('session', 'GET')).status, 200);
+    assert.ok(!s.jar.set.includes('baba_push_device'), 'matching cookie: nothing issued');
+    assert.equal(s.calls.length, before, 'session check: no push DB call');
+    assert.equal((await s.register(device())).status, 200, 'works after the session check');
+  } finally { await db.close(); }
+}));
+
+test('01B-FINAL-2 sender timing: claim age measured from the claim request; the dispatch budget is a hard total bound', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    const a = harness(db);
+    const L = a.push.PUSH_LIMITS;
+    assert.ok(L.roundWorstMs >= 5000 + L.sendDeadlineMs + 5000 && L.roundWorstMs <= L.dispatchBudgetMs);
+    await enablePushPolicy(db, 'system.test_all', { rules: { groups: [], userIds: [U.owner] } });
+    a.login(U.owner, 'owner');
+    for (let i = 0; i < 10; i++) await a.register(device());
+    // A slow claim RPC: the claim age already includes it (measured before the request).
+    const oldAge = L.maxClaimAgeMs; L.maxClaimAgeMs = 150; a.claimDelay(300);
+    try {
+      const e1 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:slow-claim', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+      await a.push.dispatchPushDeliveries({ notificationId: e1.id });
+      assert.equal(a.sent.length, 0, 'claim older than allowed once the slow claim answered: nothing sent');
+    } finally { L.maxClaimAgeMs = oldAge; a.claimDelay(0); }
+    // Budget: after round 1 the clock says 9 s; 9 + 22 > 30 -> no second round, the rest waits.
+    let clock = 0; a.respond(() => { clock = 9_000; return { statusCode: 201 }; });
+    const e2 = await a.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:budget', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    const s = await a.push.dispatchPushDeliveries({ notificationId: e2.id, now: () => clock });
+    assert.deepEqual([s.rounds, s.accepted], [1, 5]);
+    clock = 0; a.respond(() => ({ statusCode: 201 }));
+    const s2 = await a.push.dispatchPushDeliveries({ notificationId: e2.id, now: () => clock });
+    assert.equal(s2.accepted, 5, 'the rest is sent by the next dispatch');
   } finally { await db.close(); }
 }));

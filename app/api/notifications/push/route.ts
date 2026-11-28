@@ -5,7 +5,7 @@ import {
   isAllowedPushEndpoint, parsePushSubscription, PUSH_ENDPOINT_MAX_LENGTH, type PushSubscriptionInput,
 } from "@/lib/notifications/push/endpoint";
 import { isJsonRequest, isSameOriginRequest } from "@/lib/notifications/push/request";
-import { newPushDeviceToken, pushDeviceCookie, pushDeviceHash, readPushDeviceToken } from "@/lib/notifications/push/device";
+import { pushDeviceMatchesSession, readPushDevice } from "@/lib/notifications/push/device";
 import { pushRpc } from "@/lib/notifications/push/server";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +49,7 @@ export async function GET() {
 }
 
 type Action =
-  | { action: "subscribe"; subscription: PushSubscriptionInput; lang: "ko" | "vi" | null; oldEndpoint: string | null }
+  | { action: "subscribe"; subscription: PushSubscriptionInput; lang: "ko" | "vi" | null; oldEndpoint: string | null; expectUserId: number | null }
   | { action: "unsubscribe"; endpoint: string }
   | { action: "sync"; endpoint: string; lang: "ko" | "vi" | null };
 
@@ -58,13 +58,18 @@ function parseAction(body: unknown): Action | null {
   const record = body as Record<string, unknown>;
   const keys = Object.keys(record);
   if (record.action === "subscribe") {
-    if (keys.some((key) => !["action", "subscription", "lang", "oldEndpoint"].includes(key))) return null;
+    if (keys.some((key) => !["action", "subscription", "lang", "oldEndpoint", "expectUserId"].includes(key))) return null;
     const subscription = parsePushSubscription(record.subscription);
     const lang = record.lang === undefined || record.lang === null ? null : record.lang;
     if (!subscription || (lang !== null && lang !== "ko" && lang !== "vi")) return null;
     const oldEndpoint = record.oldEndpoint ?? null;
     if (oldEndpoint !== null && (!isAllowedPushEndpoint(oldEndpoint) || oldEndpoint === subscription.endpoint)) return null;
-    return { action: "subscribe", subscription, lang: lang as "ko" | "vi" | null, oldEndpoint: oldEndpoint as string | null };
+    // A user registration names the account that clicked; only the worker's renewal (oldEndpoint,
+    // bound to the same account + browser by the DB) may omit it.
+    const expectUserId = record.expectUserId ?? null;
+    if (expectUserId === null ? oldEndpoint === null : !(Number.isSafeInteger(expectUserId) && (expectUserId as number) > 0)) return null;
+    return { action: "subscribe", subscription, lang: lang as "ko" | "vi" | null, oldEndpoint: oldEndpoint as string | null,
+      expectUserId: expectUserId as number | null };
   }
   if (record.action === "unsubscribe" || record.action === "sync") {
     const allowed = record.action === "sync" ? ["action", "endpoint", "lang"] : ["action", "endpoint"];
@@ -104,36 +109,40 @@ export async function POST(request: Request) {
       const config = getPushConfig();
       if (!config.ok) return notificationJson({ ok: true, available: false, reason: config.reason });
     }
-    // Push device identity (httpOnly, push routes only): issued on the first registration/sync.
-    const existingToken = readPushDeviceToken(request);
-    const deviceToken = existingToken ?? newPushDeviceToken();
-    const deviceHash = pushDeviceHash(deviceToken);
+    // Signed push device cookie (issued by login / logout / session check, never here). It must belong
+    // to THIS session; otherwise the browser first refreshes it through /api/session (client retries
+    // once). No push action runs without a device identity and generation.
+    const device = readPushDevice(request);
+    if (!pushDeviceMatchesSession(device, auth.actor.id, session.iat)) {
+      return notificationJson({ ok: false, code: "PUSH_DEVICE_INIT" }, 409);
+    }
+    // Consent belongs to the account that clicked: the click-time account must be the session's.
+    if (input.action === "subscribe" && input.expectUserId !== null && input.expectUserId !== auth.actor.id) {
+      return notificationJson({ ok: false, code: "PUSH_USER_CHANGED" }, 409);
+    }
     const outcome = input.action === "subscribe"
-      ? await pushRpc.subscribe(auth.actor.id, sessionRef, input.subscription, input.lang, input.oldEndpoint, deviceHash)
+      ? await pushRpc.subscribe(auth.actor.id, sessionRef, input.subscription, input.lang, input.oldEndpoint, device)
       : input.action === "unsubscribe"
-        ? await pushRpc.unsubscribe(auth.actor.id, input.endpoint)
-        : await pushRpc.sync(auth.actor.id, sessionRef, input.endpoint, input.lang, deviceHash);
+        ? await pushRpc.unsubscribe(auth.actor.id, sessionRef, input.endpoint, device)
+        : await pushRpc.sync(auth.actor.id, sessionRef, input.endpoint, input.lang, device);
     if (outcome.kind === "missing") return notificationJson({ ok: true, available: false, reason: "db_pending" });
     if (outcome.kind === "failed") return notificationJson({ ok: false, code: "NOTIFICATIONS_UNAVAILABLE" }, 503);
     const status = outcome.data.status;
-    let result: ReturnType<typeof notificationJson>;
     if (status === "ok") {
-      result = notificationJson({
+      return notificationJson({
         ok: true, available: true,
         ...(input.action === "sync" ? { device: outcome.data.device } : {}),
         ...(input.action === "unsubscribe" ? { revoked: Number(outcome.data.revoked) || 0 } : {}),
       });
-    } else {
-      // session_revoked: this session logged out; superseded: a newer session holds this endpoint.
-      const errors: Record<string, [string, number]> = {
-        forbidden: ["FORBIDDEN", 403], invalid_input: ["INVALID_INPUT", 400], not_found: ["NOT_FOUND", 404],
-        session_revoked: ["PUSH_SESSION_REVOKED", 409], superseded: ["PUSH_SUPERSEDED", 409],
-      };
-      const [code, http] = errors[String(status)] ?? ["NOTIFICATIONS_UNAVAILABLE", 503];
-      result = notificationJson({ ok: false, code }, http);
     }
-    if (!existingToken && input.action !== "unsubscribe") result.cookies.set(pushDeviceCookie(deviceToken));
-    return result;
+    // session_revoked: this session/browser logged out; superseded: the request is older than this
+    // browser's latest login/logout (or another browser identity owns the endpoint). Nothing changed.
+    const errors: Record<string, [string, number]> = {
+      forbidden: ["FORBIDDEN", 403], invalid_input: ["INVALID_INPUT", 400], not_found: ["NOT_FOUND", 404],
+      session_revoked: ["PUSH_SESSION_REVOKED", 409], superseded: ["PUSH_SUPERSEDED", 409],
+    };
+    const [code, http] = errors[String(status)] ?? ["NOTIFICATIONS_UNAVAILABLE", 503];
+    return notificationJson({ ok: false, code }, http);
   } catch (error) {
     console.error("[PUSH_DEVICE_FAILED]", (error as Error)?.name);
     return notificationJson({ ok: false, code: "NOTIFICATIONS_UNAVAILABLE" }, 503);

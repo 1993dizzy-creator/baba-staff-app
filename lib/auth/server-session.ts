@@ -55,10 +55,12 @@ function sessionCookieOptions(maxAge: number) {
 export function setServerSessionCookie(
   response: NextResponse,
   userId: string | number
-) {
+): SessionPayloadV2 {
   const now = Math.floor(Date.now() / 1000);
   const payload = createServerSessionPayload(userId, now);
   setServerSessionPayloadCookie(response, payload, now);
+  // Returned so the login can bind the push device generation to this session (01-B).
+  return payload;
 }
 
 export function setServerSessionPayloadCookie(

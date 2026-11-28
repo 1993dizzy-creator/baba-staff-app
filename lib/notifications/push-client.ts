@@ -72,13 +72,26 @@ function writeOptIn(userKey: string | null) {
   }
 }
 
-async function postDevice(body: Record<string, unknown>) {
+async function rawPost(body: Record<string, unknown>) {
   const response = await fetch("/api/notifications/push", {
     method: "POST", cache: "no-store", credentials: "same-origin",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   const json = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   return { status: response.status, json };
+}
+
+/**
+ * The server acts only when the signed push device cookie belongs to the current session. A browser
+ * whose cookie predates this session gets it from /api/session (cookie only), then retries once.
+ */
+async function postDevice(body: Record<string, unknown>) {
+  let result = await rawPost(body);
+  if (result.status === 409 && result.json?.code === "PUSH_DEVICE_INIT") {
+    await fetch("/api/session", { cache: "no-store", credentials: "same-origin" }).catch(() => null);
+    result = await rawPost(body);
+  }
+  return result;
 }
 
 export async function fetchPushServerState(signal?: AbortSignal): Promise<PushServerState | "denied" | "error"> {
@@ -113,39 +126,55 @@ function sameKey(subscription: PushSubscription, expected: Uint8Array) {
 
 export type EnableResult = "on" | "denied" | "unsupported" | "needs_install" | "unavailable" | "user_changed" | "error";
 
+// Cross-tab operation stamp: enable/disable change it. A passive sync that started before may not
+// unsubscribe the browser afterwards (it could drop a subscription another tab just turned on).
+const OP_KEY = "baba_push_op";
+function readOpStamp() {
+  try { return window.localStorage.getItem(OP_KEY) ?? ""; } catch { return ""; }
+}
+function bumpOpStamp() {
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try { window.localStorage.setItem(OP_KEY, stamp); } catch { /* single-tab fallback below */ }
+  localOpStamp = stamp;
+  return stamp;
+}
+let localOpStamp = "";
+const currentOpStamp = () => readOpStamp() || localOpStamp;
+
 /**
  * Must be called directly from a click handler: the permission prompt comes first (Safari requires
  * it inside the user gesture), then the worker registration, subscription and server registration.
+ * The account that clicked is sent as expectUserId: if the session changed to another account while
+ * the prompt or worker registration was pending, the server refuses (consent is never inherited).
+ * A late or refused answer never unsubscribes the browser: it may already serve the next account.
  */
 export async function enablePushOnThisDevice(options: { publicKey: string; lang: "ko" | "vi" }): Promise<EnableResult> {
   const support = detectPushSupport();
   if (support !== "supported") return support;
   const userKey = readCachedUserKey();
-  if (!userKey) return "error";
+  const expectUserId = Number(userKey);
+  if (!userKey || !Number.isSafeInteger(expectUserId) || expectUserId < 1) return "error";
+  const op = bumpOpStamp();
   let permission: NotificationPermission;
   try { permission = await Notification.requestPermission(); } catch { return "error"; }
   if (permission !== "granted") return "denied";
-  let subscription: PushSubscription | null = null;
+  const stillMine = () => readCachedUserKey() === userKey && currentOpStamp() === op;
   try {
     const registration = await navigator.serviceWorker.register(SW_URL, { scope: "/", updateViaCache: "none" });
     await withTimeout(navigator.serviceWorker.ready, 15000);
+    if (!stillMine()) return "user_changed";
     const key = keyBytes(options.publicKey);
-    subscription = await registration.pushManager.getSubscription();
+    let subscription = await registration.pushManager.getSubscription();
     if (subscription && !sameKey(subscription, key)) {
+      // Signed for an old server key: unusable for anyone.
       await subscription.unsubscribe().catch(() => false);
       subscription = null;
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-    const { status, json } = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang: options.lang });
-    if (readCachedUserKey() !== userKey) {
-      // Late answer after logout / account switch: never leave this device registered.
-      await subscription.unsubscribe().catch(() => false);
-      return "user_changed";
-    }
-    if (status === 200 && json?.ok === true && json.available === false) {
-      await subscription.unsubscribe().catch(() => false);
-      return "unavailable";
-    }
+    if (!stillMine()) return "user_changed";
+    const { status, json } = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang: options.lang, expectUserId });
+    if (readCachedUserKey() !== userKey || (status === 409 && json?.code === "PUSH_USER_CHANGED")) return "user_changed";
+    if (status === 200 && json?.ok === true && json.available === false) return "unavailable";
     if (status !== 200 || json?.ok !== true || json.available !== true) return "error";
     writeOptIn(userKey);
     writeSyncMark(null);
@@ -156,6 +185,8 @@ export async function enablePushOnThisDevice(options: { publicKey: string; lang:
 }
 
 export async function disablePushOnThisDevice(): Promise<"off" | "error"> {
+  const userKey = readCachedUserKey();
+  const op = bumpOpStamp();
   const subscription = await existingSubscription();
   writeOptIn(null);
   writeSyncMark(null);
@@ -167,7 +198,9 @@ export async function disablePushOnThisDevice(): Promise<"off" | "error"> {
   } catch {
     ok = false;
   }
-  // The local unsubscribe also makes the push service reject any later send (404/410 -> revoked).
+  // Same account and no newer operation: the local unsubscribe also makes the push service reject
+  // any later send (404/410 -> revoked).
+  if (readCachedUserKey() !== userKey || currentOpStamp() !== op) return ok ? "off" : "error";
   const unsubscribed = await subscription.unsubscribe().catch(() => false);
   return ok || unsubscribed ? "off" : "error";
 }
@@ -211,6 +244,7 @@ export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<Device
   if (syncing && syncingKey === runKey) return syncing;
   syncingKey = runKey;
   const run = (async (): Promise<DeviceState> => {
+    const op = currentOpStamp();
     const subscription = await existingSubscription();
     if (!subscription) return "off";
     const markKey = `${runKey}:${subscription.endpoint}`;
@@ -221,8 +255,10 @@ export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<Device
       if (readCachedUserKey() !== userKey) return "off";
       if (status !== 200 || json?.ok !== true || json.available !== true) return "off";
       if (json.device === "registered") { writeSyncMark(markKey, "on"); return "on"; }
-      // A newer session (e.g. the next account) holds this endpoint: change nothing.
+      // This request is older than the browser's latest login/logout: change nothing.
       if (json.device === "superseded") return "off";
+      // Destructive local steps only if nothing newer happened (account, enable/disable in any tab).
+      if (readCachedUserKey() !== userKey || currentOpStamp() !== op) return "off";
       if (json.device === "foreign" || readOptIn() !== userKey || currentPermission() !== "granted") {
         // Previous account's (or an abandoned) subscription: drop it locally.
         await subscription.unsubscribe().catch(() => false);
@@ -231,7 +267,7 @@ export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<Device
         return "off";
       }
       // Same user opted in on this device but the row is gone (renewed endpoint / expiry): re-register.
-      const again = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang });
+      const again = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang, expectUserId: Number(userKey) });
       const state: DeviceState = again.status === 200 && again.json?.ok === true && again.json.available === true ? "on" : "off";
       if (state === "on") writeSyncMark(markKey, "on");
       return state;

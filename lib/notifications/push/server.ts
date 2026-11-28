@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { getPushConfig } from "./config.ts";
 import { isAllowedPushEndpoint } from "./endpoint.ts";
 import { buildPushPayload, pushTopic } from "./messages.ts";
+import { pushDeviceArgs, type PushDevice } from "./device.ts";
 
 // Web Push sender + device storage access (01-B).
 //
@@ -19,8 +20,11 @@ import { buildPushPayload, pushTopic } from "./messages.ts";
 //      no DB transaction or lock is open while the push service is contacted). Right before each
 //      send the claim age and the remaining TTL are re-checked; every send is bounded (12 s) and so is
 //      its report (5 s), far below the 90 s lease, so a live claim is never re-claimed (no
-//      preventable duplicate). A round is reported before the next one is claimed. One dispatch is
-//      bounded too (20 s, 10 rounds); anything left waits for recovery.
+//      preventable duplicate). A round is reported before the next one is claimed. Claim age and TTL
+//      are measured from the moment the claim REQUEST was sent (conservative: includes the claim
+//      round trip). One dispatch has a hard total bound of 30 s: a new round starts only if even its
+//      worst case (claim 5 s + send 12 s + report 5 s = 22 s) still ends inside the bound; at most 10
+//      rounds. Anything left waits for recovery.
 //   4. Recovery: rows left pending (retry backoff) or sending (process died before reporting) are
 //      re-claimed by the same claim RPC with no event filter: one round, scheduled via after() from
 //      the bell's unread-count request (instance throttle 60 s) and passed through a DB-wide gate
@@ -48,8 +52,10 @@ export const PUSH_LIMITS = {
   maxClaimAgeMs: 20_000,
   /** Never send with less TTL left than this. */
   minTtlMs: 5_000,
-  /** One event dispatch: time budget and rounds. */
-  dispatchBudgetMs: 20_000,
+  /** One event dispatch: hard upper bound on its total run time (see roundWorstMs) and rounds. */
+  dispatchBudgetMs: 30_000,
+  /** Worst case of one round: claim RPC timeout + send bound + report RPC timeout. */
+  roundWorstMs: 5_000 + 12_000 + 5_000,
   dispatchMaxRounds: 10,
   recoveryIntervalMs: 60_000,
 } as const;
@@ -79,18 +85,19 @@ const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 export const pushRpc = {
   status: (actorId: number) => callPushRpc("notification_push_status_v1", { p_actor_user_id: actorId }),
   subscribe: (actorId: number, session: { iat: number; exp: number }, sub: { endpoint: string; p256dh: string; auth: string },
-    lang: "ko" | "vi" | null, oldEndpoint: string | null, deviceHash: string) => callPushRpc("notification_push_subscribe_v1", {
+    lang: "ko" | "vi" | null, oldEndpoint: string | null, device: PushDevice) => callPushRpc("notification_push_subscribe_v1", {
     p_actor_user_id: actorId, p_session_iat: session.iat, p_session_expires_at: iso(session.exp),
     p_endpoint: sub.endpoint, p_p256dh: sub.p256dh, p_auth: sub.auth, p_lang: lang, p_old_endpoint: oldEndpoint,
-    p_device_hash: deviceHash,
+    ...pushDeviceArgs(device),
   }),
-  unsubscribe: (actorId: number, endpoint: string) => callPushRpc("notification_push_unsubscribe_v1", {
-    p_actor_user_id: actorId, p_endpoint: endpoint,
-  }),
-  sync: (actorId: number, session: { iat: number; exp: number }, endpoint: string, lang: "ko" | "vi" | null, deviceHash: string) =>
+  unsubscribe: (actorId: number, session: { iat: number }, endpoint: string, device: PushDevice) =>
+    callPushRpc("notification_push_unsubscribe_v1", {
+      p_actor_user_id: actorId, p_session_iat: session.iat, p_endpoint: endpoint, ...pushDeviceArgs(device),
+    }),
+  sync: (actorId: number, session: { iat: number; exp: number }, endpoint: string, lang: "ko" | "vi" | null, device: PushDevice) =>
     callPushRpc("notification_push_sync_v1", {
       p_actor_user_id: actorId, p_session_iat: session.iat, p_session_expires_at: iso(session.exp), p_endpoint: endpoint,
-      p_lang: lang, p_device_hash: deviceHash,
+      p_lang: lang, ...pushDeviceArgs(device),
     }),
   open: (actorId: number, notificationId: number) => callPushRpc("notification_push_open_v1", {
     p_actor_user_id: actorId, p_notification_id: notificationId,
@@ -104,14 +111,18 @@ export const pushRpc = {
 type SessionLike = { v: number; uid: string; iat?: number; exp: number };
 
 /**
- * Logout: awaited with a short timeout so the device stops receiving before the reply. Records the
- * revocation (this device when its push cookie is known, else the whole session), so a registration
- * request still in flight is refused when it arrives.
+ * Logout: awaited with a short timeout so the device stops receiving before the reply. With the
+ * browser's NEXT (logout) generation, the DB raises this browser's floor so every request issued
+ * before the logout is refused when it arrives; without a push device cookie the whole session is
+ * revoked.
  */
-export async function revokePushSession(session: SessionLike | null | undefined, deviceHash: string | null = null) {
+export async function revokePushSession(session: SessionLike | null | undefined, logoutDevice: PushDevice | null = null) {
   if (!session || session.v !== 2 || !session.iat) return { status: "skipped" as const };
+  const device = logoutDevice
+    ? pushDeviceArgs(logoutDevice)
+    : { p_device_hash: null, p_device_generation: null, p_device_nonce: null, p_device_issued_ms: null };
   const outcome = await callPushRpc("notification_push_session_revoke_v1", {
-    p_user_id: Number(session.uid), p_session_iat: session.iat, p_device_hash: deviceHash,
+    p_user_id: Number(session.uid), p_session_iat: session.iat, ...device,
   }, 2000);
   return { status: outcome.kind };
 }
@@ -133,7 +144,7 @@ type ClaimedDelivery = {
   lang: string; attempt: number; ttlSeconds: number; unreadCount: number;
   endpoint: string; p256dh: string; auth: string;
 };
-/** Local clock of the claim answer: claim age and remaining TTL are measured from it. */
+/** Local clock taken just before the claim request: claim age and remaining TTL are measured from it. */
 type Claimed = ClaimedDelivery & { claimedAtMs: number };
 
 export type PushReport = {
@@ -231,8 +242,11 @@ export async function dispatchPushDeliveries(options: { notificationId: number |
   const summary = { status: "ok" as const, rounds: 0, claimed: 0, skipped: 0, accepted: 0, retry: 0, gone: 0, failed: 0,
     expired: 0, unreported: 0, throttled: false };
   const maxRounds = options.notificationId === null ? 1 : PUSH_LIMITS.dispatchMaxRounds;
-  while (summary.rounds < maxRounds && now() - started < PUSH_LIMITS.dispatchBudgetMs) {
+  // A round starts only if its worst case still ends inside the budget: the budget is a hard bound.
+  while (summary.rounds < maxRounds && now() - started + PUSH_LIMITS.roundWorstMs <= PUSH_LIMITS.dispatchBudgetMs) {
     summary.rounds += 1;
+    // Measured BEFORE the claim request: the DB claimed_at is never earlier than this.
+    const claimedAtMs = now();
     const claim = await callPushRpc("notification_push_claim_v1", {
       p_notification_id: options.notificationId, p_limit: PUSH_LIMITS.batch, p_lease_seconds: PUSH_LIMITS.leaseSeconds,
     });
@@ -240,7 +254,6 @@ export async function dispatchPushDeliveries(options: { notificationId: number |
     if (claim.kind === "failed" || claim.data.status !== "ok" || !Array.isArray(claim.data.items)) {
       return summary.claimed || summary.skipped ? summary : { status: "failed" };
     }
-    const claimedAtMs = now();
     const items: Claimed[] = (claim.data.items as ClaimedDelivery[]).map((item) => ({ ...item, claimedAtMs }));
     const skipped = Number(claim.data.skipped) || 0;
     summary.claimed += items.length;

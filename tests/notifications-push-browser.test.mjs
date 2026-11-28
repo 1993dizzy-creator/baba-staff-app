@@ -137,7 +137,13 @@ test('push UI in a real browser: device panel states KO/VI, enable/disable, sett
         if (stub === 'none') return;
         let permission = 'default'; let current = localStorage.getItem('__sub') ? JSON.parse(localStorage.getItem('__sub')) : null;
         Object.defineProperty(Notification, 'permission', { get: () => permission });
-        Notification.requestPermission = async () => { window.__push.requested++; permission = stub; return permission; };
+        Notification.requestPermission = async () => {
+          window.__push.requested++;
+          // 'granted-wait': the prompt stays open until the test answers it.
+          if (stub === 'granted-wait') await new Promise(resolve => { window.__releasePermission = resolve; });
+          permission = stub === 'granted-wait' ? 'granted' : stub;
+          return permission;
+        };
         const make = json => ({ endpoint: json.endpoint, options: { applicationServerKey: null }, toJSON: () => json,
           unsubscribe: async () => { window.__push.unsubscribed++; current = null; localStorage.removeItem('__sub'); return true; } });
         PushManager.prototype.getSubscription = async function () { return current ? make(current) : null; };
@@ -273,6 +279,23 @@ test('push UI in a real browser: device panel states KO/VI, enable/disable, sett
         await context.close();
       }
     });
+    await t.test('01B-FINAL-2 consent: another account logs in while the permission prompt is open -> nothing registered', async () => {
+      const s = await open(U.owner, { stub: 'granted-wait' });
+      await waitState(s.page, 'off');
+      const posts = [];
+      s.page.on('response', async r => { if (r.request().method() === 'POST' && r.url().endsWith('/api/notifications/push')) posts.push([r.status(), (await r.json().catch(() => ({}))).code]); });
+      await panel(s.page).getByRole('button', { name: notificationText.ko.push.turnOn }).click();
+      await s.page.waitForFunction(() => window.__push.requested === 1);
+      // The next account's login lands in this browser (cookies) before the page itself knows.
+      await s.context.addCookies([{ name: 'baba_session', value: createServerSessionToken(U.leaderBar), url: origin }]);
+      await s.page.evaluate(() => window.__releasePermission());
+      await s.page.waitForTimeout(1500);
+      assert.ok(posts.some(([status, code]) => status === 409 && code === 'PUSH_USER_CHANGED'), JSON.stringify(posts));
+      assert.equal(await active(U.owner), 0); assert.equal(await active(U.leaderBar), 0);
+      assert.notEqual(await panel(s.page).getAttribute('data-state'), 'on');
+      await s.context.close();
+    });
+
     await t.test('01B-FINAL: reloads reuse the last sync, language follows the app, service OFF shows "paused" (not "on")', async () => {
       const s = await open(U.owner, { stub: 'granted' });
       await waitState(s.page, 'off');

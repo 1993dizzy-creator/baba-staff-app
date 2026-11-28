@@ -30,8 +30,8 @@ for (const size of [10_000, 100_000]) {
     const report = [];
     try {
       await admin.query(`update notification_private.policies set push_enabled = true where type_code = 'system.test_all'`);
-      await admin.query(`insert into notification_private.push_subscriptions (user_id, session_iat, device_hash, endpoint, p256dh, auth, expires_at)
-        select 1, 1790000000, repeat('D', 43), 'https://fcm.googleapis.com/fcm/send/plan-' || g, $1, $2, now() + interval '20 days' from generate_series(1, 100) g`, [KEY, AUTH]);
+      await admin.query(`insert into notification_private.push_subscriptions (user_id, session_iat, device_hash, device_generation, endpoint, p256dh, auth, expires_at)
+        select 1, 1790000000, repeat('D', 43), 1, 'https://fcm.googleapis.com/fcm/send/plan-' || g, $1, $2, now() + interval '20 days' from generate_series(1, 100) g`, [KEY, AUTH]);
       await admin.query(`insert into notification_private.notifications (type_code, domain, dedupe_key, severity, title_ko, title_vi, policy_revision, status, resolved_at, resolution_reason)
         select 'system.test_all', 'system', 'hist:' || g, 'normal', 'a', 'b', 1, 'resolved', now(), 'done' from generate_series(1, ${size / 100}) g`);
       await admin.query(`insert into notification_private.push_deliveries (notification_id, subscription_id, user_id, status, attempt_count, next_attempt_at, expires_at, finished_at, accepted_at, last_error, created_at)
