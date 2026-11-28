@@ -7,7 +7,7 @@ import { OPEN_ORDERS_RPC, type CollectedOrder, type OrderLine, type OpenOrderSyn
 import { babaTableCatalog } from "./baba-table-catalog";
 import { fetchAllExactPages } from "./daily-sales-summary";
 import { buildTableOverview, type TableReceipt } from "./table-overview";
-import { logTablesReadFailure, tablesReadBudget } from "./table-read-diagnostics";
+import { logTablesReadFailure, tablesReadBudget, tablesReadErrorCode, tablesReadTimedOut } from "./table-read-diagnostics";
 
 export function validOrders(orders: unknown): orders is CollectedOrder[] {
   if (!Array.isArray(orders)) return false;
@@ -29,20 +29,35 @@ export function validOrders(orders: unknown): orders is CollectedOrder[] {
  * which the board shows as a delayed refresh of its last good view (never as current facts). */
 export async function readTableOverview(now = new Date()) {
   const budget = tablesReadBudget();
+  // One configured context for this request's fixed `now`, including fallback.
+  // Both settings RPCs use the same deadline as the snapshot/receipt stages.
+  let businessTime: Awaited<ReturnType<typeof loadBusinessTimeAdapter>> | undefined;
+  const loadRequestTime = async () => businessTime ??= await loadBusinessTimeAdapter(now, { signal: budget.signal() });
   let skipRead = false;
   if (process.env.BABA_TABLE_CLEANING_ENABLED?.trim() === "true" || process.env.BABA_TABLE_AUTO_NORMAL_ENABLED?.trim() === "true") {
     try {
       const { readCleaningState } = await import("./table-cleaning-server");
-      const state = await readCleaningState(now, budget.remaining(), budget);
+      const state = await readCleaningState(now, budget.remaining(), budget, async () => {
+        const time = await loadRequestTime();
+        if (!budget.allows()) throw Object.assign(Error("TABLES_READ_BUDGET_EXHAUSTED"), { timedOut: true });
+        return time;
+      });
       if (state) return state.overview;
     } catch (error) {
       // Conservative fallback to the original paid/unknown snapshot, never fake idle. Not after a
       // timeout (the snapshot read inside the context would time out again) or without budget.
-      skipRead = (error as { timedOut?: unknown })?.timedOut === true || !budget.allows();
+      skipRead = (error as { timedOut?: unknown })?.timedOut === true || tablesReadTimedOut(tablesReadErrorCode(error)) || !budget.allows();
+      // The atomic RPC can reject p_day if a cutoff/revision changed since the
+      // settings read. This is a required revalidation, not a duplicate lookup.
+      if (!skipRead && (error as { code?: unknown })?.code === "40001") businessTime = undefined;
+      // Without a resolved setting there is no safe day/snapshot to build. Do not
+      // repeat a timed-out settings lookup just to fabricate a fallback response.
+      if (skipRead && !businessTime) throw error;
     }
   }
-  const businessTime = await loadBusinessTimeAdapter(now);
-  const businessDate = businessTime.databaseBusinessDate;
+  const time = await loadRequestTime();
+  skipRead ||= !budget.allows();
+  const businessDate = time.databaseBusinessDate;
   const enabled = process.env.POS_OPEN_ORDERS_READ_ENABLED?.trim() === "true";
   const catalog = babaTableCatalog();
   let sync: OpenOrderSyncState | null = null;
@@ -93,5 +108,5 @@ export async function readTableOverview(now = new Date()) {
     }
   }
   return buildTableOverview({ businessDate, now, enabled, catalog, sync, orders, receipts, readFailed,
-    cutoff: businessTime.snapshot.cutoff, businessTime: businessTime.snapshot, receiptVersions });
+    cutoff: time.snapshot.cutoff, businessTime: time.snapshot, receiptVersions });
 }
