@@ -42,15 +42,24 @@ const browser = (tag, issued = 1000) => ({ hash: (String(tag) + '_'.repeat(43)).
 const own = user => browser(`u${user}`);
 const genOf = iat => iat - IAT + 1;
 const dev = (device, gen) => [device.hash, gen, (device.hash.slice(0, 12) + 'n' + gen + '_'.repeat(22)).slice(0, 22), device.issued];
-const subscribe = (db, user, endpoint, { iat = IAT, exp = inDays(30), lang = 'ko', old = null, p256dh = KEY, auth = AUTH, device = own(user), gen = genOf(iat) } = {}) =>
-  call(db, 'notification_push_subscribe_v1', [user, iat, ts(exp), endpoint, p256dh, auth, lang, old, ...dev(device, gen)]);
-const sync = (db, user, iat, exp, endpoint, lang = 'ko', device = own(user), gen = genOf(iat)) =>
-  call(db, 'notification_push_sync_v1', [user, iat, ts(exp), endpoint, lang, ...dev(device, gen)]);
+// genMs: app-server time the cookie generation was issued (default: an old generation).
+const subscribe = (db, user, endpoint, { iat = IAT, exp = inDays(30), lang = 'ko', old = null, p256dh = KEY, auth = AUTH, device = own(user), gen = genOf(iat), genMs = 1 } = {}) =>
+  call(db, 'notification_push_subscribe_v1', [user, iat, ts(exp), endpoint, p256dh, auth, lang, old, ...dev(device, gen), genMs]);
+const sync = (db, user, iat, exp, endpoint, lang = 'ko', device = own(user), gen = genOf(iat), genMs = 1) =>
+  call(db, 'notification_push_sync_v1', [user, iat, ts(exp), endpoint, lang, ...dev(device, gen), genMs]);
 const unsubscribe = (db, user, iat, endpoint, { device = own(user), gen = genOf(iat) } = {}) =>
   call(db, 'notification_push_unsubscribe_v1', [user, iat, endpoint, ...dev(device, gen)]);
 // Logout with the browser's NEXT generation, or without a push cookie (device null = whole session).
-const logout = (db, user, iat, device = null, gen = null) =>
-  call(db, 'notification_push_session_revoke_v1', [user, iat, ...(device ? dev(device, gen) : [null, null, null, null])]);
+// Device logouts pass the LOGOUT generation (and its nonce); cookie-less logouts pass the logout time.
+const logout = (db, user, iat, device = null, gen = null, { nonce = null, at = Date.now() } = {}) => {
+  const d = device ? dev(device, gen) : [null, null, null, null];
+  if (device && nonce) d[2] = nonce;
+  return call(db, 'notification_push_session_revoke_v1', [user, iat, ...d, device ? null : at]);
+};
+const touch = (db, user, iat, exp, device = own(user), gen = genOf(iat)) =>
+  call(db, 'notification_push_session_touch_v1', [user, iat, ts(exp), device.hash, gen]);
+const deviceLogin = (db, device, gen, user, iat) =>
+  call(db, 'notification_push_device_login_v1', [device.hash, gen, dev(device, gen)[2], user, iat]);
 const ungate = db => db.query("update notification_private.push_runtime set recovery_started_at = '-infinity'");
 const upsert = (db, type, key, extra) => call(db, 'notification_upsert_v1', [type, key, j(payload(extra))]);
 // Recovery claims (id null) pass a DB-wide 60 s gate; tests reopen it unless they test the gate itself.
@@ -79,8 +88,9 @@ test('privileges: new tables closed, new RPCs service_role only, definer functio
         await assert.rejects(asRole(db, role, `select * from notification_private.${table}`), /permission denied/);
       }
     }
-    const rpcs = ['notification_push_subscribe_v1(1,1,now(),null,null,null,null,null,null,null,null,null)', 'notification_push_unsubscribe_v1(1,1,null,null,null,null,null)',
-      'notification_push_sync_v1(1,1,now(),null,null,null,null,null,null)', 'notification_push_session_revoke_v1(1,1,null,null,null,null)', 'notification_push_session_touch_v1(1,1,now())',
+    const rpcs = ['notification_push_subscribe_v1(1,1,now(),null,null,null,null,null,null,null,null,null,null)', 'notification_push_unsubscribe_v1(1,1,null,null,null,null,null)',
+      'notification_push_sync_v1(1,1,now(),null,null,null,null,null,null,null)', 'notification_push_session_revoke_v1(1,1,null,null,null,null,null)',
+      'notification_push_session_touch_v1(1,1,now(),null,null)', 'notification_push_device_login_v1(null,null,null,null,null)',
       'notification_push_open_v1(1,1)', 'notification_push_status_v1(1)', 'notification_push_claim_v1(null,1,60)',
       "notification_push_report_v1(1,'00000000-0000-0000-0000-000000000000',null,null,null,null)"];
     for (const role of ['anon', 'authenticated']) {
@@ -415,10 +425,10 @@ test('session lifecycle: logout revokes that session only; refresh extends that 
   try {
     await subscribe(db, U.owner, ep(1), { iat: IAT, exp: inDays(3) });
     await subscribe(db, U.owner, ep(2), { iat: IAT + 100, exp: inDays(3) });
-    const touched = await call(db, 'notification_push_session_touch_v1', [U.owner, IAT, ts(inDays(30))]);
+    const touched = await touch(db, U.owner, IAT, inDays(30));
     assert.equal(touched.updated, 1);
-    assert.equal((await call(db, 'notification_push_session_touch_v1', [U.owner, IAT, ts(inDays(10))])).updated, 0, 'never shortens');
-    assert.equal((await call(db, 'notification_push_session_touch_v1', [U.owner, IAT, ts(inDays(400))])).status, 'invalid_input');
+    assert.equal((await touch(db, U.owner, IAT, inDays(10))).updated, 0, 'never shortens');
+    assert.equal((await touch(db, U.owner, IAT, inDays(400))).status, 'invalid_input');
     const exps = await rows(db, "select endpoint, round(extract(epoch from (expires_at - now()))/86400)::int d from notification_private.push_subscriptions order by id");
     assert.deepEqual(exps.map(e => e.d), [30, 3]);
     assert.equal((await logout(db, U.owner, IAT)).revoked, 1);
@@ -576,5 +586,92 @@ test('01B-FINAL recovery gate + small batches: idle queue costs no write, one sc
     const evt4 = await upsert(db, type, 'evt:badge');
     const batch = (await claim(db, evt4.id, 5, 90)).items;
     assert.equal(new Set(batch.map(i => i.unreadCount)).size, 1);
+  } finally { await db.close(); }
+});
+
+test('01B-FINAL-3 logout generations: delayed logout after a newer login, idempotent retry, conflicting nonce, same-second re-login', async () => {
+  const db = await fixture();
+  const X = IAT + 900;
+  const active = async e => (await subStatus(db, e)).filter(r => r.status === 'active').map(r => r.u);
+  try {
+    // P0-1: A login g1 + registration; A's logout (g2) is delayed; B logs in (g3) and registers.
+    const b = browser('shared-p01');
+    await subscribe(db, U.staffBar, ep(1), { iat: X, device: b, gen: 1 });
+    await subscribe(db, U.staffHall, ep(1), { iat: X, device: b, gen: 3 });
+    const late = await logout(db, U.staffBar, X, b, 2);
+    assert.deepEqual([late.status, late.revoked, late.stale], ['ok', 0, true], 'delayed logout changes nothing');
+    assert.deepEqual(await active(ep(1)), [U.staffHall], 'generation 3 registration kept');
+    const [floor] = await rows(db, 'select generation::int g, user_id::int u from notification_private.push_devices where device_hash=$1', [b.hash]);
+    assert.deepEqual([floor.g, floor.u], [3, U.staffHall], 'floor and ownership untouched');
+    // Conflicting nonce for the current generation: stale too.
+    assert.equal((await logout(db, U.staffHall, X, b, 3, { nonce: 'conflict_nonce_xxxxxxx' })).stale, true);
+    assert.deepEqual(await active(ep(1)), [U.staffHall]);
+    // B's real logout (g4) and its retry: idempotent.
+    assert.equal((await logout(db, U.staffHall, X, b, 4)).revoked, 1);
+    const retry = await logout(db, U.staffHall, X, b, 4);
+    assert.deepEqual([retry.status, retry.revoked, retry.stale], ['ok', 0, undefined]);
+    assert.deepEqual(await active(ep(1)), []);
+
+    // P0-2: same user, same browser, same session second: logout (g2) then re-login (g3) -> allowed.
+    const c = browser('relogin');
+    await subscribe(db, U.owner, ep(2), { iat: X, device: c, gen: 1 });
+    await logout(db, U.owner, X, c, 2);
+    assert.equal((await subscribe(db, U.owner, ep(2), { iat: X, device: c, gen: 1 })).status, 'superseded', 'logged-out generation still blocked');
+    assert.equal((await subscribe(db, U.owner, ep(2), { iat: X, device: c, gen: 3 })).status, 'ok', 'new generation of the same second allowed');
+    assert.equal((await rows(db, 'select count(*)::int n from notification_private.push_session_revocations'))[0].n, 0, 'device logouts write no marker');
+    // Cookie-less (legacy) logout: blocks generations issued up to the logout, not a later re-login.
+    const t0 = Date.now();
+    await subscribe(db, U.master, ep(3), { iat: X, device: browser('legacy'), gen: 1, genMs: t0 - 500 });
+    assert.equal((await logout(db, U.master, X, null, null, { at: t0 })).revoked, 1);
+    assert.equal((await subscribe(db, U.master, ep(3), { iat: X, device: browser('legacy'), gen: 1, genMs: t0 - 500 })).status, 'session_revoked');
+    assert.equal((await subscribe(db, U.master, ep(3), { iat: X, device: browser('legacy'), gen: 2, genMs: t0 + 300 })).status, 'ok');
+    // Same user, same second, another browser: untouched by these logouts.
+    const other = browser('other-dev');
+    await subscribe(db, U.owner, ep(4), { iat: X, device: other, gen: 1 });
+    await logout(db, U.owner, X, c, 4);
+    assert.deepEqual([await active(ep(2)), await active(ep(4))], [[], [U.owner]]);
+  } finally { await db.close(); }
+});
+
+test('01B-FINAL-3 session touch is scoped to the browser generation; login advance stops the previous account at once', async () => {
+  const db = await fixture();
+  const X = IAT + 950;
+  try {
+    // Touch: same user + same second on two browsers; an old generation never extends the new one.
+    const p1 = browser('touch-1'), p2 = browser('touch-2');
+    await subscribe(db, U.owner, ep(1), { iat: X, exp: inDays(3), device: p1, gen: 1 });
+    await subscribe(db, U.owner, ep(2), { iat: X, exp: inDays(3), device: p2, gen: 1 });
+    assert.equal((await touch(db, U.owner, X, inDays(30), p1, 1)).updated, 1);
+    const days = async e => (await rows(db, "select round(extract(epoch from (expires_at - now()))/86400)::int d from notification_private.push_subscriptions where endpoint=$1 and status='active'", [e]))[0].d;
+    assert.deepEqual([await days(ep(1)), await days(ep(2))], [30, 3], 'other browser not extended');
+    await subscribe(db, U.owner, ep(1), { iat: X + 1, exp: inDays(5), device: p1, gen: 2 });
+    assert.equal((await touch(db, U.owner, X, inDays(40), p1, 1)).updated, 0, 'old generation cannot extend the new one');
+
+    // P0-3: account switch completed (login advance) before any sync: A's rows stop at the gate.
+    await setPolicy(db, 'system.test_all', { pushEnabled: true });
+    const tab = browser('switch-tab');
+    await subscribe(db, U.staffBar, ep(10), { iat: X, device: tab, gen: 1 });
+    const evtBefore = await upsert(db, 'system.test_all', 'evt:before-switch');
+    const xmin = async () => (await rows(db, 'select xmin::text x from notification_private.push_devices where device_hash=$1', [tab.hash]))[0].x;
+    assert.equal((await deviceLogin(db, tab, 2, U.staffHall, X + 2)).changed, true);
+    const x1 = await xmin();
+    assert.equal((await deviceLogin(db, tab, 2, U.staffHall, X + 2)).changed, false, 'same generation repeated');
+    assert.equal((await deviceLogin(db, tab, 1, U.staffBar, X)).changed, false, 'late older login answer');
+    assert.equal(await xmin(), x1, 'no further write');
+    const c = await claim(db, evtBefore.id);
+    assert.ok(c.items.every(i => i.endpoint !== ep(10)), 'previous account not sent after the switch');
+    const [d] = await deliveries(db, `notification_id=${evtBefore.id} and user_id=${U.staffBar}`);
+    assert.deepEqual([d.status, d.e], ['skipped', 'device_moved']);
+    // A browser unknown to push: the login call writes nothing.
+    const n = async () => (await rows(db, 'select count(*)::int n from notification_private.push_devices'))[0].n;
+    const before = await n();
+    assert.equal((await deviceLogin(db, browser('never-pushed'), 2, U.owner, X)).changed, false);
+    assert.equal(await n(), before);
+    // Same user re-login: rows keep being sent.
+    const own2 = browser('same-user');
+    await subscribe(db, U.leaderBar, ep(11), { iat: X, device: own2, gen: 1 });
+    await deviceLogin(db, own2, 2, U.leaderBar, X + 3);
+    const e2 = await upsert(db, 'system.test_all', 'evt:same-user-relogin');
+    assert.ok((await claim(db, e2.id)).items.some(i => i.endpoint === ep(11)));
   } finally { await db.close(); }
 });

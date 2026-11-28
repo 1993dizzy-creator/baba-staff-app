@@ -50,8 +50,8 @@ export async function GET() {
 
 type Action =
   | { action: "subscribe"; subscription: PushSubscriptionInput; lang: "ko" | "vi" | null; oldEndpoint: string | null; expectUserId: number | null }
-  | { action: "unsubscribe"; endpoint: string }
-  | { action: "sync"; endpoint: string; lang: "ko" | "vi" | null };
+  | { action: "unsubscribe"; endpoint: string; expectUserId: number }
+  | { action: "sync"; endpoint: string; lang: "ko" | "vi" | null; expectUserId: number };
 
 function parseAction(body: unknown): Action | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
@@ -72,15 +72,18 @@ function parseAction(body: unknown): Action | null {
       expectUserId: expectUserId as number | null };
   }
   if (record.action === "unsubscribe" || record.action === "sync") {
-    const allowed = record.action === "sync" ? ["action", "endpoint", "lang"] : ["action", "endpoint"];
+    // Both name the account the client acted for (checked against the session below).
+    const allowed = record.action === "sync" ? ["action", "endpoint", "lang", "expectUserId"] : ["action", "endpoint", "expectUserId"];
     if (!keys.includes("endpoint") || keys.some((key) => !allowed.includes(key))) return null;
+    const expectUserId = record.expectUserId;
+    if (!Number.isSafeInteger(expectUserId) || (expectUserId as number) < 1) return null;
     // Unsubscribe/sync only look a row up; they still accept push-service URLs only.
     if (typeof record.endpoint !== "string" || record.endpoint.length > PUSH_ENDPOINT_MAX_LENGTH
       || !isAllowedPushEndpoint(record.endpoint)) return null;
-    if (record.action === "unsubscribe") return { action: "unsubscribe", endpoint: record.endpoint };
+    if (record.action === "unsubscribe") return { action: "unsubscribe", endpoint: record.endpoint, expectUserId: expectUserId as number };
     const lang = record.lang === undefined || record.lang === null ? null : record.lang;
     if (lang !== null && lang !== "ko" && lang !== "vi") return null;
-    return { action: "sync", endpoint: record.endpoint, lang: lang as "ko" | "vi" | null };
+    return { action: "sync", endpoint: record.endpoint, lang: lang as "ko" | "vi" | null, expectUserId: expectUserId as number };
   }
   return null;
 }
@@ -117,7 +120,7 @@ export async function POST(request: Request) {
       return notificationJson({ ok: false, code: "PUSH_DEVICE_INIT" }, 409);
     }
     // Consent belongs to the account that clicked: the click-time account must be the session's.
-    if (input.action === "subscribe" && input.expectUserId !== null && input.expectUserId !== auth.actor.id) {
+    if (input.expectUserId !== null && input.expectUserId !== auth.actor.id) {
       return notificationJson({ ok: false, code: "PUSH_USER_CHANGED" }, 409);
     }
     const outcome = input.action === "subscribe"

@@ -2,7 +2,8 @@
 
 Status: code + formal migration `supabase/migrations/20261128073109_notification_web_push_foundation.sql` on main
 (01B-FINAL and 01B-FINAL-2 revised the same, still unapplied migration version in place: sender bounds, recovery
-gate, queue plans, sync writes; FINAL-2: account-switch ordering by a signed per-browser generation).
+gate, queue plans, sync writes; FINAL-2: account-switch ordering by a signed per-browser generation; FINAL-3:
+generation-aware logout, whole-session markers by time, scoped session touch, login floor advance).
 **Production DB not applied** (GPT review + Owner approval → GPT applies, repairs history, runs postflight).
 01-A (`20261126124217`) is applied in Production; this migration builds on it and does not modify it.
 No business writer calls `upsertNotification` yet (POS / leave linkage are later tasks), so nothing is sent
@@ -83,7 +84,12 @@ Messages already accepted by a push service cannot be recalled.
 - **Push device cookie (FINAL-2)**: `baba_push_device`, httpOnly, **signed by the server** (HMAC-SHA256 with the
   existing session secret, separate tag). It carries the browser's device id `d` (the DB keeps only SHA-256), the
   server time the id was created, a **generation `g`**, a nonce, and the session it belongs to (user id, iat).
-  - Login: `g + 1` computed from the cookie the browser sends (cookie only, **no DB write**), bound to the new session.
+  - Login: `g + 1` computed from the cookie the browser sends, bound to the new session. If the browser already had
+    a push identity, the DB floor moves to the new generation right after the response
+    (`notification_push_device_login_v1`, FINAL-3): the previous account's rows stop at the send gate
+    (`device_moved`) even before any sync. A browser unknown to push: no DB write; same/older generation: no write.
+    A missing push DB or a failure never affects the login; the previous rows then wait for the first sync (limit).
+  - Every generation also carries its issue time `s` (ms).
   - Logout: `g + 1` with no user.
   - `/api/session`: issues one only when it is missing or belongs to another session (logins made before this
     cookie existed). Cookie only, no DB write; nothing when it already matches.
@@ -105,14 +111,23 @@ Messages already accepted by a push service cannot be recalled.
   click). If the session in the browser became another account while the permission prompt / worker registration was
   pending, the server answers `409 PUSH_USER_CHANGED` and registers nothing. The worker's renewal (old endpoint) may
   omit it: the DB only renews an active row of the same account **and** browser.
-- Client: the current account is re-checked before every POST; a late or refused answer never unsubscribes the
+- Session refresh (FINAL-3): extends only the rows of this browser generation (device + generation + session);
+  another browser of the same user/second is never extended, and an older generation never extends a newer one.
+- `sync` and `unsubscribe` also carry `expectUserId` (FINAL-3): an operation started for one account that reaches the
+  server with another account's cookies is refused (`409 PUSH_USER_CHANGED`).
+- Client: the current account (and, for disable/sync, the cross-tab operation stamp) is re-checked right before every
+  POST, including the `PUSH_DEVICE_INIT` retry after `/api/session`; a late or refused answer never unsubscribes the
   browser (it may already serve the next account). Destructive local steps of a passive sync require that the
   account and a cross-tab operation stamp (changed by every enable/disable in any tab) are unchanged.
-- Logout: `/api/logout` raises the browser's floor to the logout generation, records the revocation
-  (`push_session_revocations`: user, session iat, device — or `*` = whole session when the request has no push cookie)
-  and stops every active row of that browser, under the device + session locks shared with registration/sync. A
-  registration issued before the logout is refused when it arrives (`PUSH_SUPERSEDED` / `PUSH_SESSION_REVOKED`).
-  Awaited, 2 s timeout, never fails logout. The client then unsubscribes the browser and clears the badge — the server
+- Logout (FINAL-3): with the push cookie, `/api/logout` passes the browser's LOGOUT generation. It acts only if that
+  generation is not older than the browser's floor and does not conflict with it (same generation, other nonce);
+  a delayed logout that arrives after a newer login changes nothing (`stale`), and a retried logout is idempotent.
+  It raises the floor and stops only rows registered by **older** generations of that browser; other browsers (even
+  of the same user and second) are untouched. No marker is written — the floor refuses every older request, while a
+  new login in the same second (higher generation) registers normally. Without the push cookie (sessions older
+  than the cookie) the session's rows are revoked and a whole-session marker
+  (`push_session_revocations`: user, session iat, logout time) refuses generations issued up to that logout, not a
+  later re-login. Awaited, 2 s timeout, never fails logout. The client then unsubscribes the browser and clears the badge — the server
   no longer depends on it.
 - Send gate addition: a row whose browser moved on to another account (higher generation, other user, or logged out)
   or whose identity was retired is skipped (`device_moved`) and revoked — even if no sync revoked it yet.
@@ -160,7 +175,8 @@ Messages already accepted by a push service cannot be recalled.
   history index `(endpoint, id desc)`).
 - `notification_private.push_devices` (per-browser identity: issue time, generation floor, nonce, current session,
   retired state).
-- `notification_private.push_session_revocations` (logout markers; PK user, session iat, device hash).
+- `notification_private.push_session_revocations` (whole-session logout markers for cookie-less logouts; PK user,
+  session iat; `revoked_ms`).
 - `notification_private.push_deliveries` (RLS on, unique `(notification_id, subscription_id)`, status
   `pending|sending|accepted|failed|skipped|expired`, attempts 0–3, TTL, claim token). Queue indexes are partial
   (`pending` by `next_attempt_at, id`; `sending` by `claimed_at, id`), so finished history never enters a claim scan.
@@ -181,8 +197,10 @@ Messages already accepted by a push service cannot be recalled.
 - New RPCs, `service_role` only. Device RPCs end with `(p_device_hash, p_device_generation, p_device_nonce,
   p_device_issued_ms)`: `notification_push_subscribe_v1(actor, iat, exp, endpoint, p256dh, auth, lang, old, …)`,
   `_unsubscribe_v1(actor, iat, endpoint, …)`, `_sync_v1(actor, iat, exp, endpoint, lang, …)`,
-  `_session_revoke_v1(user, iat, …)` (logout generation, or all null = whole session). Also `_status_v1`,
-  `_session_touch_v1`, `_open_v1`, `_claim_v1`, `_report_v1` (outcomes `accepted|retry|gone|failed|expired`).
+  `_session_revoke_v1(user, iat, …, p_logout_ms)` (logout generation, or device fields null + logout time = whole
+  session). Subscribe/sync also take `p_device_generation_ms`. Also `_status_v1`,
+  `_session_touch_v1(user, iat, exp, device_hash, generation)`, `_device_login_v1(device_hash, generation, nonce,
+  user, iat)`, `_open_v1`, `_claim_v1`, `_report_v1` (outcomes `accepted|retry|gone|failed|expired`).
   Device RPC statuses add `session_revoked` and `superseded` (HTTP 409 `PUSH_SESSION_REVOKED` / `PUSH_SUPERSEDED`);
   routes add `409 PUSH_DEVICE_INIT` and `409 PUSH_USER_CHANGED`.
 - No retention job: delivery history is kept (no bulk delete without approval).

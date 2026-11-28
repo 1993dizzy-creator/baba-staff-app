@@ -18,10 +18,10 @@ const browser = (tag, issued = 1000) => ({ hash: (String(tag) + '_'.repeat(43)).
 const dev = (b, g) => [b.hash, g, (b.hash.slice(0, 12) + 'n' + g + '_'.repeat(22)).slice(0, 22), b.issued];
 const SECOND = 1790000000; // every session below is issued in this same second
 const subscribe = (c, user, endpoint, b, g, iat = SECOND) =>
-  rpc(c, 'notification_push_subscribe_v1', [user, iat, exp(), endpoint, KEY, AUTH, 'ko', null, ...dev(b, g)]);
-const sync = (c, user, endpoint, b, g, iat = SECOND) => rpc(c, 'notification_push_sync_v1', [user, iat, exp(), endpoint, 'ko', ...dev(b, g)]);
+  rpc(c, 'notification_push_subscribe_v1', [user, iat, exp(), endpoint, KEY, AUTH, 'ko', null, ...dev(b, g), 1]);
+const sync = (c, user, endpoint, b, g, iat = SECOND) => rpc(c, 'notification_push_sync_v1', [user, iat, exp(), endpoint, 'ko', ...dev(b, g), 1]);
 const unsubscribe = (c, user, endpoint, b, g, iat = SECOND) => rpc(c, 'notification_push_unsubscribe_v1', [user, iat, endpoint, ...dev(b, g)]);
-const logout = (c, user, b, g, iat = SECOND) => rpc(c, 'notification_push_session_revoke_v1', [user, iat, ...(b ? dev(b, g) : [null, null, null, null])]);
+const logout = (c, user, b, g, iat = SECOND) => rpc(c, 'notification_push_session_revoke_v1', [user, iat, ...(b ? dev(b, g) : [null, null, null, null]), b ? null : Date.now()]);
 
 test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
   const cluster = await startPushCluster('pg-conc');
@@ -91,6 +91,22 @@ test('real PostgreSQL push concurrency', { timeout: 120000 }, async t => {
       await subscribe(admin, U.master, ep('dev-a'), a, 1); await subscribe(admin, U.master, ep('dev-b'), c, 1);
       await logout(admin, U.master, a, 2);
       assert.deepEqual([(await active(ep('dev-a'))).length, (await active(ep('dev-b'))).length], [0, 1]);
+    });
+
+    await t.test("FINAL-3: A's delayed logout (g2) racing B's login registration (g3), 40 trials: B always survives", async () => {
+      for (let i = 0; i < 40; i++) {
+        const b = browser(`dl-${i}`);
+        await subscribe(admin, U.staffBar, ep(`dl-${i}`), b, 1, SECOND + 200 + i);
+        const [out, reg] = await Promise.all([
+          logout(pool[i % 6], U.staffBar, b, 2, SECOND + 200 + i),
+          subscribe(pool[(i + 1) % 6], U.staffHall, ep(`dl-${i}`), b, 3, SECOND + 200 + i),
+        ]);
+        assert.equal(out.status, 'ok'); assert.equal(reg.status, 'ok');
+        assert.deepEqual((await active(ep(`dl-${i}`))).map(r => [r.u, r.g]), [[U.staffHall, 3]], `trial ${i}`);
+        // A retry of the same delayed logout is still harmless.
+        assert.equal((await logout(pool[(i + 2) % 6], U.staffBar, b, 2, SECOND + 200 + i)).revoked, 0);
+        assert.deepEqual((await active(ep(`dl-${i}`))).map(r => r.u), [U.staffHall]);
+      }
     });
 
     await t.test('60 parallel first observations enqueue each device exactly once', async () => {

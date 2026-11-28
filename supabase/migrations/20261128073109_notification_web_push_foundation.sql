@@ -98,14 +98,17 @@ create table notification_private.push_devices (
   constraint push_devices_retired_shape check ((retired_at is null) = (retired_reason is null))
 );
 
--- Logged-out (user, session iat, device) markers: a late registration of that session is refused.
--- device_hash '*' = the whole session (logout request without a push device cookie).
+-- Whole-session logout markers, written only by a logout WITHOUT a push device cookie (sessions that
+-- predate the cookie). revoked_ms is the app-server time of that logout: it blocks generations
+-- issued at or before it (a registration in flight), not a generation issued later by a new login
+-- in the same session second. Logouts WITH the cookie need no marker: the browser's generation
+-- floor already refuses everything older.
 create table notification_private.push_session_revocations (
   user_id bigint not null references public.users(id),
   session_iat bigint not null,
-  device_hash text not null constraint push_session_revocations_device_check check (device_hash = '*' or device_hash ~ '^[A-Za-z0-9_-]{43}$'),
+  revoked_ms bigint not null constraint push_session_revocations_ms_check check (revoked_ms > 0),
   revoked_at timestamptz not null default now(),
-  primary key (user_id, session_iat, device_hash)
+  primary key (user_id, session_iat)
 );
 
 create table notification_private.push_deliveries (
@@ -235,10 +238,11 @@ language sql set search_path = pg_catalog as $$
   select pg_advisory_xact_lock(20261129, hashtext(p_user_id::text || ':' || p_session_iat::text))
 $$;
 
-create function notification_private.session_revoked(p_user_id bigint, p_session_iat bigint, p_device_hash text)
+-- p_generation_ms: app-server time the request's device generation was issued (signed cookie).
+create function notification_private.session_revoked(p_user_id bigint, p_session_iat bigint, p_generation_ms bigint)
 returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
   select exists (select 1 from notification_private.push_session_revocations v
-    where v.user_id = p_user_id and v.session_iat = p_session_iat and v.device_hash in ('*', p_device_hash))
+    where v.user_id = p_user_id and v.session_iat = p_session_iat and coalesce(p_generation_ms, 0) <= v.revoked_ms)
 $$;
 
 -- Enqueue in the event's own transaction (statement trigger on the recipients fan-out).
@@ -350,7 +354,8 @@ end $$;
 create function public.notification_push_subscribe_v1(
   p_actor_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz,
   p_endpoint text, p_p256dh text, p_auth text, p_lang text, p_old_endpoint text,
-  p_device_hash text, p_device_generation bigint, p_device_nonce text, p_device_issued_ms bigint
+  p_device_hash text, p_device_generation bigint, p_device_nonce text, p_device_issued_ms bigint,
+  p_device_generation_ms bigint
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_actor record; v_old notification_private.push_subscriptions; v_cur notification_private.push_subscriptions;
   v_expires timestamptz; v_check text;
@@ -370,7 +375,7 @@ begin
   if v_check = 'invalid' then return jsonb_build_object('status', 'invalid_input'); end if;
   if v_check <> 'ok' then return jsonb_build_object('status', 'superseded'); end if;
   perform notification_private.lock_session(v_actor.id, p_session_iat);
-  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_hash) then
+  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_generation_ms) then
     return jsonb_build_object('status', 'session_revoked');
   end if;
   if not notification_private.claim_endpoint_identity(p_endpoint, p_device_hash, p_device_issued_ms) then
@@ -436,7 +441,8 @@ end $$;
 --   not_registered.
 create function public.notification_push_sync_v1(
   p_actor_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz, p_endpoint text, p_lang text,
-  p_device_hash text, p_device_generation bigint, p_device_nonce text, p_device_issued_ms bigint
+  p_device_hash text, p_device_generation bigint, p_device_nonce text, p_device_issued_ms bigint,
+  p_device_generation_ms bigint
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_actor record; v_row notification_private.push_subscriptions; v_check text;
 begin
@@ -452,7 +458,7 @@ begin
   if v_check = 'invalid' then return jsonb_build_object('status', 'invalid_input'); end if;
   if v_check <> 'ok' then return jsonb_build_object('status', 'ok', 'device', 'superseded'); end if;
   perform notification_private.lock_session(v_actor.id, p_session_iat);
-  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_hash) then
+  if notification_private.session_revoked(v_actor.id, p_session_iat, p_device_generation_ms) then
     return jsonb_build_object('status', 'session_revoked');
   end if;
   select * into v_row from notification_private.push_subscriptions
@@ -495,64 +501,109 @@ begin
     where s.user_id = v_actor.id and s.status = 'active' and s.expires_at > now()));
 end $$;
 
--- Logout. With the push device cookie: raises the browser's floor to the logout generation (every
--- earlier request of this browser is refused afterwards), records the (user, session, device)
--- revocation and stops every active row of this browser. Without it (session older than the
--- cookie): the whole session is revoked ('*'). Serialized with registrations by the device and
--- session locks.
+-- Logout.
+-- With the push device cookie (p_device_*: the browser's LOGOUT generation): acts only if that
+-- generation is not older than the browser's floor and does not conflict with it (same generation,
+-- other nonce). It then raises the floor and stops only rows registered by OLDER generations of
+-- this browser. A delayed logout that arrives after a newer login (higher floor) changes nothing; a
+-- retried logout is idempotent. Other browsers (even of the same user and session second) are
+-- untouched. No marker is written: the floor refuses every older request.
+-- Without the cookie (session older than the cookie): the session's rows are revoked and a
+-- whole-session marker blocks generations issued up to p_logout_ms (app-server time).
 create function public.notification_push_session_revoke_v1(
   p_user_id bigint, p_session_iat bigint, p_device_hash text, p_device_generation bigint, p_device_nonce text,
-  p_device_issued_ms bigint
+  p_device_issued_ms bigint, p_logout_ms bigint
 ) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_count integer := 0; v_extra integer;
+declare v_count integer := 0; v notification_private.push_devices;
 begin
   if p_user_id is null or p_user_id < 1 or p_session_iat is null or p_session_iat < 1
     or not exists (select 1 from public.users u where u.id = p_user_id)
     or (p_device_hash is not null and (p_device_hash !~ '^[A-Za-z0-9_-]{43}$' or p_device_generation is null
       or p_device_generation < 1 or p_device_nonce is null or p_device_nonce !~ '^[A-Za-z0-9_-]{22}$'
-      or p_device_issued_ms is null or p_device_issued_ms < 1)) then
+      or p_device_issued_ms is null or p_device_issued_ms < 1))
+    or (p_device_hash is null and (p_logout_ms is null or p_logout_ms < 1)) then
     return jsonb_build_object('status', 'invalid_input');
   end if;
   if p_device_hash is not null then
     perform notification_private.lock_device(p_device_hash);
-    insert into notification_private.push_devices as d (device_hash, issued_ms, generation, nonce, user_id, session_iat)
-    values (p_device_hash, p_device_issued_ms, p_device_generation, p_device_nonce, null, null)
-    on conflict (device_hash) do update set generation = excluded.generation, nonce = excluded.nonce,
-      user_id = null, session_iat = null, updated_at = now()
-    where d.generation < excluded.generation;
-  end if;
-  perform notification_private.lock_session(p_user_id, p_session_iat);
-  insert into notification_private.push_session_revocations (user_id, session_iat, device_hash)
-  values (p_user_id, p_session_iat, coalesce(p_device_hash, '*')) on conflict do nothing;
-  update notification_private.push_subscriptions set status = 'revoked', revoked_at = now(),
-    revoked_reason = 'logout', updated_at = now()
-  where status = 'active' and user_id = p_user_id and session_iat = p_session_iat
-    and (p_device_hash is null or device_hash = p_device_hash);
-  get diagnostics v_count = row_count;
-  if p_device_hash is not null then
+    select * into v from notification_private.push_devices where device_hash = p_device_hash for update;
+    if found then
+      if v.generation > p_device_generation or (v.generation = p_device_generation and v.nonce <> p_device_nonce) then
+        -- A newer login/logout already happened in this browser: this logout is stale.
+        return jsonb_build_object('status', 'ok', 'revoked', 0, 'stale', true);
+      end if;
+      if v.generation < p_device_generation then
+        update notification_private.push_devices set generation = p_device_generation, nonce = p_device_nonce,
+          user_id = null, session_iat = null, updated_at = now()
+        where device_hash = p_device_hash;
+      end if;
+    else
+      insert into notification_private.push_devices (device_hash, issued_ms, generation, nonce, user_id, session_iat)
+      values (p_device_hash, p_device_issued_ms, p_device_generation, p_device_nonce, null, null);
+    end if;
     update notification_private.push_subscriptions set status = 'revoked', revoked_at = now(),
       revoked_reason = 'logout', updated_at = now()
-    where status = 'active' and device_hash = p_device_hash;
-    get diagnostics v_extra = row_count;
-    v_count := v_count + v_extra;
+    where status = 'active' and device_hash = p_device_hash and device_generation < p_device_generation;
+    get diagnostics v_count = row_count;
+    return jsonb_build_object('status', 'ok', 'revoked', v_count);
   end if;
+  perform notification_private.lock_session(p_user_id, p_session_iat);
+  insert into notification_private.push_session_revocations as m (user_id, session_iat, revoked_ms)
+  values (p_user_id, p_session_iat, p_logout_ms)
+  on conflict (user_id, session_iat) do update set revoked_ms = greatest(m.revoked_ms, excluded.revoked_ms);
+  update notification_private.push_subscriptions set status = 'revoked', revoked_at = now(),
+    revoked_reason = 'logout', updated_at = now()
+  where status = 'active' and user_id = p_user_id and session_iat = p_session_iat;
+  get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'revoked', v_count);
 end $$;
 
--- Normal session refresh: the device rows of that session follow the new idle expiry.
-create function public.notification_push_session_touch_v1(p_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz)
-returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+-- Normal session refresh: only the rows of THIS browser generation (device + generation + session)
+-- follow the new idle expiry; another browser of the same user/second is never extended.
+create function public.notification_push_session_touch_v1(
+  p_user_id bigint, p_session_iat bigint, p_session_expires_at timestamptz, p_device_hash text, p_device_generation bigint
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_count integer;
 begin
   if p_user_id is null or p_user_id < 1 or p_session_iat is null or p_session_iat < 1
-    or not notification_private.valid_session_expiry(p_session_expires_at) then
+    or not notification_private.valid_session_expiry(p_session_expires_at)
+    or p_device_hash is null or p_device_hash !~ '^[A-Za-z0-9_-]{43}$' or p_device_generation is null or p_device_generation < 1 then
     return jsonb_build_object('status', 'invalid_input');
   end if;
   update notification_private.push_subscriptions set expires_at = p_session_expires_at, updated_at = now()
-  where user_id = p_user_id and session_iat = p_session_iat and status = 'active'
+  where user_id = p_user_id and session_iat = p_session_iat and device_hash = p_device_hash
+    and device_generation = p_device_generation and status = 'active'
     and expires_at > now() and expires_at < p_session_expires_at;
   get diagnostics v_count = row_count;
   return jsonb_build_object('status', 'ok', 'updated', v_count);
+end $$;
+
+-- Login (or a session check that re-issued the cookie) in a browser that ALREADY has a push
+-- identity: moves its floor to the new generation right away, so the send gate stops the previous
+-- account's rows (device_moved) before any sync. A browser unknown to push: no write. Same or older
+-- generation (repeat / late answer): no write.
+create function public.notification_push_device_login_v1(
+  p_device_hash text, p_device_generation bigint, p_device_nonce text, p_user_id bigint, p_session_iat bigint
+) returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v notification_private.push_devices;
+begin
+  if p_device_hash is null or p_device_hash !~ '^[A-Za-z0-9_-]{43}$' or p_device_generation is null or p_device_generation < 1
+    or p_device_nonce is null or p_device_nonce !~ '^[A-Za-z0-9_-]{22}$' or p_user_id is null or p_user_id < 1
+    or p_session_iat is null or p_session_iat < 1 then
+    return jsonb_build_object('status', 'invalid_input');
+  end if;
+  if not exists (select 1 from notification_private.push_devices d where d.device_hash = p_device_hash) then
+    return jsonb_build_object('status', 'ok', 'changed', false);
+  end if;
+  perform notification_private.lock_device(p_device_hash);
+  select * into v from notification_private.push_devices where device_hash = p_device_hash for update;
+  if v.retired_at is not null or v.generation >= p_device_generation then
+    return jsonb_build_object('status', 'ok', 'changed', false);
+  end if;
+  update notification_private.push_devices set generation = p_device_generation, nonce = p_device_nonce,
+    user_id = p_user_id, session_iat = p_session_iat, updated_at = now()
+  where device_hash = p_device_hash;
+  return jsonb_build_object('status', 'ok', 'changed', true);
 end $$;
 
 -- Push click: the actor must be a recipient and still allowed on at least one channel; returns the
@@ -758,24 +809,26 @@ revoke all on all functions in schema notification_private from public, anon, au
 
 revoke all on function public.notification_policy_list_v1(bigint) from public, anon, authenticated;
 revoke all on function public.notification_policy_update_v1(bigint, text, integer, jsonb) from public, anon, authenticated;
-revoke all on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text, bigint, text, bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text, bigint, text, bigint, bigint) from public, anon, authenticated;
 revoke all on function public.notification_push_unsubscribe_v1(bigint, bigint, text, text, bigint, text, bigint) from public, anon, authenticated;
-revoke all on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text, bigint, text, bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text, bigint, text, bigint, bigint) from public, anon, authenticated;
 revoke all on function public.notification_push_status_v1(bigint) from public, anon, authenticated;
-revoke all on function public.notification_push_session_revoke_v1(bigint, bigint, text, bigint, text, bigint) from public, anon, authenticated;
-revoke all on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz) from public, anon, authenticated;
+revoke all on function public.notification_push_session_revoke_v1(bigint, bigint, text, bigint, text, bigint, bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_device_login_v1(text, bigint, text, bigint, bigint) from public, anon, authenticated;
+revoke all on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz, text, bigint) from public, anon, authenticated;
 revoke all on function public.notification_push_open_v1(bigint, bigint) from public, anon, authenticated;
 revoke all on function public.notification_push_claim_v1(bigint, integer, integer) from public, anon, authenticated;
 revoke all on function public.notification_push_report_v1(bigint, uuid, text, integer, integer, text) from public, anon, authenticated;
 
 grant execute on function public.notification_policy_list_v1(bigint) to service_role;
 grant execute on function public.notification_policy_update_v1(bigint, text, integer, jsonb) to service_role;
-grant execute on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text, bigint, text, bigint) to service_role;
+grant execute on function public.notification_push_subscribe_v1(bigint, bigint, timestamptz, text, text, text, text, text, text, bigint, text, bigint, bigint) to service_role;
 grant execute on function public.notification_push_unsubscribe_v1(bigint, bigint, text, text, bigint, text, bigint) to service_role;
-grant execute on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text, bigint, text, bigint) to service_role;
+grant execute on function public.notification_push_sync_v1(bigint, bigint, timestamptz, text, text, text, bigint, text, bigint, bigint) to service_role;
 grant execute on function public.notification_push_status_v1(bigint) to service_role;
-grant execute on function public.notification_push_session_revoke_v1(bigint, bigint, text, bigint, text, bigint) to service_role;
-grant execute on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz) to service_role;
+grant execute on function public.notification_push_session_revoke_v1(bigint, bigint, text, bigint, text, bigint, bigint) to service_role;
+grant execute on function public.notification_push_device_login_v1(text, bigint, text, bigint, bigint) to service_role;
+grant execute on function public.notification_push_session_touch_v1(bigint, bigint, timestamptz, text, bigint) to service_role;
 grant execute on function public.notification_push_open_v1(bigint, bigint) to service_role;
 grant execute on function public.notification_push_claim_v1(bigint, integer, integer) to service_role;
 grant execute on function public.notification_push_report_v1(bigint, uuid, text, integer, integer, text) to service_role;

@@ -83,13 +83,19 @@ async function rawPost(body: Record<string, unknown>) {
 
 /**
  * The server acts only when the signed push device cookie belongs to the current session. A browser
- * whose cookie predates this session gets it from /api/session (cookie only), then retries once.
+ * whose cookie predates this session gets it from /api/session, then retries once.
+ * `stillCurrent` is checked right before EVERY POST (first try and retry): an operation started for
+ * an earlier account / superseded by a newer operation never sends anything with the browser's
+ * current cookies. The body also names the expected account (expectUserId), which the server checks.
  */
-async function postDevice(body: Record<string, unknown>) {
-  let result = await rawPost(body);
+async function postDevice(body: Record<string, unknown>, stillCurrent: () => boolean) {
+  const skipped = { status: 0, json: null as Record<string, unknown> | null, skipped: true };
+  if (!stillCurrent()) return skipped;
+  let result = { ...(await rawPost(body)), skipped: false };
   if (result.status === 409 && result.json?.code === "PUSH_DEVICE_INIT") {
     await fetch("/api/session", { cache: "no-store", credentials: "same-origin" }).catch(() => null);
-    result = await rawPost(body);
+    if (!stillCurrent()) return skipped;
+    result = { ...(await rawPost(body)), skipped: false };
   }
   return result;
 }
@@ -172,7 +178,7 @@ export async function enablePushOnThisDevice(options: { publicKey: string; lang:
     }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     if (!stillMine()) return "user_changed";
-    const { status, json } = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang: options.lang, expectUserId });
+    const { status, json } = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang: options.lang, expectUserId }, stillMine);
     if (readCachedUserKey() !== userKey || (status === 409 && json?.code === "PUSH_USER_CHANGED")) return "user_changed";
     if (status === 200 && json?.ok === true && json.available === false) return "unavailable";
     if (status !== 200 || json?.ok !== true || json.available !== true) return "error";
@@ -193,7 +199,8 @@ export async function disablePushOnThisDevice(): Promise<"off" | "error"> {
   if (!subscription) return "off";
   let ok = true;
   try {
-    const { status, json } = await postDevice({ action: "unsubscribe", endpoint: subscription.endpoint });
+    const stillMine = () => !!userKey && readCachedUserKey() === userKey && currentOpStamp() === op;
+    const { status, json } = await postDevice({ action: "unsubscribe", endpoint: subscription.endpoint, expectUserId: Number(userKey) }, stillMine);
     ok = status === 200 && json?.ok === true;
   } catch {
     ok = false;
@@ -251,7 +258,8 @@ export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<Device
     const reused = force ? null : readSyncMark(markKey);
     if (reused) return reused;
     try {
-      const { status, json } = await postDevice({ action: "sync", endpoint: subscription.endpoint, lang });
+      const stillMine = () => readCachedUserKey() === userKey && currentOpStamp() === op;
+      const { status, json } = await postDevice({ action: "sync", endpoint: subscription.endpoint, lang, expectUserId: Number(userKey) }, stillMine);
       if (readCachedUserKey() !== userKey) return "off";
       if (status !== 200 || json?.ok !== true || json.available !== true) return "off";
       if (json.device === "registered") { writeSyncMark(markKey, "on"); return "on"; }
@@ -267,7 +275,7 @@ export function syncPushDevice(lang: "ko" | "vi", force = false): Promise<Device
         return "off";
       }
       // Same user opted in on this device but the row is gone (renewed endpoint / expiry): re-register.
-      const again = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang, expectUserId: Number(userKey) });
+      const again = await postDevice({ action: "subscribe", subscription: subscription.toJSON(), lang, expectUserId: Number(userKey) }, stillMine);
       const state: DeviceState = again.status === 200 && again.json?.ok === true && again.json.available === true ? "on" : "off";
       if (state === "on") writeSyncMark(markKey, "on");
       return state;

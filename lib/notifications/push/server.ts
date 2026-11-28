@@ -5,7 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { getPushConfig } from "./config.ts";
 import { isAllowedPushEndpoint } from "./endpoint.ts";
 import { buildPushPayload, pushTopic } from "./messages.ts";
-import { pushDeviceArgs, type PushDevice } from "./device.ts";
+import { pushDeviceArgs, pushDeviceHash, type PushDevice } from "./device.ts";
 
 // Web Push sender + device storage access (01-B).
 //
@@ -88,7 +88,7 @@ export const pushRpc = {
     lang: "ko" | "vi" | null, oldEndpoint: string | null, device: PushDevice) => callPushRpc("notification_push_subscribe_v1", {
     p_actor_user_id: actorId, p_session_iat: session.iat, p_session_expires_at: iso(session.exp),
     p_endpoint: sub.endpoint, p_p256dh: sub.p256dh, p_auth: sub.auth, p_lang: lang, p_old_endpoint: oldEndpoint,
-    ...pushDeviceArgs(device),
+    ...pushDeviceArgs(device), p_device_generation_ms: device.s,
   }),
   unsubscribe: (actorId: number, session: { iat: number }, endpoint: string, device: PushDevice) =>
     callPushRpc("notification_push_unsubscribe_v1", {
@@ -97,7 +97,7 @@ export const pushRpc = {
   sync: (actorId: number, session: { iat: number; exp: number }, endpoint: string, lang: "ko" | "vi" | null, device: PushDevice) =>
     callPushRpc("notification_push_sync_v1", {
       p_actor_user_id: actorId, p_session_iat: session.iat, p_session_expires_at: iso(session.exp), p_endpoint: endpoint,
-      p_lang: lang, ...pushDeviceArgs(device),
+      p_lang: lang, ...pushDeviceArgs(device), p_device_generation_ms: device.s,
     }),
   open: (actorId: number, notificationId: number) => callPushRpc("notification_push_open_v1", {
     p_actor_user_id: actorId, p_notification_id: notificationId,
@@ -122,15 +122,17 @@ export async function revokePushSession(session: SessionLike | null | undefined,
     ? pushDeviceArgs(logoutDevice)
     : { p_device_hash: null, p_device_generation: null, p_device_nonce: null, p_device_issued_ms: null };
   const outcome = await callPushRpc("notification_push_session_revoke_v1", {
-    p_user_id: Number(session.uid), p_session_iat: session.iat, ...device,
+    // App-server time of this logout: a cookie-less logout blocks generations issued up to it.
+    p_user_id: Number(session.uid), p_session_iat: session.iat, ...device, p_logout_ms: Date.now(),
   }, 2000);
   return { status: outcome.kind };
 }
 
-/** Normal session refresh: device rows of that session follow the new idle expiry. */
-export function schedulePushSessionTouch(session: { uid: string; iat: number; exp: number }) {
+/** Normal session refresh: this browser generation's rows (device + generation + session) follow the new expiry. */
+export function schedulePushSessionTouch(session: { uid: string; iat: number; exp: number }, device: PushDevice) {
   const run = () => callPushRpc("notification_push_session_touch_v1", {
     p_user_id: Number(session.uid), p_session_iat: session.iat, p_session_expires_at: iso(session.exp),
+    p_device_hash: pushDeviceHash(device), p_device_generation: device.g,
   }).then(() => undefined);
   try { after(run); } catch { /* outside a request scope: the next refresh retries */ }
 }
@@ -300,4 +302,21 @@ export function schedulePushRecovery(now = Date.now()) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Login (or a session check that re-issued the push cookie) in a browser that ALREADY had a push
+ * identity: after the response, move that browser's floor to the new generation so the previous
+ * account's rows stop at the send gate (device_moved) even before any sync. A browser without an
+ * identity costs nothing; the DB writes only when the browser is known to push and the generation is
+ * new. Never affects the login: a missing push DB or a failure only leaves the previous rows until
+ * the first sync / page load (documented limit).
+ */
+export function schedulePushDeviceLogin(previous: PushDevice | null, next: PushDevice) {
+  if (!previous || next.u === null || next.i === null) return false;
+  const run = () => callPushRpc("notification_push_device_login_v1", {
+    p_device_hash: pushDeviceHash(next), p_device_generation: next.g, p_device_nonce: next.n,
+    p_user_id: next.u, p_session_iat: next.i,
+  }, 2000).then(() => undefined);
+  try { after(run); return true; } catch { return false; }
 }

@@ -7,8 +7,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 //   d  random device id (per browser), t  server time (ms) the id was created,
 //   g  generation: +1 on every login and logout in this browser (computed from the cookie the
 //      browser sends, so later logins always carry a strictly larger g; no DB write),
-//   n  random nonce of this generation, u/i  the session (user id, session iat) it belongs to
-//      (null after logout).
+//   n  random nonce of this generation, s  server time (ms) this generation was issued,
+//   u/i  the session (user id, session iat) it belongs to (null after logout).
 //
 // Push routes act only when this cookie matches the authenticated session. A request issued before
 // an account switch carries the older generation and is refused by the DB's per-device floor,
@@ -20,7 +20,7 @@ export const PUSH_DEVICE_COOKIE = "baba_push_device";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
 const TAG = "baba-push-device-v1|";
 
-export type PushDevice = { d: string; t: number; g: number; n: string; u: number | null; i: number | null };
+export type PushDevice = { d: string; t: number; g: number; n: string; s: number; u: number | null; i: number | null };
 
 function secret() {
   const value = process.env.BABA_SESSION_SECRET;
@@ -54,7 +54,9 @@ export function readPushDevice(request: Request): PushDevice | null {
     if (value.v !== 1 || !isId(value.d, 43) || !isPositive(value.t) || !isPositive(value.g) || !isId(value.n, 22)) return null;
     const u = value.u ?? null, i = value.i ?? null;
     if ((u === null) !== (i === null) || (u !== null && (!isPositive(u) || !isPositive(i)))) return null;
-    return { d: value.d, t: value.t, g: value.g, n: value.n, u, i };
+    // s: generation issue time (cookies issued before it existed count as the oldest).
+    const s = isPositive(value.s) ? value.s : 0;
+    return { d: value.d, t: value.t, g: value.g, n: value.n, s, u, i };
   } catch {
     return null;
   }
@@ -67,6 +69,7 @@ export function nextPushDevice(previous: PushDevice | null, owner: { uid: number
     t: previous?.t ?? nowMs,
     g: (previous?.g ?? 0) + 1,
     n: randomBytes(16).toString("base64url"),
+    s: nowMs,
     u: owner?.uid ?? null,
     i: owner?.iat ?? null,
   };

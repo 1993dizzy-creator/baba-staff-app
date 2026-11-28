@@ -117,6 +117,10 @@ function harness(db) {
   const send = async (route, method, { query = '', body, headers = {}, raw } = {}) => {
     const init = { method, headers: { ...(jar.device ? { cookie: `baba_push_device=${jar.device}` } : {}), ...headers } };
     if (body !== undefined || raw !== undefined) {
+      // Like the client: sync/unsubscribe name the account they act for (unless the test sets it).
+      if (body && (body.action === 'sync' || body.action === 'unsubscribe') && !('expectUserId' in body) && !('userId' in body)) {
+        body = { ...body, expectUserId: currentUser ?? 1 };
+      }
       init.body = raw ?? JSON.stringify(body);
       init.headers = { 'content-type': 'application/json', origin: 'https://app.invalid', ...init.headers };
     }
@@ -628,9 +632,9 @@ test('01B-FINAL-2 routes: signed device generation, in-flight requests after log
     c.h.setActor({ id: U.leaderBar, role: 'leader', is_active: true, app_login_enabled: true }); c.h.setToken(aToken);
     const stale = await c.register(shared, 'ko', { cookie: aCookie, expectUserId: U.leaderBar });
     assert.deepEqual([stale.status, stale.body.code], [409, 'PUSH_SUPERSEDED'], 'A does not take it back (no last-request-wins)');
-    const staleSync = await c.send('push', 'POST', { body: { action: 'sync', endpoint: shared.json.endpoint }, headers: { cookie: `baba_push_device=${aCookie}` } });
+    const staleSync = await c.send('push', 'POST', { body: { action: 'sync', endpoint: shared.json.endpoint, expectUserId: U.leaderBar }, headers: { cookie: `baba_push_device=${aCookie}` } });
     assert.equal(staleSync.body.device, 'superseded');
-    const staleOff = await c.send('push', 'POST', { body: { action: 'unsubscribe', endpoint: shared.json.endpoint }, headers: { cookie: `baba_push_device=${aCookie}` } });
+    const staleOff = await c.send('push', 'POST', { body: { action: 'unsubscribe', endpoint: shared.json.endpoint, expectUserId: U.leaderBar }, headers: { cookie: `baba_push_device=${aCookie}` } });
     assert.deepEqual([staleOff.status, staleOff.body.code], [409, 'PUSH_SUPERSEDED']);
     assert.deepEqual((await rows(db, "select user_id::int u from notification_private.push_subscriptions where endpoint=$1 and status='active'", [shared.json.endpoint])).map(r => r.u), [U.leaderHall]);
 
@@ -675,3 +679,96 @@ test('01B-FINAL-2 sender timing: claim age measured from the claim request; the 
     assert.equal(s2.accepted, 5, 'the rest is sent by the next dispatch');
   } finally { await db.close(); }
 }));
+
+test('01B-FINAL-3 routes: delayed logout keeps the newer login, login advance before sync, stale ops never act with new cookies', () => withEnv(PUSH_ON, async () => {
+  const db = await database();
+  try {
+    await enablePushPolicy(db);
+    {
+      // P0-1 through the routes: A's logout request is delayed past B's login + registration.
+      const c = harness(db);
+      c.login(U.staffBar, 'staff');
+      const aCookie = c.jar.device; const aToken = c.h.token();
+      await c.register(device());
+      c.login(U.staffHall, 'staff'); // B logs in on the same browser (next generation)
+      const bDev = device();
+      assert.equal((await c.register(bDev)).status, 200);
+      c.h.setActor({ id: U.staffBar, role: 'staff', is_active: true, app_login_enabled: true }); c.h.setToken(aToken);
+      const delayed = await c.send('logout', 'POST', { headers: { cookie: `baba_push_device=${aCookie}` } });
+      assert.equal(delayed.status, 200, 'logout itself still succeeds');
+      assert.deepEqual((await rows(db, "select user_id::int u from notification_private.push_subscriptions where endpoint=$1 and status='active'", [bDev.json.endpoint])).map(r => r.u), [U.staffHall]);
+    }
+    // P0-3 through /api/session: the browser's cookie belongs to another session -> next generation,
+    // and the DB floor moves after the response (the browser already had a push identity).
+    const s = harness(db);
+    s.login(U.leaderBar, 'leader');
+    const old = device(); await s.register(old);
+    const ev = await s.server.upsertNotification({ typeCode: 'system.test_all', dedupeKey: 'evt:switch', titleKo: 'x', titleVi: 'x' }, { push: 'none' });
+    // Next account's session arrives without the login route (pre-cookie login path).
+    s.h.setActor({ id: U.leaderHall, role: 'leader', is_active: true, app_login_enabled: true });
+    s.h.setToken(s.h.tokens.createServerSessionToken(U.leaderHall, Math.floor(Date.now() / 1000) - 10));
+    const calls = s.calls.length;
+    assert.equal((await s.send('session', 'GET')).status, 200);
+    assert.equal(s.calls.length, calls, 'nothing before the response');
+    await s.flushAfter();
+    assert.ok(s.calls.slice(calls).includes('notification_push_device_login_v1'));
+    const claim = await execRpc(db, 'notification_push_claim_v1', { p_notification_id: ev.id, p_limit: 20, p_lease_seconds: 90 });
+    assert.ok(claim.items.every(i => i.endpoint !== old.json.endpoint), 'previous account not sent after the switch');
+    // A browser without a push identity: the login path makes no DB call at all.
+    const fresh = harness(db);
+    fresh.jar.device = null;
+    fresh.h.setActor({ id: U.owner, role: 'owner', is_active: true, app_login_enabled: true });
+    fresh.h.setToken(fresh.h.tokens.createServerSessionToken(U.owner, Math.floor(Date.now() / 1000) - 5));
+    assert.equal((await fresh.send('session', 'GET')).status, 200);
+    await fresh.flushAfter();
+    assert.ok(!fresh.calls.includes('notification_push_device_login_v1'));
+    // A stale operation never acts with the new account's cookies (server-side check).
+    const t = harness(db);
+    t.login(U.managerHall, 'manager'); const m = device(); await t.register(m);
+    const r = await t.send('push', 'POST', { body: { action: 'unsubscribe', endpoint: m.json.endpoint, expectUserId: U.staffBar } });
+    assert.deepEqual([r.status, r.body.code], [409, 'PUSH_USER_CHANGED']);
+    assert.equal((await rows(db, "select count(*)::int n from notification_private.push_subscriptions where endpoint=$1 and status='active'", [m.json.endpoint]))[0].n, 1);
+  } finally { await db.close(); }
+  // Push DB not installed: the login advance is skipped silently (logins unaffected).
+  const legacy = await database({ push: false });
+  try {
+    const l = harness(legacy);
+    l.login(U.owner, 'owner');
+    l.setMode('missing');
+    l.h.setActor({ id: U.master, role: 'master', is_active: true, app_login_enabled: true });
+    l.h.setToken(l.h.tokens.createServerSessionToken(U.master, Math.floor(Date.now() / 1000) - 5));
+    assert.equal((await l.send('session', 'GET')).status, 200);
+    await l.flushAfter();
+    assert.equal((await l.send('logout', 'POST')).status, 200);
+  } finally { await legacy.close(); }
+}));
+
+test('01B-FINAL-3 client: a stale disable re-checks the account before the PUSH_DEVICE_INIT retry and never removes the new subscription', async () => {
+  let cachedUser = '8';
+  const posts = []; let unsubscribed = 0;
+  const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/client-x', unsubscribe: async () => { unsubscribed++; return true; }, toJSON: () => ({}) };
+  const store = new Map();
+  const localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
+  const fakeWindow = { localStorage, isSecureContext: true, PushManager: function PushManager() {}, Notification: function Notification() {}, matchMedia: () => ({ matches: false }) };
+  const fakeNavigator = { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140', maxTouchPoints: 0,
+    serviceWorker: { getRegistration: async () => ({ pushManager: { getSubscription: async () => subscription } }) } };
+  const saved = { window: globalThis.window, fetch: globalThis.fetch, navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') };
+  globalThis.window = fakeWindow;
+  Object.defineProperty(globalThis, 'navigator', { value: fakeNavigator, configurable: true });
+  globalThis.fetch = async (url, init) => {
+    if (url === '/api/session') { cachedUser = '9'; return new Response('{}'); } // the next account logged in meanwhile
+    posts.push(JSON.parse(init.body));
+    return Response.json({ ok: false, code: 'PUSH_DEVICE_INIT' }, { status: 409 });
+  };
+  try {
+    const client = loadTs('lib/notifications/push-client.ts', { './client.ts': { readCachedUserKey: () => cachedUser } });
+    const result = await client.disablePushOnThisDevice();
+    assert.equal(posts.length, 1, 'no retry once the account changed');
+    assert.equal(posts[0].expectUserId, 8, 'the POST named the account it acted for');
+    assert.equal(unsubscribed, 0, 'the browser subscription (now possibly the next account) is kept');
+    assert.equal(result, 'error');
+  } finally {
+    globalThis.window = saved.window; globalThis.fetch = saved.fetch;
+    if (saved.navigator) Object.defineProperty(globalThis, 'navigator', saved.navigator); else delete globalThis.navigator;
+  }
+});

@@ -4,7 +4,7 @@ import {
   clearServerSessionCookie,
   refreshServerSessionCookie,
 } from "@/lib/auth/server-session";
-import { schedulePushSessionTouch } from "@/lib/notifications/push/server";
+import { schedulePushDeviceLogin, schedulePushSessionTouch } from "@/lib/notifications/push/server";
 import { nextPushDevice, pushDeviceCookie, pushDeviceMatchesSession, readPushDevice } from "@/lib/notifications/push/device";
 
 export const dynamic = "force-dynamic";
@@ -32,16 +32,20 @@ export async function GET(request: Request) {
       { headers: { "Cache-Control": "no-store" } }
     );
     // 01-B: a browser whose push device cookie is missing or belongs to another session (e.g. a
-    // login made before this cookie existed) gets its next generation here. Cookie only, no DB write.
-    if (auth.session.v === 2 && !pushDeviceMatchesSession(readPushDevice(request), auth.actor.id, auth.session.iat)) {
-      const pushDevice = pushDeviceCookie(nextPushDevice(readPushDevice(request), { uid: auth.actor.id, iat: auth.session.iat }));
-      if (pushDevice) response.cookies.set(pushDevice);
+    // login made before this cookie existed) gets its next generation here (cookie; the DB floor moves
+    // only for a browser already known to push).
+    const pushPrevious = readPushDevice(request);
+    let pushCurrent = pushPrevious;
+    if (auth.session.v === 2 && !pushDeviceMatchesSession(pushPrevious, auth.actor.id, auth.session.iat)) {
+      pushCurrent = nextPushDevice(pushPrevious, { uid: auth.actor.id, iat: auth.session.iat });
+      const pushDevice = pushDeviceCookie(pushCurrent);
+      if (pushDevice) { response.cookies.set(pushDevice); try { schedulePushDeviceLogin(pushPrevious, pushCurrent); } catch { /* best effort */ } }
     }
     const refreshed = refreshServerSessionCookie(response, auth.session);
     // 01-B: the refreshed expiry also extends this session's push devices (v1 legacy sessions
     // never registered any).
-    if (refreshed && auth.session.v === 2) {
-      try { schedulePushSessionTouch(refreshed); } catch { /* best effort */ }
+    if (refreshed && auth.session.v === 2 && pushDeviceMatchesSession(pushCurrent, auth.actor.id, auth.session.iat)) {
+      try { schedulePushSessionTouch(refreshed, pushCurrent); } catch { /* best effort */ }
     }
     return response;
   } catch (error) {
